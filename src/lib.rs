@@ -1,4 +1,4 @@
-//! # lxc — Loxone config model
+//! # lxir — Loxone config model
 //!
 //! A standalone, dependency-light library for working with Loxone Miniserver
 //! configuration documents (`.Loxone` XML) as *source code*:

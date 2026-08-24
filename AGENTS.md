@@ -1,7 +1,7 @@
 # Agent notes for this repository
 
-`lxc` is a Rust library + CLI that treats Loxone Miniserver configs
-(`.Loxone` XML) as source code: a text IR (`.lox` files) compiles against a
+`lxir` is a Rust library + CLI that treats Loxone Miniserver configs
+(`.Loxone` XML) as source code: a text IR (`.lxir` files) compiles against a
 base config with a lockfile pinning all UUIDs. Start with
 [docs/agents.md](docs/agents.md) — it is the operational guide for using the
 toolchain (the loop, hard rules, error remedies).
@@ -13,12 +13,12 @@ cargo test                       # 37+ tests: unit, pipeline, roundtrip
 cargo clippy --all-targets       # must be warning-free
 cargo fmt --check
 LXC_CORPUS=<dir> cargo test --test roundtrip   # opt-in: real configs
-cargo run --bin lxc -- help      # the CLI
+cargo run --bin lxir -- help      # the CLI
 ```
 
 ## Rules that matter here
 
-- **Never edit `.Loxone` files by hand** — only through `lxc compile`.
+- **Never edit `.Loxone` files by hand** — only through `lxir compile`.
   Never hand-edit `*.lock.json` beyond the documented operations.
 - **Never commit real Miniserver configs** (personal data). Synthetic
   fixtures live in `examples/configs/`; real ones go in an untracked corpus
@@ -41,7 +41,7 @@ cargo run --bin lxc -- help      # the CLI
 | [README.md](README.md) | overview, quickstart |
 | [docs/vision.md](docs/vision.md) | why this exists |
 | [docs/design.md](docs/design.md) | architecture, decisions D1–D11 |
-| [docs/ir-spec.md](docs/ir-spec.md) | normative `.lox` language spec |
+| [docs/ir-spec.md](docs/ir-spec.md) | normative `.lxir` language spec |
 | [docs/lockfile-spec.md](docs/lockfile-spec.md) | lockfile v1 spec |
 | [docs/loxone-format.md](docs/loxone-format.md) | validated `.Loxone` format facts |
 | [docs/implementation.md](docs/implementation.md) | module map, testing, gotchas |

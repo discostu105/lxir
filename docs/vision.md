@@ -19,14 +19,14 @@ practically opaque:
 
 Treat the config the way Terraform treats infrastructure:
 
-| Terraform | lxc |
+| Terraform | lxir |
 |---|---|
-| `.tf` source | `.lox` IR modules (text, git-friendly) |
+| `.tf` source | `.lxir` IR modules (text, git-friendly) |
 | provider state (cloud) | the `.Loxone` config on the Miniserver |
 | `terraform.tfstate` | the lockfile (`*.lock.json`) |
-| `terraform plan` / `apply` | `lxc diff` / `lxc compile` |
+| `terraform plan` / `apply` | `lxir diff` / `lxir compile` |
 | `terraform state rm` | `Lockfile::remove_object` |
-| `terraform import` | `lxc decompile` |
+| `terraform import` | `lxir decompile` |
 
 The IR describes **only the logic you choose to manage**. Everything else —
 hardware, rooms, users, visualization, other people's logic — passes through

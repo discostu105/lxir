@@ -1,6 +1,7 @@
-# lxc — Loxone config model
+# lxir — Loxone config model
 
-A standalone Rust library for treating Loxone Miniserver configurations
+**lxir** (pronounced like *elixir*) is a standalone Rust library for treating
+Loxone Miniserver configurations
 (`.Loxone` XML) as **source code**: parse them losslessly, understand their
 identity model, express logic in a small text IR, and compile that IR back
 into a config deterministically — with a lockfile pinning every UUID, the way
@@ -30,32 +31,32 @@ which are the intended consumers of this crate.
 
 ## Quickstart (CLI)
 
-The `lxc` binary wraps the library so the pipeline works from a shell —
+The `lxir` binary wraps the library so the pipeline works from a shell —
 for humans, scripts, and AI agents alike:
 
 ```sh
-cargo run --bin lxc -- help          # or: cargo install --path .
+cargo run --bin lxir -- help          # or: cargo install --path .
 
-lxc check modules/beschattung.lox    # parse + validate (line-numbered errors)
-lxc fmt --write modules/beschattung.lox
-lxc compile --base current.Loxone --module modules/beschattung.lox \
+lxir check modules/beschattung.lxir    # parse + validate (line-numbered errors)
+lxir fmt --write modules/beschattung.lxir
+lxir compile --base current.Loxone --module modules/beschattung.lxir \
             --lock modules/beschattung.lock.json --out out.Loxone \
             --serial 504F94112233
-lxc diff current.Loxone out.Loxone   # semantic diff, locale noise flagged
-lxc decompile current.Loxone         # IR view of an existing config
-lxc observe current.Loxone           # port-direction evidence (JSON)
-lxc roundtrip current.Loxone         # byte-fidelity self-check
+lxir diff current.Loxone out.Loxone   # semantic diff, locale noise flagged
+lxir decompile current.Loxone         # IR view of an existing config
+lxir observe current.Loxone           # port-direction evidence (JSON)
+lxir roundtrip current.Loxone         # byte-fidelity self-check
 ```
 
 ## Quickstart (library)
 
 ```rust
-use lxc::{LoxoneDoc, Lockfile};
-use lxc::ir::{compile, CompileOptions, Module};
-use lxc::uuid::parse_serial;
+use lxir::{LoxoneDoc, Lockfile};
+use lxir::ir::{compile, CompileOptions, Module};
+use lxir::uuid::parse_serial;
 
 let base = LoxoneDoc::parse(&std::fs::read("examples/configs/haus.Loxone")?)?;
-let module = Module::parse(&std::fs::read_to_string("examples/ir/beschattung.lox")?)?;
+let module = Module::parse(&std::fs::read_to_string("examples/ir/beschattung.lxir")?)?;
 let mut lock = Lockfile::new(); // or Lockfile::load(path)
 
 let out = compile(&base, &module, &mut lock, &CompileOptions {
@@ -68,7 +69,7 @@ std::fs::write("out.Loxone", out.to_bytes())?;
 lock.save(std::path::Path::new("beschattung.lock.json"))?;
 ```
 
-The IR itself ([`examples/ir/beschattung.lox`](examples/ir/beschattung.lox)):
+The IR itself ([`examples/ir/beschattung.lxir`](examples/ir/beschattung.lxir)):
 
 ```text
 extern sonne: VirtualIn match iname "VI3"
@@ -95,7 +96,7 @@ byte-for-byte.
 |---|---|
 | [docs/vision.md](docs/vision.md) | Why config-as-code for Loxone; the Terraform analogy; non-goals |
 | [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D11 |
-| [docs/ir-spec.md](docs/ir-spec.md) | Normative spec of the `.lox` language (v0) |
+| [docs/ir-spec.md](docs/ir-spec.md) | Normative spec of the `.lxir` language (v0) |
 | [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v1) and its invariants |
 | [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
 | [docs/implementation.md](docs/implementation.md) | Module map, testing strategy, how to extend |
@@ -107,12 +108,12 @@ commands and repo rules at a glance.
 
 ## Editor support
 
-`editor/vscode/` contains a declarative VS Code extension for `.lox` files:
+`editor/vscode/` contains a declarative VS Code extension for `.lxir` files:
 syntax highlighting, comment/bracket support, and snippets for all four
 statement forms. Install by symlinking it into `~/.vscode/extensions/` (see
 [editor/vscode/README.md](editor/vscode/README.md)). A language server
 (completion of port names, live diagnostics) is scoped on the roadmap;
-until then `lxc check` / `lxc fmt --check` cover the validation loop.
+until then `lxir check` / `lxir fmt --check` cover the validation loop.
 
 ## The model
 
@@ -161,12 +162,12 @@ until then `lxc check` / `lxc fmt --check` cover the validation loop.
 DOM-level writer) already exist. This crate is the missing foundation both
 lack: byte-faithful serialization, the UUID/identity model, and the
 IR/lockfile pipeline. The intended end state is `lox-cli` (or a successor)
-depending on `lxc` for everything config-model-related.
+depending on `lxir` for everything config-model-related.
 
 ## Status / License
 
-Early v0. The crate is `publish = false` and **the license is deliberately
-not yet chosen** (see Skizze §9.5 — the surrounding repos are GPL-3/AGPL-3 +
-commercial dual-licensed, and the crate name `lxc` collides with an existing
-crates.io package, so both license and name are open decisions before any
-publication).
+Early v0. The name is settled: **lxir** (pronounced like *elixir*), free on
+crates.io as of 2026-08-24. The crate stays `publish = false` because **the
+license is deliberately not yet chosen** (see Skizze §9.5 — the surrounding
+repos are GPL-3/AGPL-3 + commercial dual-licensed), an open decision before
+any publication.

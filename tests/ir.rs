@@ -2,9 +2,9 @@
 //! determinism, lockfile identity, teardown/restore semantics, and the
 //! decompile view of compiled output.
 
-use lxc::ir::{CompileOptions, DecompileOptions, Module, compile, decompile};
-use lxc::uuid::parse_serial;
-use lxc::{Lockfile, LoxoneDoc};
+use lxir::ir::{CompileOptions, DecompileOptions, Module, compile, decompile};
+use lxir::uuid::parse_serial;
+use lxir::{Lockfile, LoxoneDoc};
 
 const MINT_TIME: i64 = 1_767_225_600; // 2026-01-01T00:00:00Z
 
@@ -13,7 +13,7 @@ fn base() -> LoxoneDoc {
 }
 
 fn module() -> Module {
-    Module::parse(&std::fs::read_to_string("examples/ir/beschattung.lox").unwrap()).unwrap()
+    Module::parse(&std::fs::read_to_string("examples/ir/beschattung.lxir").unwrap()).unwrap()
 }
 
 fn opts() -> CompileOptions {
@@ -114,7 +114,7 @@ fn removing_set_restores_original_def_and_wires_tear_down() {
             .iter()
             .find(|o| o.block_type == "AutoJalousie")
             .unwrap();
-        lxc::doc::ports(doc.element_at(&o.path).unwrap())
+        lxir::doc::ports(doc.element_at(&o.path).unwrap())
     };
     let target = |doc: &LoxoneDoc| {
         jal(doc)
@@ -202,12 +202,12 @@ fn variadic_gate_inputs_extend() {
     let ports = &lock.objects["any"].ports;
     assert_eq!(ports.len(), 4, "I1 I2 I3 Q");
     // I3 minted with connector index 3 (after the builtin list).
-    let i3 = lxc::LoxUuid::parse(&ports["I3"]).unwrap();
+    let i3 = lxir::LoxUuid::parse(&ports["I3"]).unwrap();
     assert_eq!(i3.connector_index(), Some(3));
     let objs = out.objects();
     let or = objs.iter().find(|o| o.block_type == "Or").unwrap();
     let el = out.element_at(&or.path).unwrap();
-    assert_eq!(lxc::doc::ports(el).len(), 4);
+    assert_eq!(lxir::doc::ports(el).len(), 4);
     assert_eq!(el.attr("Nio"), Some("4"));
 }
 

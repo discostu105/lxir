@@ -1,4 +1,4 @@
-# Working with lox-ir as an AI agent
+# Working with lxir as an AI agent
 
 Operational guidance for AI agents (and automation generally) authoring
 Loxone logic through this toolchain. The IR exists so you never have to edit
@@ -7,7 +7,7 @@ Loxone logic through this toolchain. The IR exists so you never have to edit
 ## Hard rules
 
 1. **Never edit `.Loxone` files directly.** All config changes go through
-   `lxc compile`. The XML's identity model (UUIDs, counters, per-port
+   `lxir compile`. The XML's identity model (UUIDs, counters, per-port
    identifiers, three concurrent writers) makes manual edits corrupting.
 2. **Never hand-edit the lockfile**, except through the documented
    operations (`remove_object`, `rename_object` — exposed via the library;
@@ -16,8 +16,8 @@ Loxone logic through this toolchain. The IR exists so you never have to edit
 3. **Never invent block types or port names.** Valid block types for `block`
    are exactly the builtin table (`And`, `Or`, `Not`, `Equal`,
    `GreaterEqual` in v0). Valid ports on an extern are whatever the base
-   config actually has — discover them with `lxc decompile` /
-   `lxc observe`, or read them from the compile error, which lists them.
+   config actually has — discover them with `lxir decompile` /
+   `lxir observe`, or read them from the compile error, which lists them.
 4. **Do not upload.** Compiling produces a file; sending it to a Miniserver
    is a separate, human-gated step (`lox`/`lox-cli`, outside this crate).
    Treat everything here as read-only toward the house.
@@ -30,28 +30,28 @@ Loxone logic through this toolchain. The IR exists so you never have to edit
 
 ```sh
 # 0. Orientation: what does the config contain, what is already managed?
-lxc decompile current.Loxone            # IR view + report (stderr)
-lxc observe current.Loxone              # port evidence per block type
+lxir decompile current.Loxone            # IR view + report (stderr)
+lxir observe current.Loxone              # port evidence per block type
 
-# 1. Edit the module (.lox). Whole-line # comments are preserved.
+# 1. Edit the module (.lxir). Whole-line # comments are preserved.
 
 # 2. Validate cheaply before compiling:
-lxc check modules/beschattung.lox       # parse + reference errors, line numbers
-lxc fmt --write modules/beschattung.lox # canonicalize (non-destructive)
+lxir check modules/beschattung.lxir       # parse + reference errors, line numbers
+lxir fmt --write modules/beschattung.lxir # canonicalize (non-destructive)
 
 # 3. Compile against the current base:
-lxc compile --base current.Loxone \
-            --module modules/beschattung.lox \
+lxir compile --base current.Loxone \
+            --module modules/beschattung.lxir \
             --lock modules/beschattung.lock.json \
             --out out.Loxone
 # --serial only needed the first time (recorded in the lock afterwards);
 # --time only for reproducible builds (lock pins minted UUIDs regardless).
 
 # 4. Show your work as a SEMANTIC diff, never an XML diff:
-lxc diff current.Loxone out.Loxone
+lxir diff current.Loxone out.Loxone
 
 # 5. Sanity: the output must round-trip.
-lxc roundtrip out.Loxone
+lxir roundtrip out.Loxone
 ```
 
 Present step 4's output when proposing a change: it shows added blocks,
@@ -85,8 +85,8 @@ Removing a `block` line makes the next compile **fail on purpose** — pass
 
 | Error contains | Meaning | Remedy |
 |---|---|---|
-| `line N` (from `check`) | syntax/reference error in the module | fix that line; `lxc fmt` shows canonical form |
-| `no match for extern` | spec matched nothing of that type | check type + spelling; `lxc decompile` the base to see candidates |
+| `line N` (from `check`) | syntax/reference error in the module | fix that line; `lxir fmt` shows canonical form |
+| `no match for extern` | spec matched nothing of that type | check type + spelling; `lxir decompile` the base to see candidates |
 | `ambiguous` + candidate UUIDs | several objects match | switch to `match uuid "<one of the candidates>"` — ask if unclear |
 | `not in the verified builtin table` | block type can't be minted in v0 | use a verified type, or declare the object `extern` (create it once in Loxone Config) |
 | `has no port … present ports: …` | extern port's `<Co>` missing from base | use a listed port, or have the port wired/set once in Loxone Config so it exists |

@@ -1,4 +1,4 @@
-use lxc::XmlDocument;
+use lxir::XmlDocument;
 
 fn main() {
     let path = std::env::args()

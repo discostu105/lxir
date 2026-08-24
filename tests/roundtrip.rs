@@ -2,13 +2,13 @@
 //!
 //! The shipped example configs are always checked. Real Miniserver configs
 //! (which must not be committed — they contain personal data) can be checked
-//! by pointing `LXC_CORPUS` at a directory of `.Loxone` files:
+//! by pointing `LXIR_CORPUS` at a directory of `.Loxone` files:
 //!
 //! ```sh
-//! LXC_CORPUS=~/loxone-backups cargo test --test roundtrip
+//! LXIR_CORPUS=~/loxone-backups cargo test --test roundtrip
 //! ```
 
-use lxc::LoxoneDoc;
+use lxir::LoxoneDoc;
 use std::path::Path;
 
 fn assert_roundtrip(path: &Path) {
@@ -51,8 +51,8 @@ fn compiled_example_output_roundtrips() {
 
 #[test]
 fn corpus_roundtrips_byte_identical() {
-    let Ok(dir) = std::env::var("LXC_CORPUS") else {
-        eprintln!("LXC_CORPUS not set — skipping real-config corpus");
+    let Ok(dir) = std::env::var("LXIR_CORPUS") else {
+        eprintln!("LXIR_CORPUS not set — skipping real-config corpus");
         return;
     };
     let mut n = 0;

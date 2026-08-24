@@ -4,8 +4,8 @@
 //! cargo run --example diff -- old.Loxone new.Loxone
 //! ```
 
-use lxc::LoxoneDoc;
-use lxc::diff::diff;
+use lxir::LoxoneDoc;
+use lxir::diff::diff;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);

@@ -1,11 +1,11 @@
 # IR language specification (v0)
 
 The textual intermediate representation for managed Loxone logic. File
-extension: **`.lox`**. Encoding: UTF-8, no BOM. Line-oriented: one statement
+extension: **`.lxir`**. Encoding: UTF-8, no BOM. Line-oriented: one statement
 per line; only a block's `{ … }` parameter body spans lines.
 
 This document is normative for what `Module::parse` accepts and what
-`Module::to_text` (= `lxc fmt`) emits.
+`Module::to_text` (= `lxir fmt`) emits.
 
 ## Grammar
 
@@ -123,7 +123,7 @@ from source.
 
 ## Canonical form
 
-`lxc fmt` emits: statements in source order, single spaces between tokens,
+`lxir fmt` emits: statements in source order, single spaces between tokens,
 one blank line whenever the item kind changes, tab-indented bodies, values
 as bare tokens when they read as numbers and quoted strings otherwise.
 `parse(to_text(m)) == m`, and `to_text` is a fixpoint.

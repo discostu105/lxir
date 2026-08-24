@@ -18,7 +18,7 @@ observe output), `sha2` (slug entities, config hashes), `thiserror`.
 | `src/ir/compile.rs` | the compiler (strategy: [design.md](design.md)) | tear-down/rebuild convergence; determinism |
 | `src/ir/decompile.rs` | config → IR view, `slugify`, `DecompileReport` | lifts only managed-touching wires (D7) |
 | `src/diff.rs` | UUID-keyed semantic diff, `locale_suspect` heuristic | `diff(a, a).is_empty()` |
-| `src/bin/lxc.rs` | CLI; thin wrappers over the public API only | no semantics of its own |
+| `src/bin/lxir.rs` | CLI; thin wrappers over the public API only | no semantics of its own |
 
 ## Testing strategy
 
@@ -51,7 +51,7 @@ QA bar for changes: `cargo test && cargo clippy --all-targets && cargo fmt
 The table (`connectors::builtin`) is the compiler's license to mint. Grow it
 evidence-first:
 
-1. Run `lxc observe <real-config.Loxone>` on configs that contain the type.
+1. Run `lxir observe <real-config.Loxone>` on configs that contain the type.
    The output gives, per port key: connector index (from the port UUIDs),
    sink/source/def counts.
 2. Cross-check against both legacy databases (lox-cli

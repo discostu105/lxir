@@ -4,8 +4,8 @@
 //! cargo run --example decompile -- [config.Loxone]
 //! ```
 
-use lxc::LoxoneDoc;
-use lxc::ir::{DecompileOptions, decompile};
+use lxir::LoxoneDoc;
+use lxir::ir::{DecompileOptions, decompile};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

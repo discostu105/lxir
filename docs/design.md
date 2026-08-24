@@ -104,7 +104,7 @@ Anything unverified is an error, not a heuristic:
 - Only block types in the **verified builtin table** (`connectors::builtin`)
   can be minted. The two pre-existing connector databases (lox-cli's map,
   lox-sim's signatures) contradict each other for many types; only entries
-  confirmed against real configs are admitted. Growth path: `lxc observe`
+  confirmed against real configs are admitted. Growth path: `lxir observe`
   gathers evidence → cross-check → verify live → extend the table.
 - Wiring or `set`ting an extern port whose `<Co>` is absent from the base
   config is an error (the compiler will not invent port UUIDs for types
@@ -142,7 +142,7 @@ Anything unverified is an error, not a heuristic:
   Loxone Config; tracked in [roadmap.md](roadmap.md).
 - **D9 — Transport is out of scope.** The library is pure (bytes → bytes);
   FTP/LoxCC/credentials live in `lox` / `lox-cli`.
-- **D10 — Whole-line comments are AST items**, so `lxc fmt` is
+- **D10 — Whole-line comments are AST items**, so `lxir fmt` is
   non-destructive. Trailing comments and comments inside block bodies are
   documented as not preserved (v0).
 - **D11 — Counters (`NextObj`) advance by one per minted managed object**

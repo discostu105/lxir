@@ -7,8 +7,8 @@
 //! cargo run --example observe -- [config.Loxone]
 //! ```
 
-use lxc::LoxoneDoc;
-use lxc::connectors::observe;
+use lxir::LoxoneDoc;
+use lxir::connectors::observe;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

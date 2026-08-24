@@ -7,7 +7,7 @@ original sketch (`../lox-ir-design-skizze.md`).
 
 The two pre-existing databases (lox-cli `connector-map.json`, 195 types,
 missing e.g. *all* AutoJalousie inputs; lox-sim `block_signature`, 240
-types) contradict each other. The evidence path exists (`lxc observe`);
+types) contradict each other. The evidence path exists (`lxir observe`);
 what's missing:
 
 - [ ] An aggregator that merges `observe` output across a whole corpus into
@@ -24,7 +24,7 @@ what's missing:
       grown `Or`, load in Loxone Config, save, diff. First open question to
       close, since it gates variadic confidence.
 - [ ] Round-trip a compiled config through a real Loxone Config save and
-      assert `lxc diff` semantic-emptiness (the ultimate oracle test).
+      assert `lxir diff` semantic-emptiness (the ultimate oracle test).
 - [ ] More verified block types: timers (`TimerDelay`…), flip-flops,
       `Formula`, `Switch` — prioritized by what real modules need.
 - [ ] Minting ports for extern types with observed (not just builtin)
@@ -47,7 +47,7 @@ derivation so re-desugaring doesn't re-mint.
 ## Stufe 3 — Verification loop
 
 - [ ] Integration with `lox-cli sim`: compile → simulate → assert, as a test
-      harness (`lxc test`?).
+      harness (`lxir test`?).
 - [ ] CI recipe: `check` + `fmt --check` + compile against a pinned base +
       `diff --exit-code` against the committed expected output.
 
@@ -55,7 +55,7 @@ derivation so re-desugaring doesn't re-mint.
 
 - **Editor**
   - [x] VS Code: syntax highlighting + snippets (`editor/vscode/`).
-  - [ ] LSP server (`lxc lsp`): diagnostics from `Module::parse`/`validate`
+  - [ ] LSP server (`lxir lsp`): diagnostics from `Module::parse`/`validate`
         (already line-precise), completion for port names sourced from the
         base config + builtin table, go-to-definition for slugs, hover with
         resolved extern identity. The library API was shaped so this is a
@@ -64,10 +64,10 @@ derivation so re-desugaring doesn't re-mint.
         structural editing for agents).
 - **Distribution**
   - [ ] Decide license (Skizze §9.5; sibling repos are GPL-3/AGPL-3 +
-        commercial) and crates.io name (`lxc` is taken) — both deliberately
-        open; `publish = false` until then.
+        commercial) — deliberately open; `publish = false` until then.
+        The name is settled: `lxir`, free on crates.io as of 2026-08-24.
   - [ ] `lox-cli` adopting the crate for its config model (the intended end
-        state), wiring transport to `lxc compile` output.
+        state), wiring transport to `lxir compile` output.
 
 ## Explicit non-goals (unchanged)
 

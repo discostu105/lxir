@@ -1,16 +1,16 @@
 //! Compile an IR module against a base config, maintaining a lockfile.
 //!
 //! ```sh
-//! cargo run --example compile -- [base.Loxone] [module.lox] [lock.json] [out.Loxone]
+//! cargo run --example compile -- [base.Loxone] [module.lxir] [lock.json] [out.Loxone]
 //! ```
 //!
 //! Defaults compile the shipped example (`examples/configs/haus.Loxone` +
-//! `examples/ir/beschattung.lox`) into `examples/out/`. Running it twice
+//! `examples/ir/beschattung.lxir`) into `examples/out/`. Running it twice
 //! produces byte-identical output — the lockfile pins every UUID.
 
-use lxc::ir::{CompileOptions, Module, compile};
-use lxc::uuid::parse_serial;
-use lxc::{Lockfile, LoxoneDoc};
+use lxir::ir::{CompileOptions, Module, compile};
+use lxir::uuid::parse_serial;
+use lxir::{Lockfile, LoxoneDoc};
 use std::path::PathBuf;
 
 /// Fixed mint time (2026-01-01T00:00:00Z) so the example is reproducible.
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let module_path = PathBuf::from(
         args.next()
-            .unwrap_or_else(|| "examples/ir/beschattung.lox".into()),
+            .unwrap_or_else(|| "examples/ir/beschattung.lxir".into()),
     );
     let lock_path = PathBuf::from(
         args.next()

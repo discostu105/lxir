@@ -1,9 +1,9 @@
 {
-  "name": "lox-ir",
-  "displayName": "Lox IR",
-  "description": "Syntax highlighting and snippets for Loxone IR modules (.lox) — the lxc config-as-code language",
+  "name": "lxir",
+  "displayName": "lxir",
+  "description": "Syntax highlighting and snippets for lxir modules (.lxir) — Loxone config-as-code",
   "version": "0.1.0",
-  "publisher": "lxc",
+  "publisher": "lxir",
   "license": "SEE LICENSE IN ../../README.md",
   "engines": {
     "vscode": "^1.75.0"
@@ -15,28 +15,27 @@
   "contributes": {
     "languages": [
       {
-        "id": "lox-ir",
+        "id": "lxir",
         "aliases": [
-          "Lox IR",
-          "lox-ir"
+          "lxir"
         ],
         "extensions": [
-          ".lox"
+          ".lxir"
         ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "lox-ir",
-        "scopeName": "source.lox-ir",
-        "path": "./syntaxes/lox-ir.tmLanguage.json"
+        "language": "lxir",
+        "scopeName": "source.lxir",
+        "path": "./syntaxes/lxir.tmLanguage.json"
       }
     ],
     "snippets": [
       {
-        "language": "lox-ir",
-        "path": "./snippets/lox-ir.json"
+        "language": "lxir",
+        "path": "./snippets/lxir.json"
       }
     ]
   }

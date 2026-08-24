@@ -1,27 +1,27 @@
-//! `lxc` — command-line interface over the library, so the IR pipeline is
+//! `lxir` — command-line interface over the library, so the IR pipeline is
 //! usable without writing Rust: by humans, scripts, and AI agents alike.
 //!
 //! Every subcommand is a thin wrapper over one public library entry point;
 //! nothing here has semantics of its own.
 
-use lxc::ir::{CompileOptions, DecompileOptions, Module, compile, decompile};
-use lxc::uuid::parse_serial;
-use lxc::{Lockfile, LoxoneDoc};
+use lxir::ir::{CompileOptions, DecompileOptions, Module, compile, decompile};
+use lxir::uuid::parse_serial;
+use lxir::{Lockfile, LoxoneDoc};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-lxc — Loxone config-as-code toolchain
+lxir — Loxone config-as-code toolchain
 
 USAGE:
-  lxc check <module.lox>
+  lxir check <module.lxir>
         Parse and validate an IR module (errors carry line numbers).
 
-  lxc fmt [--write | --check] <module.lox>
+  lxir fmt [--write | --check] <module.lxir>
         Print the canonical form. --write rewrites the file in place;
         --check exits 1 if the file is not already canonical.
 
-  lxc compile --base <cfg.Loxone> --module <m.lox> --lock <lock.json> --out <out.Loxone>
+  lxir compile --base <cfg.Loxone> --module <m.lxir> --lock <lock.json> --out <out.Loxone>
               [--serial <12-hex>] [--time <unix-seconds>] [--page <title>]
               [--allow-removals]
         Compile IR against a base config, updating the lockfile.
@@ -30,16 +30,16 @@ USAGE:
         lockfile pins everything minted before);
         --page defaults to the document's first page.
 
-  lxc decompile <cfg.Loxone>
+  lxir decompile <cfg.Loxone>
         Print the IR view of a config (report on stderr).
 
-  lxc diff [--exit-code] <old.Loxone> <new.Loxone>
+  lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
 
-  lxc observe <cfg.Loxone>
+  lxir observe <cfg.Loxone>
         Port-direction evidence per block type, as JSON.
 
-  lxc roundtrip <cfg.Loxone>
+  lxir roundtrip <cfg.Loxone>
         Verify the file re-serializes byte-identically (exit 1 if not).
 ";
 
@@ -71,7 +71,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["observe", path] => cmd_observe(path),
         ["roundtrip", path] => cmd_roundtrip(path),
         [cmd, ..] => {
-            eprintln!("unknown or malformed command `{cmd}` — run `lxc help`");
+            eprintln!("unknown or malformed command `{cmd}` — run `lxir help`");
             Ok(ExitCode::from(2))
         }
     }
@@ -104,7 +104,7 @@ fn cmd_fmt(args: &[&str]) -> Result<ExitCode, AnyError> {
         [path] => ("print", *path),
         ["--write", path] => ("write", *path),
         ["--check", path] => ("check", *path),
-        _ => return Err("usage: lxc fmt [--write | --check] <module.lox>".into()),
+        _ => return Err("usage: lxir fmt [--write | --check] <module.lxir>".into()),
     };
     let src = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let canonical = Module::parse(&src)
@@ -115,7 +115,7 @@ fn cmd_fmt(args: &[&str]) -> Result<ExitCode, AnyError> {
         "write" => std::fs::write(path, &canonical)?,
         _check => {
             if src != canonical {
-                eprintln!("{path}: not canonical (run `lxc fmt --write {path}`)");
+                eprintln!("{path}: not canonical (run `lxir fmt --write {path}`)");
                 return Ok(ExitCode::FAILURE);
             }
             println!("{path}: canonical");
@@ -150,7 +150,7 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
             "--time" => time = Some(value()?.parse::<i64>()?),
             "--page" => page = Some(value()?.to_string()),
             "--allow-removals" => allow_removals = true,
-            other => return Err(format!("unknown flag `{other}` — run `lxc help`").into()),
+            other => return Err(format!("unknown flag `{other}` — run `lxir help`").into()),
         }
     }
     let (Some(base), Some(module), Some(lock_path), Some(out)) = (base, module, lock_path, out)
@@ -206,11 +206,11 @@ fn cmd_diff(args: &[&str]) -> Result<ExitCode, AnyError> {
     let (exit_code, old, new) = match args {
         [old, new] => (false, *old, *new),
         ["--exit-code", old, new] => (true, *old, *new),
-        _ => return Err("usage: lxc diff [--exit-code] <old.Loxone> <new.Loxone>".into()),
+        _ => return Err("usage: lxir diff [--exit-code] <old.Loxone> <new.Loxone>".into()),
     };
     let a = read_doc(old)?;
     let b = read_doc(new)?;
-    let d = lxc::diff::diff(&a, &b);
+    let d = lxir::diff::diff(&a, &b);
 
     for o in &d.added {
         println!("+ {} {} {:?}", o.block_type, o.uuid, o.title);
@@ -258,7 +258,7 @@ fn cmd_observe(path: &str) -> Result<ExitCode, AnyError> {
     let doc = read_doc(path)?;
     println!(
         "{}",
-        serde_json::to_string_pretty(&lxc::connectors::observe(&doc))?
+        serde_json::to_string_pretty(&lxir::connectors::observe(&doc))?
     );
     Ok(ExitCode::SUCCESS)
 }
