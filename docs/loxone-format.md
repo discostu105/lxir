@@ -122,7 +122,9 @@ impossible.
 ## The three writers
 
 1. **Loxone Config** — the GUI; rewrites the whole file on save, including
-   locale-dependent built-in titles.
+   locale-dependent built-in titles. The full save fingerprint (counter
+   burn, `<In>` reordering, schema migrations, auto-layout) is measured in
+   [oracle-wine.md](oracle-wine.md).
 2. **The Miniserver** — creates objects at runtime (autopilots from the app,
    device registrations), minting UUIDs with its serial in the tail.
 3. **This compiler** — see the ownership model in [design.md](design.md).

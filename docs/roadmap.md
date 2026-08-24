@@ -28,15 +28,20 @@ types) contradict each other. Results and methodology:
 
 ## Stufe 0 — Hardening the v0 pipeline
 
-- [ ] **Verify the I3+ index assumption** (design decision D8): compile a
-      grown `Or`, load in Loxone Config, save, diff. First open question to
-      close, since it gates variadic confidence.
-- [ ] Round-trip a compiled config through a real Loxone Config save and
+- [ ] **Verify the I3+ index assumption** (design decision D8): grow a
+      gate's inputs in Loxone Config, save, and read the minted connector
+      index. Unblocked by the Wine oracle ([oracle-wine.md](oracle-wine.md));
+      needs pointer injection (ydotool or Xvfb+xdotool) to drive the
+      properties panel.
+- [x] Round-trip a compiled config through a real Loxone Config save and
       assert `lxir diff` semantic-emptiness (the ultimate oracle test).
-      Loxone Config saves projects **offline, without a Miniserver**, so
-      this is automatable as CI on a Windows VM (UI automation: open,
-      Ctrl+S, close, `lxir diff`) — catching UUID regeneration, dropped
-      wires, and `Nio` repair systematically instead of via live failures.
+      **Passed 2026-08-24**: Loxone Config 17.1 under Wine opened a
+      compiled config (real base + minted `Monoflop`/`And`/wire), saved it,
+      and the semantic diff came back empty — every minted UUID, wire, and
+      param survived. Method and the full save-fingerprint findings:
+      [oracle-wine.md](oracle-wine.md). Remaining: turn the manual rig into
+      a repeatable script (blocked on pointer-injection tooling — Wine on
+      Linux replaces the Windows-VM plan entirely).
 - [ ] More verified block types: timers (`TimerDelay`…), flip-flops,
       `Formula`, `Switch` — prioritized by what real modules need.
 - [ ] Minting ports for extern types with observed (not just builtin)

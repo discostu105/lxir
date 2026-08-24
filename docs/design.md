@@ -150,7 +150,11 @@ Anything unverified is an error, not a heuristic:
 - **D11 — Counters (`NextObj`) advance by one per minted managed object**
   and never decrease (`Lockfile::absorb_counters` takes the max of lock and
   document). Whether ports also consume `NextObj` is unknown; object-only is
-  the conservative reading of observed files.
+  the conservative reading of observed files. Oracle observation
+  (2026-08-24): Loxone Config itself burns **+2** per open+save cycle even
+  with zero objects added — counter consumption is not tied to persisted
+  objects, and max() absorbs it safely
+  ([oracle-wine.md](oracle-wine.md)).
 - **D12 — A dedicated grammar, not a YAML/KDL/HCL host syntax.** Weighed in
   the sketch phase: YAML would have been the fastest start, but wiring
   expressed in YAML is exactly the ergonomics this project exists to remove,

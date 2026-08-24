@@ -144,6 +144,7 @@ which are the intended consumers of this crate.
 | [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
 | [docs/implementation.md](docs/implementation.md) | Module map, testing strategy, how to extend |
 | [docs/connector-db.md](docs/connector-db.md) | The consolidated connector database: methodology, findings, admission rules |
+| [docs/oracle-wine.md](docs/oracle-wine.md) | The save oracle: driving Loxone Config under Wine, and what a save changes |
 | [docs/agents.md](docs/agents.md) | Operational guide for AI agents using the toolchain |
 | [docs/roadmap.md](docs/roadmap.md) | Stufen −1…4: hardening, templates, expressions, verification, multi-module |
 
@@ -174,6 +175,10 @@ cover the validation loop.
 - UUID anatomy (epoch 2009-01-01, `ffff` + machine-id object tails,
   `<index>ff` + entity port tails, ports minted before their object) was
   established from live evidence and is encoded in `uuid`'s tests.
+- The **save oracle passed**: Loxone Config 17.1 (under Wine) opened a
+  compiled config and re-saved it with an empty semantic diff — every
+  minted UUID, wire, and parameter survived. See
+  [docs/oracle-wine.md](docs/oracle-wine.md).
 - Known assumption (no live evidence either way): connector indexes for
   grown gate inputs (`I3`+) are assigned *after* the builtin ports. To be
   verified the first time a compiled config with a grown gate passes

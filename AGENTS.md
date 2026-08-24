@@ -47,5 +47,6 @@ cargo run --bin lxir -- help      # the CLI
 | [docs/loxone-format.md](docs/loxone-format.md) | validated `.Loxone` format facts |
 | [docs/implementation.md](docs/implementation.md) | module map, testing, gotchas |
 | [docs/connector-db.md](docs/connector-db.md) | connector database: evidence, admission rules |
+| [docs/oracle-wine.md](docs/oracle-wine.md) | save oracle via Loxone Config under Wine: rig + findings |
 | [docs/agents.md](docs/agents.md) | **how agents use the toolchain** |
 | [docs/roadmap.md](docs/roadmap.md) | Stufen, open questions |
