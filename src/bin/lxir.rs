@@ -36,8 +36,12 @@ USAGE:
   lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
 
-  lxir observe <cfg.Loxone>
-        Port-direction evidence per block type, as JSON.
+  lxir observe <cfg.Loxone>... [--crosscheck <legacy.json>]...
+        Port-direction evidence per block type, as JSON. Multiple configs
+        merge into one corpus-level view. --crosscheck compares the
+        evidence against a legacy connector database (connector-map.json
+        shape: type -> {c: [keys], t: {key: \"I\"|\"O\"}}) and reports
+        agreements, conflicts, and coverage gaps per type.
 
   lxir roundtrip <cfg.Loxone>
         Verify the file re-serializes byte-identically (exit 1 if not).
@@ -68,7 +72,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["compile", rest @ ..] => cmd_compile(rest),
         ["decompile", path] => cmd_decompile(path),
         ["diff", rest @ ..] => cmd_diff(rest),
-        ["observe", path] => cmd_observe(path),
+        ["observe", rest @ ..] => cmd_observe(rest),
         ["roundtrip", path] => cmd_roundtrip(path),
         [cmd, ..] => {
             eprintln!("unknown or malformed command `{cmd}` — run `lxir help`");
@@ -254,11 +258,54 @@ fn cmd_diff(args: &[&str]) -> Result<ExitCode, AnyError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_observe(path: &str) -> Result<ExitCode, AnyError> {
-    let doc = read_doc(path)?;
+fn cmd_observe(args: &[&str]) -> Result<ExitCode, AnyError> {
+    use lxir::connectors::{self, LegacyDb, Observations};
+
+    let mut paths: Vec<&str> = Vec::new();
+    let mut legacy_paths: Vec<&str> = Vec::new();
+    let mut it = args.iter();
+    while let Some(&a) = it.next() {
+        if a == "--crosscheck" {
+            legacy_paths.push(it.next().copied().ok_or("--crosscheck needs a value")?);
+        } else {
+            paths.push(a);
+        }
+    }
+    if paths.is_empty() {
+        return Err("usage: lxir observe <cfg.Loxone>... [--crosscheck <legacy.json>]...".into());
+    }
+
+    let mut obs = Observations::new();
+    for p in &paths {
+        connectors::merge(&mut obs, connectors::observe(&read_doc(p)?));
+    }
+
+    if legacy_paths.is_empty() {
+        println!("{}", serde_json::to_string_pretty(&obs)?);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let mut checks = serde_json::Map::new();
+    for lp in legacy_paths {
+        let bytes = std::fs::read(lp).map_err(|e| format!("{lp}: {e}"))?;
+        let legacy: LegacyDb = serde_json::from_slice(&bytes).map_err(|e| format!("{lp}: {e}"))?;
+        let only_corpus: Vec<&String> = obs.keys().filter(|t| !legacy.contains_key(*t)).collect();
+        let only_legacy: Vec<&String> = legacy.keys().filter(|t| !obs.contains_key(*t)).collect();
+        checks.insert(
+            lp.to_string(),
+            serde_json::json!({
+                "types": connectors::crosscheck(&obs, &legacy),
+                "types_only_in_corpus": only_corpus,
+                "types_only_in_legacy": only_legacy,
+            }),
+        );
+    }
     println!(
         "{}",
-        serde_json::to_string_pretty(&lxir::connectors::observe(&doc))?
+        serde_json::to_string_pretty(&serde_json::json!({
+            "observations": obs,
+            "crosscheck": checks,
+        }))?
     );
     Ok(ExitCode::SUCCESS)
 }

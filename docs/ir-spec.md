@@ -85,7 +85,10 @@ deletes it when removal is explicitly allowed.
 - The body assigns parameter defaults: each `Param = value` becomes `Def=`
   on the port with key `Param`.
 - The type must be in the verified builtin table
-  (currently `And`, `Or`, `Not`, `Equal`, `GreaterEqual`) — anything else
+  (gates `And`/`Or`/`Not`, the comparator family `Equal`/`NotEqual`/
+  `Greater`/`GreaterEqual`/`Less`/`LessEqual`, `Formula`, `Monoflop`,
+  `PulseGen`, `AnalogThresholdTrigger` — see
+  [connector-db.md](connector-db.md)) — anything else
   is a compile error. See [design.md](design.md) "Refuse, never guess".
 - `And`/`Or` are variadic: referencing `I3`, `I4`, … anywhere in the module
   grows the gate.

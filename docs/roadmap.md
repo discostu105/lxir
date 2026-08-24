@@ -7,17 +7,24 @@ it that is still relevant and not yet implemented is embedded below.
 ## Stufe −1 — Connector database consolidation
 
 The two pre-existing databases (lox-cli `connector-map.json`, 195 types,
-missing e.g. *all* AutoJalousie inputs; lox-sim `block_signature`, 240
-types) contradict each other. The evidence path exists (`lxir observe`);
-what's missing:
+missing e.g. *all* AutoJalousie inputs; lox-sim `block_signature`, 237
+types) contradict each other. Results and methodology:
+[connector-db.md](connector-db.md).
 
-- [ ] An aggregator that merges `observe` output across a whole corpus into
-      one reviewed `connectors.json` (type → ordered ports → direction,
-      confidence, sources).
-- [ ] Cross-check tooling against both legacy databases, reporting
-      agreements/conflicts.
-- [ ] Feed verified entries into `connectors::builtin` (workflow in
-      [implementation.md](implementation.md)).
+- [x] Aggregator: `lxir observe <cfg>...` merges evidence across a corpus;
+      the merged database is committed as
+      [data/connectors-observed.json](data/connectors-observed.json).
+- [x] Cross-check tooling: `lxir observe --crosscheck <legacy.json>`
+      (plus [../tools/extract-sim-signature.py](../tools/extract-sim-signature.py)
+      for the lox-sim table). First run: legacy dbs have 3 corrupt/wrong
+      direction entries and are missing whole connectors (`Remanence`,
+      `Reset`) that every real instance materializes.
+- [x] First verified batch fed into `connectors::builtin`: `Formula`,
+      `Monoflop`, `PulseGen`, `AnalogThresholdTrigger`, and the comparator
+      family (`NotEqual`, `Greater`, `Less`, `LessEqual`).
+- [ ] Grow the corpus beyond one installation (foreign corpora exercise
+      types this house doesn't) and admit the next batch — currently
+      blocked types: `Memory`, `PulseAt`, `PushButton`, `DayTimer`.
 
 ## Stufe 0 — Hardening the v0 pipeline
 

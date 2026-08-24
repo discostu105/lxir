@@ -51,12 +51,15 @@ QA bar for changes: `cargo test && cargo clippy --all-targets && cargo fmt
 The table (`connectors::builtin`) is the compiler's license to mint. Grow it
 evidence-first:
 
-1. Run `lxir observe <real-config.Loxone>` on configs that contain the type.
-   The output gives, per port key: connector index (from the port UUIDs),
-   sink/source/def counts.
-2. Cross-check against both legacy databases (lox-cli
-   `docs/schemas/connector-map.json`, lox-sim `block_signature`) — they
-   disagree often; disagreement means more evidence is needed, not a vote.
+1. Run `lxir observe <cfg.Loxone>...` over the whole corpus (multiple
+   configs merge). The output gives, per port key: connector index (from
+   the port UUIDs), sink/source/def counts.
+2. Cross-check with `--crosscheck` against both legacy databases (lox-cli
+   `docs/schemas/connector-map.json`; lox-sim `block_signature` via
+   `tools/extract-sim-signature.py`) — they disagree and have corrupt
+   entries; disagreement means more evidence is needed, not a vote. The
+   admission rules and the current state live in
+   [connector-db.md](connector-db.md).
 3. Confirm the full connector list and index order against a real block
    instance in the XML (all `<Co>`s, in order).
 4. Add the `const` slice in index order with directions, plus a

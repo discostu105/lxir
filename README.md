@@ -123,7 +123,7 @@ byte-for-byte.
 | `xml` | Lossless concrete-syntax parser/writer for `.Loxone` XML. Handles Loxone's spec-violations (attribute names starting with digits, raw newlines inside attribute values) that break conforming XML parsers. |
 | `uuid` | The anatomy of Loxone UUIDs — creation time, mint counters, minting-machine id, connector index — plus a deterministic minter (no clock, no RNG). |
 | `doc` | Semantic read layer: objects, ports, wires, counters, pages. |
-| `connectors` | Port-direction knowledge: a small **verified** builtin table (`And`, `Or`, `Not`, `Equal`, `GreaterEqual`) and evidence-based inference (`observe`) over real configs. |
+| `connectors` | Port-direction knowledge: a **verified** builtin table (gates, comparators, `Formula`, `Monoflop`, `PulseGen`, `AnalogThresholdTrigger` — see [docs/connector-db.md](docs/connector-db.md)) and evidence-based inference (`observe`, corpus merge, legacy-db crosscheck) over real configs. |
 | `ir` | The text language: `extern` / `block` / `wire` / `set`; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view). |
 | `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, `set` originals. |
 | `diff` | Semantic diff between two configs, with locale-rename noise flagged. |
@@ -142,6 +142,7 @@ which are the intended consumers of this crate.
 | [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v1) and its invariants |
 | [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
 | [docs/implementation.md](docs/implementation.md) | Module map, testing strategy, how to extend |
+| [docs/connector-db.md](docs/connector-db.md) | The consolidated connector database: methodology, findings, admission rules |
 | [docs/agents.md](docs/agents.md) | Operational guide for AI agents using the toolchain |
 | [docs/roadmap.md](docs/roadmap.md) | Stufen −1…4: hardening, templates, expressions, verification, multi-module |
 
