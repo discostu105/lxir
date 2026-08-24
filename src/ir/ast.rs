@@ -16,8 +16,10 @@ pub enum Item {
     Wire(WireDecl),
     Set(SetDecl),
     /// A whole-line `#` comment, stored verbatim (text after the `#`) so
-    /// formatting is non-destructive. Trailing comments on statement lines
-    /// and comments inside block bodies are *not* preserved.
+    /// formatting is non-destructive. Statements carry their own trailing
+    /// comments; block bodies carry theirs as [`BodyItem`]s. The one
+    /// canonicalization: a comment trailing a closing `}` moves onto its
+    /// own line after the block.
     Comment(String),
 }
 
@@ -28,6 +30,8 @@ pub struct ExternDecl {
     pub slug: String,
     pub block_type: String,
     pub match_spec: MatchSpec,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,14 +58,48 @@ pub struct BlockDecl {
     pub slug: String,
     pub block_type: String,
     pub title: Option<String>,
-    /// Port parameters, emitted as `Def=` on the corresponding connector.
-    pub params: Vec<(String, String)>,
+    /// The `{ … }` body: parameters and whole-line comments, in source
+    /// order.
+    pub body: Vec<BodyItem>,
+    /// Trailing `#` comment on the header line (after the `{` when a body
+    /// follows).
+    pub comment: Option<String>,
+}
+
+impl BlockDecl {
+    /// The port parameters in the body, emitted as `Def=` on the
+    /// corresponding connectors.
+    pub fn params(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.body.iter().filter_map(|i| match i {
+            BodyItem::Param(p) => Some((p.key.as_str(), p.value.as_str())),
+            BodyItem::Comment(_) => None,
+        })
+    }
+}
+
+/// One line of a block body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyItem {
+    Param(ParamDecl),
+    /// A whole-line `#` comment inside the body, verbatim.
+    Comment(String),
+}
+
+/// `Key = value` inside a block body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamDecl {
+    pub key: String,
+    pub value: String,
+    /// Trailing `#` comment on the parameter line, verbatim.
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireDecl {
     pub from: PortRef,
     pub to: PortRef,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
 }
 
 /// `set slug.Port = value` — write a parameter (`Def=`) on a port; on
@@ -71,6 +109,8 @@ pub struct WireDecl {
 pub struct SetDecl {
     pub target: PortRef,
     pub value: String,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -165,11 +205,16 @@ impl Module {
                 out.push('\n');
             }
             prev = Some(disc);
+            let tail =
+                |c: &Option<String>| c.as_ref().map(|t| format!(" #{t}")).unwrap_or_default();
             match item {
                 Item::Extern(e) => {
                     out.push_str(&format!(
-                        "extern {}: {} {}\n",
-                        e.slug, e.block_type, e.match_spec
+                        "extern {}: {} {}{}\n",
+                        e.slug,
+                        e.block_type,
+                        e.match_spec,
+                        tail(&e.comment)
                     ));
                 }
                 Item::Block(b) => {
@@ -177,20 +222,42 @@ impl Module {
                     if let Some(t) = &b.title {
                         out.push_str(&format!(" {}", quote(t)));
                     }
-                    if !b.params.is_empty() {
-                        out.push_str(" {\n");
-                        for (k, v) in &b.params {
-                            out.push_str(&format!("\t{k} = {}\n", value_token(v)));
+                    if b.body.is_empty() {
+                        out.push_str(&tail(&b.comment));
+                    } else {
+                        out.push_str(&format!(" {{{}\n", tail(&b.comment)));
+                        for bi in &b.body {
+                            match bi {
+                                BodyItem::Param(p) => out.push_str(&format!(
+                                    "\t{} = {}{}\n",
+                                    p.key,
+                                    value_token(&p.value),
+                                    tail(&p.comment)
+                                )),
+                                BodyItem::Comment(text) => {
+                                    out.push_str(&format!("\t#{text}\n"));
+                                }
+                            }
                         }
                         out.push('}');
                     }
                     out.push('\n');
                 }
                 Item::Wire(w) => {
-                    out.push_str(&format!("wire {} -> {}\n", w.from, w.to));
+                    out.push_str(&format!(
+                        "wire {} -> {}{}\n",
+                        w.from,
+                        w.to,
+                        tail(&w.comment)
+                    ));
                 }
                 Item::Set(s) => {
-                    out.push_str(&format!("set {} = {}\n", s.target, value_token(&s.value)));
+                    out.push_str(&format!(
+                        "set {} = {}{}\n",
+                        s.target,
+                        value_token(&s.value),
+                        tail(&s.comment)
+                    ));
                 }
                 Item::Comment(text) => {
                     out.push_str(&format!("#{text}\n"));

@@ -17,13 +17,18 @@ enum Tok {
     RBrace,
 }
 
-fn lex(line: &str, lineno: usize) -> Result<Vec<Tok>> {
+fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
     let err = |msg: String| Error::IrParse { line: lineno, msg };
     let mut toks = Vec::new();
+    let mut comment = None;
     let mut chars = line.chars().peekable();
     while let Some(&c) = chars.peek() {
         match c {
-            '#' => break, // comment to end of line
+            '#' => {
+                chars.next();
+                comment = Some(chars.collect::<String>());
+                break;
+            }
             c if c.is_whitespace() => {
                 chars.next();
             }
@@ -116,7 +121,7 @@ fn lex(line: &str, lineno: usize) -> Result<Vec<Tok>> {
             other => return Err(err(format!("unexpected character `{other}`"))),
         }
     }
-    Ok(toks)
+    Ok((toks, comment))
 }
 
 fn opt(c: Option<char>) -> String {
@@ -131,16 +136,16 @@ pub fn parse(src: &str) -> Result<Module> {
     for (i, raw) in src.lines().enumerate() {
         let lineno = i + 1;
         let err = |msg: String| Error::IrParse { line: lineno, msg };
-        // Whole-line comments are kept as items (so formatting preserves
-        // them) — except inside block bodies, where they are dropped.
-        if open_block.is_none()
-            && let Some(text) = raw.trim_start().strip_prefix('#')
-        {
-            items.push(Item::Comment(text.to_string()));
-            continue;
-        }
-        let toks = lex(raw, lineno)?;
+        let (toks, comment) = lex(raw, lineno)?;
         if toks.is_empty() {
+            // Blank line, or a whole-line comment — kept verbatim as an
+            // item (or body item) so formatting is non-destructive.
+            if let Some(text) = comment {
+                match open_block.as_mut() {
+                    Some(block) => block.body.push(BodyItem::Comment(text)),
+                    None => items.push(Item::Comment(text)),
+                }
+            }
             continue;
         }
 
@@ -149,9 +154,18 @@ pub fn parse(src: &str) -> Result<Module> {
             match toks.as_slice() {
                 [Tok::RBrace] => {
                     items.push(Item::Block(open_block.take().unwrap()));
+                    // A comment trailing the `}` has no anchor of its own —
+                    // it becomes a whole-line comment after the block.
+                    if let Some(text) = comment {
+                        items.push(Item::Comment(text));
+                    }
                 }
                 [Tok::Ident(key), Tok::Eq, val] => {
-                    block.params.push((key.clone(), value_of(val, lineno)?));
+                    block.body.push(BodyItem::Param(ParamDecl {
+                        key: key.clone(),
+                        value: value_of(val, lineno)?,
+                        comment,
+                    }));
                 }
                 _ => {
                     return Err(err(
@@ -190,6 +204,7 @@ pub fn parse(src: &str) -> Result<Module> {
                         slug: check_slug(slug, lineno)?,
                         block_type: check_type(ty, lineno)?,
                         match_spec,
+                        comment,
                     }));
                 }
                 _ => {
@@ -209,7 +224,8 @@ pub fn parse(src: &str) -> Result<Module> {
                         slug: check_slug(slug, lineno)?,
                         block_type: check_type(ty, lineno)?,
                         title: None,
-                        params: Vec::new(),
+                        body: Vec::new(),
+                        comment,
                     },
                     [
                         Tok::Ident(slug),
@@ -220,7 +236,8 @@ pub fn parse(src: &str) -> Result<Module> {
                         slug: check_slug(slug, lineno)?,
                         block_type: check_type(ty, lineno)?,
                         title: Some(title.clone()),
-                        params: Vec::new(),
+                        body: Vec::new(),
+                        comment,
                     },
                     _ => {
                         return Err(err("expected `block <slug>: <Type> [\"Title\"] [{]`".into()));
@@ -252,6 +269,7 @@ pub fn parse(src: &str) -> Result<Module> {
                             slug: ts.clone(),
                             port: tp.clone(),
                         },
+                        comment,
                     }));
                 }
                 _ => {
@@ -273,6 +291,7 @@ pub fn parse(src: &str) -> Result<Module> {
                             port: port.clone(),
                         },
                         value: value_of(val, lineno)?,
+                        comment,
                     }));
                 }
                 _ => return Err(err("expected `set <slug>.<Port> = <value>`".into())),
@@ -361,7 +380,7 @@ set jal.TargetPos = 70
         assert_eq!(m.sets().count(), 1);
         let block = m.blocks().next().unwrap();
         assert_eq!(block.title.as_deref(), Some("Temp über 28"));
-        assert_eq!(block.params, vec![("Input2".to_string(), "28".to_string())]);
+        assert_eq!(block.params().collect::<Vec<_>>(), vec![("Input2", "28")]);
     }
 
     #[test]
@@ -371,6 +390,41 @@ set jal.TargetPos = 70
         let again = Module::parse(&text).unwrap();
         assert_eq!(m, again);
         assert_eq!(again.to_text(), text, "canonical form is a fixpoint");
+    }
+
+    #[test]
+    fn comments_are_preserved() {
+        let src = "\
+# header
+extern sonne: VirtualIn match iname \"VI3\" # the sun
+block t: GreaterEqual { # threshold block
+\t# body note
+\tInput2 = 28 # degrees
+} # done
+
+wire sonne.Q -> t.Input1 # main wire
+set t.Input2 = 30 # override
+";
+        let m = Module::parse(src).unwrap();
+        let text = m.to_text();
+        for needle in [
+            "# header",
+            "\"VI3\" # the sun",
+            "{ # threshold block",
+            "\t# body note",
+            "28 # degrees",
+            "-> t.Input1 # main wire",
+            "= 30 # override",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
+        }
+        // `} # done` has no anchor — it becomes its own line after the block
+        // (with the usual blank-line grouping between item kinds).
+        assert!(text.contains("}\n\n# done\n"), "{text}");
+        // Canonical form is a fixpoint.
+        let again = Module::parse(&text).unwrap();
+        assert_eq!(m, again);
+        assert_eq!(again.to_text(), text);
     }
 
     #[test]

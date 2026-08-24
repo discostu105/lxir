@@ -14,10 +14,12 @@
 //! config, not the IR view, so `decompile(compile(m))` is a faithful subset
 //! of `m`, not necessarily all of it.
 
-use crate::connectors::builtin;
+use crate::connectors::BUILTIN_TYPES;
 use crate::doc::{LoxoneDoc, ports};
 use crate::error::Result;
-use crate::ir::ast::{BlockDecl, ExternDecl, Item, MatchSpec, Module, PortRef, WireDecl};
+use crate::ir::ast::{
+    BlockDecl, BodyItem, ExternDecl, Item, MatchSpec, Module, ParamDecl, PortRef, WireDecl,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
@@ -30,12 +32,9 @@ pub struct DecompileOptions {
 
 impl Default for DecompileOptions {
     fn default() -> Self {
-        let managed_types = ["And", "Or", "Not", "Equal", "GreaterEqual"]
-            .into_iter()
-            .filter(|t| builtin(t).is_some())
-            .map(String::from)
-            .collect();
-        DecompileOptions { managed_types }
+        DecompileOptions {
+            managed_types: BUILTIN_TYPES.iter().map(|t| String::from(*t)).collect(),
+        }
     }
 }
 
@@ -122,15 +121,22 @@ pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, De
             slug: slug_of[uuid].clone(),
             block_type: obj.block_type.clone(),
             match_spec,
+            comment: None,
         }));
     }
 
     // Blocks, with `Def=` values as params.
     for o in &managed {
         let el = doc.element_at(&o.path).expect("path from objects()");
-        let params = ports(el)
+        let body = ports(el)
             .into_iter()
-            .filter_map(|p| Some((p.key, p.def?)))
+            .filter_map(|p| {
+                Some(BodyItem::Param(ParamDecl {
+                    key: p.key,
+                    value: p.def?,
+                    comment: None,
+                }))
+            })
             .collect();
         let slug = slug_of[&o.uuid].clone();
         items.push(Item::Block(BlockDecl {
@@ -139,7 +145,8 @@ pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, De
             // dropping it keeps decompile(compile(m)) minimal.
             title: o.title.clone().filter(|t| t != &slug),
             slug,
-            params,
+            body,
+            comment: None,
         }));
     }
 
@@ -155,6 +162,7 @@ pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, De
                 slug: slug_of[to].clone(),
                 port: tk.clone(),
             },
+            comment: None,
         };
         if seen.insert((wire.from.clone(), wire.to.clone())) {
             items.push(Item::Wire(wire));

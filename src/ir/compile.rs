@@ -138,7 +138,7 @@ pub fn compile(
                 refs.push(&s.target.port);
             }
         }
-        for (k, _) in &block.params {
+        for (k, _) in block.params() {
             refs.push(k);
         }
         for key in refs {
@@ -218,8 +218,8 @@ pub fn compile(
     // --- Def values on managed ports: block params first, `set` overrides.
     let mut managed_defs: BTreeMap<(String, String), String> = BTreeMap::new();
     for block in module.blocks() {
-        for (k, v) in &block.params {
-            managed_defs.insert((block.slug.clone(), k.clone()), v.clone());
+        for (k, v) in block.params() {
+            managed_defs.insert((block.slug.clone(), k.to_string()), v.to_string());
         }
     }
     for s in module.sets() {

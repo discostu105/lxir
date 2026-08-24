@@ -86,6 +86,23 @@ const THRESHOLD: &[PortSpec] = &[
     p("FallingEdge", Output),
 ];
 
+/// Every block type `builtin` knows — the complete mintable set.
+pub const BUILTIN_TYPES: &[&str] = &[
+    "And",
+    "Or",
+    "Not",
+    "Equal",
+    "NotEqual",
+    "Greater",
+    "GreaterEqual",
+    "Less",
+    "LessEqual",
+    "Formula",
+    "Monoflop",
+    "PulseGen",
+    "AnalogThresholdTrigger",
+];
+
 /// Verified port tables for the block types the compiler may create.
 /// Order = connector-index order.
 pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
@@ -353,6 +370,9 @@ mod tests {
             "OutputAPI direction unresolved — must not be mintable yet"
         );
         assert!(builtin("Memory").is_none(), "Q direction unresolved");
+        for t in BUILTIN_TYPES {
+            assert!(builtin(t).is_some(), "BUILTIN_TYPES lists `{t}`");
+        }
     }
 
     fn port(index: Option<u8>, sink: u32, source: u32, def: u32) -> ObservedPort {

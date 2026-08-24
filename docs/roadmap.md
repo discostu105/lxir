@@ -41,8 +41,9 @@ types) contradict each other. Results and methodology:
       `Formula`, `Switch` — prioritized by what real modules need.
 - [ ] Minting ports for extern types with observed (not just builtin)
       connector indexes, lifting the "port must exist in base" limitation.
-- [ ] Preserve trailing comments and comments inside block bodies (D10
-      currently drops them).
+- [x] Preserve trailing comments and comments inside block bodies (D10).
+      Trailing comments attach to their statement/parameter, body comments
+      are body items; `} # text` canonicalizes onto its own line.
 
 ## Stufe 1 — Templates
 

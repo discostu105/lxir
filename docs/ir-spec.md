@@ -14,12 +14,13 @@ module     = { line } ;
 line       = comment | extern | block | wire | set | body-line | blank ;
 
 comment    = "#" any-text ;                        (* whole line *)
-extern     = "extern" slug ":" type "match" kind string ;
+extern     = "extern" slug ":" type "match" kind string [ comment ] ;
 kind       = "uuid" | "iname" | "title" ;
-block      = "block" slug ":" type [ string ] [ "{" ] ;
-body-line  = param "=" value | "}" ;               (* only inside an open block *)
-wire       = "wire" slug "." port "->" slug "." port ;
-set        = "set" slug "." port "=" value ;
+block      = "block" slug ":" type [ string ] [ "{" ] [ comment ] ;
+body-line  = param "=" value [ comment ] | comment | "}" [ comment ] ;
+                                                   (* only inside an open block *)
+wire       = "wire" slug "." port "->" slug "." port [ comment ] ;
+set        = "set" slug "." port "=" value [ comment ] ;
 
 slug       = lowercase-letter { lowercase-letter | digit | "_" } ;
 type       = uppercase-letter { letter | digit } ;          (* PascalCase *)
@@ -34,11 +35,14 @@ escape     = '\"' | "\\" | "\n" ;
 Notes:
 
 - A `#` outside a string starts a comment that runs to end of line.
-  **Whole-line** comments are preserved by the formatter (they are AST
-  items); trailing comments after a statement, and comments inside `{ … }`
-  bodies, parse but are **not** preserved.
+  All comments are preserved by the formatter: whole-line comments are AST
+  items, trailing comments attach to their statement (or parameter line),
+  and whole-line comments inside `{ … }` bodies are body items. The one
+  canonicalization: a comment trailing a closing `}` moves onto its own
+  line after the block.
 - The `{` opening a parameter body must be the last token of the `block`
-  line. The closing `}` stands on its own line.
+  line (a trailing comment may follow it). The closing `}` stands on its
+  own line.
 - Whitespace is insignificant except as a token separator. Indentation is
   conventional (the formatter uses one tab inside bodies).
 

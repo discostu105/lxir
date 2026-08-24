@@ -142,9 +142,11 @@ Anything unverified is an error, not a heuristic:
   Loxone Config; tracked in [roadmap.md](roadmap.md).
 - **D9 — Transport is out of scope.** The library is pure (bytes → bytes);
   FTP/LoxCC/credentials live in `lox` / `lox-cli`.
-- **D10 — Whole-line comments are AST items**, so `lxir fmt` is
-  non-destructive. Trailing comments and comments inside block bodies are
-  documented as not preserved (v0).
+- **D10 — All comments survive the round trip**, so `lxir fmt` is
+  non-destructive: whole-line comments are AST items, trailing comments
+  attach to their statement or parameter line, and comments inside block
+  bodies are body items. The one canonicalization: `} # text` moves the
+  comment onto its own line after the block.
 - **D11 — Counters (`NextObj`) advance by one per minted managed object**
   and never decrease (`Lockfile::absorb_counters` takes the max of lock and
   document). Whether ports also consume `NextObj` is unknown; object-only is
