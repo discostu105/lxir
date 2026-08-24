@@ -1,51 +1,91 @@
-# lxir — Loxone config model
+# lxir
 
-**lxir** (pronounced like *elixir*) is a standalone Rust library for treating
-Loxone Miniserver configurations
-(`.Loxone` XML) as **source code**: parse them losslessly, understand their
-identity model, express logic in a small text IR, and compile that IR back
-into a config deterministically — with a lockfile pinning every UUID, the way
-`terraform.tfstate` / `package-lock.json` pin identity for their ecosystems.
+**lxir** (pronounced like *elixir*) is **config-as-code for Loxone**: a
+small text language for Miniserver logic — blocks, wires, parameters — and
+a deterministic compiler that applies it to a real `.Loxone` config without
+disturbing anything else in the file.
 
-This crate implements the core of the design sketched in
-[`lox-ir-design-skizze.md`](lox-ir-design-skizze.md), validated against real
-Miniserver configs (see *Validation* below).
+```text
+# Beschattung Süd — Beispielmodul.
+# Externe Objekte gehören Loxone Config; Blöcke gehören dem Compiler.
 
-## Scope
+extern aussentemp: VirtualIn match iname "VI1"
+extern wind_alarm: VirtualIn match iname "VI2"
+extern sonne: VirtualIn match iname "VI3"
+extern jal_sued: AutoJalousie match title "Beschattung Süd"
 
-**In scope** — the pure model, reusable by any tool:
+block temp_hoch: GreaterEqual "Temp über 28" {
+	Input2 = 28
+}
+block beschatten: And
 
-| Module | What it does |
-|---|---|
-| `xml` | Lossless concrete-syntax parser/writer for `.Loxone` XML. Handles Loxone's spec-violations (attribute names starting with digits, raw newlines inside attribute values) that break conforming XML parsers. |
-| `uuid` | The anatomy of Loxone UUIDs — creation time, mint counters, minting-machine id, connector index — plus a deterministic minter (no clock, no RNG). |
-| `doc` | Semantic read layer: objects, ports, wires, counters, pages. |
-| `connectors` | Port-direction knowledge: a small **verified** builtin table (`And`, `Or`, `Not`, `Equal`, `GreaterEqual`) and evidence-based inference (`observe`) over real configs. |
-| `ir` | The text IR: `extern` / `block` / `wire` / `set` statements; parser, canonical printer, `compile` (base + IR + lockfile → config), `decompile` (config → IR view). |
-| `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, `set` originals. |
-| `diff` | Semantic diff between two configs, with locale-rename noise flagged (a locale switch renames every built-in object title). |
+wire aussentemp.Q -> temp_hoch.Input1
+wire temp_hoch.Q -> beschatten.I1
+wire sonne.Q -> beschatten.I2
+wire beschatten.Q -> jal_sued.AutoShade
+wire wind_alarm.Q -> jal_sued.Safety
 
-**Out of scope** — deliberately: transport (FTP/HTTP to the Miniserver),
-LoxCC compression, credentials. Those live in the `lox` / `lox-cli` CLIs,
-which are the intended consumers of this crate.
+set jal_sued.TargetPos = 70
+```
+
+`lxir compile` turns this into exactly the XML Loxone Config would have
+drawn — UUIDs, counters, per-port connectors, canvas layout — and records
+every identity it minted in a lockfile, so the next compile changes only
+what you changed.
+
+## Why
+
+A Miniserver's entire behavior lives in one opaque `.Loxone` XML file,
+editable only in a Windows GUI. There is no reviewable diff, no reuse (ten
+shading rules are ten hand-drawn copies), no way to test before uploading
+to the house, and no safe way for scripts or AI agents to author logic —
+the file's identity model (UUIDs, counters, per-port identifiers) is
+undocumented, and naive editing corrupts it.
+
+lxir treats the config the way Terraform treats infrastructure: the `.lxir`
+module is source, the `.Loxone` file is the deployed artifact, and the
+lockfile — like `terraform.tfstate` — pins every identity in between. A
+wire change becomes a one-line diff in a pull request.
+
+Crucially, the language describes **only the logic you choose to manage**.
+Everything else — hardware, rooms, visualization, other people's logic —
+passes through the compiler byte-for-byte untouched. Manage one shading
+rule today; the rest of the config never notices. See
+[docs/vision.md](docs/vision.md).
+
+## How it stays safe
+
+- **Three writers, one file.** Loxone Config, the Miniserver itself
+  (app-created autopilots, device registrations), and this compiler all
+  write the config. The compiler owns *only* its managed blocks, the wires
+  it drew onto extern ports, and the `Def=` values it `set` — everything
+  else round-trips untouched through a byte-faithful XML layer.
+- **Identity is UUID, not title.** Titles are locale-volatile (one observed
+  save renamed 111 built-ins). Externs match by `uuid` > `iname` > `title`;
+  once resolved, the lockfile pins the UUID — object *and* every port.
+- **Determinism.** Same base + module + lock + options → same output bytes.
+  New UUIDs come from a deterministic minter (no clock, no RNG), are
+  recorded in the lock, and never change again. Recompiling the compiler's
+  own output is a byte-level fixpoint (tested).
+- **Refuse, never guess.** Only live-verified block types can be minted;
+  wiring a port the base config doesn't have is an error, not an invented
+  UUID; a managed block vanishing from source is an error unless removal is
+  explicit.
 
 ## Quickstart (CLI)
 
-The `lxir` binary wraps the library so the pipeline works from a shell —
-for humans, scripts, and AI agents alike:
-
 ```sh
-cargo run --bin lxir -- help          # or: cargo install --path .
+cargo run --bin lxir -- help         # or: cargo install --path .
 
-lxir check modules/beschattung.lxir    # parse + validate (line-numbered errors)
+lxir check modules/beschattung.lxir  # parse + validate (line-numbered errors)
 lxir fmt --write modules/beschattung.lxir
 lxir compile --base current.Loxone --module modules/beschattung.lxir \
-            --lock modules/beschattung.lock.json --out out.Loxone \
-            --serial 504F94112233
-lxir diff current.Loxone out.Loxone   # semantic diff, locale noise flagged
-lxir decompile current.Loxone         # IR view of an existing config
-lxir observe current.Loxone           # port-direction evidence (JSON)
-lxir roundtrip current.Loxone         # byte-fidelity self-check
+             --lock modules/beschattung.lock.json --out out.Loxone \
+             --serial 504F94112233
+lxir diff current.Loxone out.Loxone  # semantic diff, locale noise flagged
+lxir decompile current.Loxone        # IR view of an existing config
+lxir observe current.Loxone          # port-direction evidence (JSON)
+lxir roundtrip current.Loxone        # byte-fidelity self-check
 ```
 
 ## Quickstart (library)
@@ -69,83 +109,64 @@ std::fs::write("out.Loxone", out.to_bytes())?;
 lock.save(std::path::Path::new("beschattung.lock.json"))?;
 ```
 
-The IR itself ([`examples/ir/beschattung.lxir`](examples/ir/beschattung.lxir)):
-
-```text
-extern sonne: VirtualIn match iname "VI3"
-extern jal_sued: AutoJalousie match title "Beschattung Süd"
-
-block temp_hoch: GreaterEqual "Temp über 28" {
-	Input2 = 28
-}
-block beschatten: And
-
-wire temp_hoch.Q -> beschatten.I1
-wire beschatten.Q -> jal_sued.AutoShade
-set jal_sued.TargetPos = 70
-```
-
-Runnable examples (`cargo run --example …`): `compile`, `decompile`, `diff`,
-`observe`, `roundtrip_check`. The committed `examples/out/` files are the
-output of the `compile` example; running it again reproduces them
+Runnable examples (`cargo run --example …`): `compile`, `decompile`,
+`diff`, `observe`, `roundtrip_check`. The committed `examples/out/` files
+are the output of the `compile` example; running it again reproduces them
 byte-for-byte.
+
+## Scope
+
+**In scope** — the pure model, reusable by any tool:
+
+| Module | What it does |
+|---|---|
+| `xml` | Lossless concrete-syntax parser/writer for `.Loxone` XML. Handles Loxone's spec-violations (attribute names starting with digits, raw newlines inside attribute values) that break conforming XML parsers. |
+| `uuid` | The anatomy of Loxone UUIDs — creation time, mint counters, minting-machine id, connector index — plus a deterministic minter (no clock, no RNG). |
+| `doc` | Semantic read layer: objects, ports, wires, counters, pages. |
+| `connectors` | Port-direction knowledge: a small **verified** builtin table (`And`, `Or`, `Not`, `Equal`, `GreaterEqual`) and evidence-based inference (`observe`) over real configs. |
+| `ir` | The text language: `extern` / `block` / `wire` / `set`; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view). |
+| `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, `set` originals. |
+| `diff` | Semantic diff between two configs, with locale-rename noise flagged. |
+
+**Out of scope** — deliberately: transport (FTP/HTTP to the Miniserver),
+LoxCC compression, credentials. Those live in the `lox` / `lox-cli` CLIs,
+which are the intended consumers of this crate.
 
 ## Documentation
 
 | Doc | Contents |
 |---|---|
-| [docs/vision.md](docs/vision.md) | Why config-as-code for Loxone; the Terraform analogy; non-goals |
-| [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D11 |
+| [docs/vision.md](docs/vision.md) | Why config-as-code for Loxone; the Terraform analogy; the two-masters workflow |
+| [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D12 |
 | [docs/ir-spec.md](docs/ir-spec.md) | Normative spec of the `.lxir` language (v0) |
 | [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v1) and its invariants |
 | [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
 | [docs/implementation.md](docs/implementation.md) | Module map, testing strategy, how to extend |
 | [docs/agents.md](docs/agents.md) | Operational guide for AI agents using the toolchain |
-| [docs/roadmap.md](docs/roadmap.md) | Stufen −1…3, tooling, open questions |
+| [docs/roadmap.md](docs/roadmap.md) | Stufen −1…4: hardening, templates, expressions, verification, multi-module |
 
 [`AGENTS.md`](AGENTS.md) at the repo root gives agents the build/test
 commands and repo rules at a glance.
 
 ## Editor support
 
-`editor/vscode/` contains a declarative VS Code extension for `.lxir` files:
-syntax highlighting, comment/bracket support, and snippets for all four
-statement forms. Install by symlinking it into `~/.vscode/extensions/` (see
-[editor/vscode/README.md](editor/vscode/README.md)). A language server
-(completion of port names, live diagnostics) is scoped on the roadmap;
-until then `lxir check` / `lxir fmt --check` cover the validation loop.
-
-## The model
-
-- **Three writers, one file.** Loxone Config, the Miniserver itself
-  (app-created autopilots, device registrations), and this compiler all
-  write the config. The compiler therefore owns *only* its managed blocks,
-  the wires it drew onto extern ports, and the `Def=` values it `set` —
-  everything else round-trips untouched through the lossless XML layer.
-- **Identity is UUID, not title.** Titles are locale-volatile (a save in a
-  differently-localized Loxone Config renamed 111 built-ins in one observed
-  case). Externs match by `uuid` > `iname` > `title`; once resolved, the
-  lockfile pins the UUID.
-- **Determinism.** Same base + module + lock + options → same output bytes.
-  New UUIDs come from a deterministic minter (time and machine id are inputs;
-  port entities derive from `sha256(slug)`), and are recorded in the lock, so
-  they never change again. Recompiling the compiler's own output is a
-  fixpoint (tested).
-- **Refuse, never guess.** Only verified block types can be minted; wiring an
-  extern port whose `<Co>` is absent is an error, not an invented UUID;
-  a managed block vanishing from source is an error unless removal is
-  explicit (`allow_removals`, or `Lockfile::remove_object` to orphan it).
+`editor/vscode/` contains a declarative VS Code extension for `.lxir`
+files: syntax highlighting, comment/bracket support, and snippets for all
+four statement forms. Install by symlinking it into `~/.vscode/extensions/`
+(see [editor/vscode/README.md](editor/vscode/README.md)). A language server
+is scoped on the roadmap; until then `lxir check` / `lxir fmt --check`
+cover the validation loop.
 
 ## Validation
 
 - The XML layer round-trips **byte-identically** on six real Miniserver
-  configs spanning two years of history and three writers (117 KB–1.34 MB) —
-  verified against a live installation. Real configs contain personal data
-  and are not committed; point `LXC_CORPUS` at a directory of `.Loxone`
-  files to run the corpus test:
+  configs spanning two years of history and three writers (117 KB–1.34 MB)
+  — verified against a live installation. Real configs contain personal
+  data and are not committed; point `LXIR_CORPUS` at a directory of
+  `.Loxone` files to run the corpus test:
 
   ```sh
-  LXC_CORPUS=~/loxone-backups cargo test --test roundtrip
+  LXIR_CORPUS=~/loxone-backups cargo test --test roundtrip
   ```
 
 - UUID anatomy (epoch 2009-01-01, `ffff` + machine-id object tails,
@@ -153,21 +174,22 @@ until then `lxir check` / `lxir fmt --check` cover the validation loop.
   established from live evidence and is encoded in `uuid`'s tests.
 - Known assumption (no live evidence either way): connector indexes for
   grown gate inputs (`I3`+) are assigned *after* the builtin ports. To be
-  verified the first time a compiled config with a grown gate passes through
-  Loxone Config.
+  verified the first time a compiled config with a grown gate passes
+  through Loxone Config.
 
 ## Relationship to `lox` / `lox-cli`
 
-`lox` (server API, transport, LoxCC) and `lox-cli` (config manipulation CLI,
-DOM-level writer) already exist. This crate is the missing foundation both
-lack: byte-faithful serialization, the UUID/identity model, and the
-IR/lockfile pipeline. The intended end state is `lox-cli` (or a successor)
-depending on `lxir` for everything config-model-related.
+[`lox`](https://github.com/discostu105/lox) (server API, transport, LoxCC)
+and `lox-cli` (config manipulation CLI, DOM-level writer) already exist.
+This crate is the missing foundation both lack: byte-faithful
+serialization, the UUID/identity model, and the IR/lockfile pipeline. The
+intended end state is `lox-cli` (or a successor) depending on `lxir` for
+everything config-model-related.
 
-## Status / License
+## License
 
-Early v0. The name is settled: **lxir** (pronounced like *elixir*), free on
-crates.io as of 2026-08-24. The crate stays `publish = false` because **the
-license is deliberately not yet chosen** (see Skizze §9.5 — the surrounding
-repos are GPL-3/AGPL-3 + commercial dual-licensed), an open decision before
-any publication.
+Dual-licensed, the same scheme as `lox`: use it under the
+[GPL-3.0](LICENSE-GPL), or obtain a
+[commercial license](LICENSE-COMMERCIAL) for proprietary redistribution —
+see [LICENSE](LICENSE). Early v0; `publish = false` until crates.io
+publication is wanted.

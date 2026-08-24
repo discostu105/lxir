@@ -5,7 +5,8 @@ edition = "2024"
 rust-version = "1.88"
 description = "Loxone config model: lossless .Loxone XML core, UUID/identity model, lockfile, IR compile/decompile, semantic diff"
 repository = "https://github.com/discostu105/lxir"
-# license: intentionally unset for now — see README "License" (open decision, Skizze §9.5).
+# Dual-licensed: recipient chooses GPL-3.0 or a commercial license (see LICENSE).
+license = "GPL-3.0-or-later OR LicenseRef-Commercial"
 publish = false
 
 [dependencies]

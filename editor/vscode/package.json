@@ -4,7 +4,7 @@
   "description": "Syntax highlighting and snippets for lxir modules (.lxir) — Loxone config-as-code",
   "version": "0.1.0",
   "publisher": "lxir",
-  "license": "SEE LICENSE IN ../../README.md",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
     "vscode": "^1.75.0"
   },

@@ -12,7 +12,7 @@ toolchain (the loop, hard rules, error remedies).
 cargo test                       # 37+ tests: unit, pipeline, roundtrip
 cargo clippy --all-targets       # must be warning-free
 cargo fmt --check
-LXC_CORPUS=<dir> cargo test --test roundtrip   # opt-in: real configs
+LXIR_CORPUS=<dir> cargo test --test roundtrip   # opt-in: real configs
 cargo run --bin lxir -- help      # the CLI
 ```
 
@@ -22,7 +22,7 @@ cargo run --bin lxir -- help      # the CLI
   Never hand-edit `*.lock.json` beyond the documented operations.
 - **Never commit real Miniserver configs** (personal data). Synthetic
   fixtures live in `examples/configs/`; real ones go in an untracked corpus
-  dir referenced via `LXC_CORPUS`.
+  dir referenced via `LXIR_CORPUS`.
 - The builtin connector table (`src/connectors.rs`) only accepts
   **live-verified** entries — the growth workflow is in
   [docs/implementation.md](docs/implementation.md).
@@ -31,8 +31,9 @@ cargo run --bin lxir -- help      # the CLI
   about the XML.
 - Keep `cargo test`, clippy, and fmt clean; regenerate `examples/out/` via
   `cargo run --example compile` when compiler output changes.
-- License and crates.io name are **deliberately undecided** — do not add a
-  license file or publish metadata.
+- Dual-licensed GPL-3.0-or-later / commercial (see [LICENSE](LICENSE)) —
+  same scheme as the sibling `lox` repo. `publish = false` until crates.io
+  publication is wanted.
 
 ## Doc map
 
@@ -40,7 +41,7 @@ cargo run --bin lxir -- help      # the CLI
 |---|---|
 | [README.md](README.md) | overview, quickstart |
 | [docs/vision.md](docs/vision.md) | why this exists |
-| [docs/design.md](docs/design.md) | architecture, decisions D1–D11 |
+| [docs/design.md](docs/design.md) | architecture, decisions D1–D12 |
 | [docs/ir-spec.md](docs/ir-spec.md) | normative `.lxir` language spec |
 | [docs/lockfile-spec.md](docs/lockfile-spec.md) | lockfile v1 spec |
 | [docs/loxone-format.md](docs/loxone-format.md) | validated `.Loxone` format facts |

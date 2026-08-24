@@ -149,3 +149,9 @@ Anything unverified is an error, not a heuristic:
   and never decrease (`Lockfile::absorb_counters` takes the max of lock and
   document). Whether ports also consume `NextObj` is unknown; object-only is
   the conservative reading of observed files.
+- **D12 — A dedicated grammar, not a YAML/KDL/HCL host syntax.** Weighed in
+  the sketch phase: YAML would have been the fastest start, but wiring
+  expressed in YAML is exactly the ergonomics this project exists to remove,
+  and the planned sugar (expressions, templates — see
+  [roadmap.md](roadmap.md)) wants first-class syntax. The grammar stays
+  small enough to hand-parse ([ir-spec.md](ir-spec.md)).

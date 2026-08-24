@@ -48,6 +48,25 @@ config never notices.
   111-renames-per-save locale churn that plagues title-based tooling is
   irrelevant.
 
+## Living with two masters
+
+Loxone Config remains a legitimate writer — hardware, visualization, the
+occasional manual edit. Drift is not prevented; it becomes an explicit,
+reviewable step:
+
+```text
+everyday:             edit .lxir → check → compile → diff → upload
+after a GUI session:  download → decompile
+    ├─ managed logic changed?    → review it as a source diff, commit
+    ├─ only layout or hardware?  → lockfile update, source untouched
+    └─ new unknown objects?      → stay unmanaged, pass through untouched;
+                                   adoptable into source later (roadmap)
+```
+
+Gradual adoption is also the migration path for existing installations: a
+real config moves block-by-block from unmanaged to managed — never
+big-bang.
+
 ## Non-goals
 
 - Replacing Loxone Config. Hardware setup, device pairing, room/category
@@ -61,9 +80,12 @@ config never notices.
 
 ## Where this came from
 
-The German design sketch [`../lox-ir-design-skizze.md`](../lox-ir-design-skizze.md)
-proposed the concept; a live investigation against a real Miniserver
-(2026-08-24, config v273, ~1900 objects, six config generations spanning two
-years) validated its core assumptions and sharpened the identity model. The
-findings are condensed in [loxone-format.md](loxone-format.md); the resulting
-architecture in [design.md](design.md).
+The concept began as a German design sketch ("lox-ir — Design-Skizze",
+preserved in this repo's git history) proposing the IR, the
+lockfile-as-tfstate idea, templates, expression sugar, and sim-backed
+tests. A live investigation against a real Miniserver (2026-08-24, config
+v273, ~1900 objects, six config generations spanning two years) validated
+its core assumptions and sharpened the identity model. The findings are
+condensed in [loxone-format.md](loxone-format.md); the resulting
+architecture in [design.md](design.md); the sketch ideas not yet
+implemented live on in [roadmap.md](roadmap.md).
