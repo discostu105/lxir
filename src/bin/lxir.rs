@@ -14,8 +14,11 @@ const USAGE: &str = "\
 lxir — Loxone config-as-code toolchain
 
 USAGE:
-  lxir check <module.lxir>
-        Parse and validate an IR module (errors carry line numbers).
+  lxir check [--json] <module.lxir>
+        Parse and validate an IR module: syntax, references, and managed
+        block types/ports/directions against the builtin table (no base
+        config needed; parse errors carry line numbers). --json prints a
+        machine-readable result on stdout and still exits 1 on errors.
 
   lxir fmt [--write | --check] <module.lxir>
         Print the canonical form. --write rewrites the file in place;
@@ -67,7 +70,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
             print!("{USAGE}");
             Ok(ExitCode::from(if args.is_empty() { 2 } else { 0 }))
         }
-        ["check", path] => cmd_check(path),
+        ["check", rest @ ..] => cmd_check(rest),
         ["fmt", rest @ ..] => cmd_fmt(rest),
         ["compile", rest @ ..] => cmd_compile(rest),
         ["decompile", path] => cmd_decompile(path),
@@ -91,16 +94,61 @@ fn read_doc(path: &str) -> Result<LoxoneDoc, AnyError> {
     Ok(LoxoneDoc::parse(&bytes).map_err(|e| format!("{path}: {e}"))?)
 }
 
-fn cmd_check(path: &str) -> Result<ExitCode, AnyError> {
-    let m = read_module(path)?;
-    println!(
-        "OK: {} externs, {} blocks, {} wires, {} sets",
-        m.externs().count(),
-        m.blocks().count(),
-        m.wires().count(),
-        m.sets().count()
-    );
-    Ok(ExitCode::SUCCESS)
+fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
+    let (json, path) = match args {
+        [path] => (false, *path),
+        ["--json", path] | [path, "--json"] => (true, *path),
+        _ => return Err("usage: lxir check [--json] <module.lxir>".into()),
+    };
+    let src = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    // Full static validation: parse (syntax + references), then types,
+    // ports, and wire directions against the builtin table.
+    let checked = Module::parse(&src).and_then(|m| lxir::ir::validate_ports(&m).map(|()| m));
+    match checked {
+        Ok(m) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "ok": true, "path": path, "counts": {
+                        "externs": m.externs().count(), "blocks": m.blocks().count(),
+                        "wires": m.wires().count(), "sets": m.sets().count(),
+                        "lets": m.lets().count(), "removed": m.removed().count(),
+                        "moved": m.moved().count(),
+                    }})
+                );
+            } else {
+                println!(
+                    "OK: {} externs, {} blocks, {} wires, {} sets, {} lets, \
+                     {} removed, {} moved",
+                    m.externs().count(),
+                    m.blocks().count(),
+                    m.wires().count(),
+                    m.sets().count(),
+                    m.lets().count(),
+                    m.removed().count(),
+                    m.moved().count()
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) if json => {
+            // Structured diagnostics: parse errors carry a 1-based line,
+            // semantic errors none. The parser is fail-fast, so there is
+            // at most one error per run.
+            let line = match &e {
+                lxir::Error::IrParse { line, .. } => Some(*line),
+                _ => None,
+            };
+            println!(
+                "{}",
+                serde_json::json!({ "ok": false, "path": path, "errors": [
+                    { "line": line, "message": e.to_string() },
+                ]})
+            );
+            Ok(ExitCode::FAILURE)
+        }
+        Err(e) => Err(format!("{path}: {e}").into()),
+    }
 }
 
 fn cmd_fmt(args: &[&str]) -> Result<ExitCode, AnyError> {

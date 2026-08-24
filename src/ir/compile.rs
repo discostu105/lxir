@@ -29,7 +29,8 @@
 use crate::connectors::{PortDir, builtin};
 use crate::doc::{Counters, LoxoneDoc, ports};
 use crate::error::{Error, Result};
-use crate::ir::ast::{MatchSpec, Module};
+use crate::ir::ast::{MatchSpec, Module, Value};
+use crate::ir::validate::{suggest, validate_ports};
 use crate::lock::{Layout, LockedExternal, LockedObject, LockedWire, Lockfile, sha256_hex};
 use crate::uuid::{Minter, entity_for_slug};
 use crate::xml::Element;
@@ -48,10 +49,12 @@ pub struct CompileOptions {
     pub page_title: Option<String>,
     /// A managed block present in the lock but missing from source is a
     /// hard error by default (protection against accidental deletion).
-    /// With `allow_removals`, it is deleted from the config and dropped
-    /// from the lock instead — the destructive-apply path. The third
-    /// option, [`Lockfile::remove_object`], *forgets* the block, leaving
-    /// its XML in the config as an unmanaged orphan.
+    /// The preferred authorization is a `removed <slug>` statement in the
+    /// module — scoped and reviewable. `allow_removals` is the blunt
+    /// alternative: *every* vanished block is deleted from the config and
+    /// dropped from the lock. The third option,
+    /// [`Lockfile::remove_object`], *forgets* the block, leaving its XML
+    /// in the config as an unmanaged orphan.
     pub allow_removals: bool,
 }
 
@@ -71,17 +74,52 @@ pub fn compile(
     opts: &CompileOptions,
 ) -> Result<LoxoneDoc> {
     module.validate()?;
+    validate_ports(module)?;
 
-    // --- Sync check: the lock must not know managed blocks the source lost.
+    // --- Apply `moved` statements to the lock (identity surgery, in
+    //     source). Idempotent: once the new slug carries the entry, the
+    //     statement is done.
+    for mv in module.moved() {
+        match (
+            lock.objects.contains_key(&mv.from),
+            lock.objects.contains_key(&mv.to),
+        ) {
+            (true, false) => lock.rename_object(&mv.from, &mv.to)?,
+            (true, true) => {
+                return Err(Error::Compile(format!(
+                    "moved `{from} -> {to}`: both slugs are in the lockfile — \
+                     `{to}` already has its own identity; remove one entry first \
+                     (Lockfile::remove_object)",
+                    from = mv.from,
+                    to = mv.to
+                )));
+            }
+            (false, true) => {} // already applied — the statement is done
+            (false, false) => {
+                return Err(Error::Compile(format!(
+                    "moved `{} -> {}`: neither slug is in the lockfile — nothing to rename",
+                    mv.from, mv.to
+                )));
+            }
+        }
+    }
+
+    // --- Sync check: the lock must not know managed blocks the source
+    //     lost, unless the removal is authorized (per-slug via `removed`,
+    //     or globally via allow_removals).
     let src_slugs: BTreeSet<String> = module.blocks().map(|b| b.slug.clone()).collect();
+    let removed_slugs: BTreeSet<&str> = module.removed().map(|r| r.slug.as_str()).collect();
     if !opts.allow_removals
-        && let Some(slug) = lock.objects.keys().find(|s| !src_slugs.contains(*s))
+        && let Some(slug) = lock
+            .objects
+            .keys()
+            .find(|s| !src_slugs.contains(*s) && !removed_slugs.contains(s.as_str()))
     {
         return Err(Error::Compile(format!(
             "managed block `{slug}` is in the lockfile but not in the source; \
-             if the removal is intended, compile with allow_removals to delete it, \
-             or Lockfile::remove_object(\"{slug}\") to orphan it \
-             (rename_object for a rename)"
+             if the removal is intended, add `removed {slug}` to the module \
+             (or compile with allow_removals); use `moved {slug} -> <new_slug>` \
+             for a rename, or Lockfile::remove_object(\"{slug}\") to orphan it"
         )));
     }
 
@@ -96,8 +134,8 @@ pub fn compile(
     for obj in lock.objects.values() {
         doc.remove_by_uuid(&obj.uuid);
     }
-    // Vanished slugs (only reachable with allow_removals) are now deleted
-    // from the config; drop their identity too.
+    // Vanished slugs (authorized via `removed` or allow_removals) are now
+    // deleted from the config; drop their identity too.
     lock.objects.retain(|slug, _| src_slugs.contains(slug));
     let old_wires = std::mem::take(&mut lock.extern_wires);
     for w in &old_wires {
@@ -114,54 +152,9 @@ pub fn compile(
     let mut managed: BTreeMap<String, PlannedBlock> = BTreeMap::new();
     let mut py_cursor = next_free_py(lock);
     for block in module.blocks() {
-        let specs = builtin(&block.block_type).ok_or_else(|| {
-            Error::Compile(format!(
-                "block `{}`: type `{}` is not in the verified builtin table and cannot be created",
-                block.slug, block.block_type
-            ))
-        })?;
+        // Type, port names, and directions were checked by validate_ports.
+        let specs = builtin(&block.block_type).expect("validate_ports admitted the type");
         let keys: Vec<String> = specs.iter().map(|s| s.key.to_string()).collect();
-        let mut refs: Vec<&str> = Vec::new();
-        for w in module.wires() {
-            for r in [&w.from, &w.to] {
-                if r.slug == block.slug {
-                    refs.push(&r.port);
-                }
-            }
-        }
-        for s in module.sets() {
-            if s.target.slug == block.slug {
-                refs.push(&s.target.port);
-            }
-        }
-        for (k, _) in block.params() {
-            refs.push(k);
-        }
-        for key in refs {
-            if keys.iter().any(|k| k == key) {
-                continue;
-            }
-            // Loxone Config 17 silently DELETES off-descriptor connectors
-            // (and their wires) on save — verified via the Wine oracle with
-            // a grown `I3` on `And`. Gates are fixed two-input; refusing here
-            // is what keeps compiled logic from vanishing.
-            let gate_hint = if matches!(block.block_type.as_str(), "And" | "Or")
-                && key
-                    .strip_prefix('I')
-                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
-            {
-                "; Loxone Config gates are fixed two-input (a grown I3 is \
-                 silently deleted on save) — cascade 2-input gates instead"
-            } else {
-                ""
-            };
-            return Err(Error::Compile(format!(
-                "unknown port `{key}` on block `{}` (type `{}`); known ports: {}{gate_hint}",
-                block.slug,
-                block.block_type,
-                keys.join(", ")
-            )));
-        }
 
         // Pin identity: reuse the lock entry, minting only what is missing.
         // For a brand-new block, ports are minted before the object —
@@ -218,19 +211,14 @@ pub fn compile(
         );
     }
 
-    // --- Def values on managed ports: block params first, `set` overrides.
+    // --- Def values on managed ports come from block params (`set` is for
+    //     extern ports only — enforced by validate). `let` references
+    //     resolve to their literal here.
+    let resolve = |v: &Value| -> Result<String> { Ok(module.resolve_value(v)?.to_string()) };
     let mut managed_defs: BTreeMap<(String, String), String> = BTreeMap::new();
     for block in module.blocks() {
         for (k, v) in block.params() {
-            managed_defs.insert((block.slug.clone(), k.to_string()), v.to_string());
-        }
-    }
-    for s in module.sets() {
-        if managed.contains_key(&s.target.slug) {
-            managed_defs.insert(
-                (s.target.slug.clone(), s.target.port.clone()),
-                s.value.clone(),
-            );
+            managed_defs.insert((block.slug.clone(), k.to_string()), resolve(v)?);
         }
     }
 
@@ -299,11 +287,8 @@ pub fn compile(
     lock.extern_wires.sort();
     lock.extern_wires.dedup();
 
-    // --- Sets on extern ports (managed ones became Def= above).
+    // --- Sets (always extern ports — validate rejects managed targets).
     for s in module.sets() {
-        if managed.contains_key(&s.target.slug) {
-            continue;
-        }
         let target = resolve_port(
             &doc,
             &managed,
@@ -312,7 +297,8 @@ pub fn compile(
             &s.target.port,
             PortDir::Param,
         )?;
-        let original = apply_def(&mut doc, &target.owner_uuid, &target.port_uuid, &s.value)?;
+        let value = resolve(&s.value)?;
+        let original = apply_def(&mut doc, &target.owner_uuid, &target.port_uuid, &value)?;
         lock.set_originals
             .entry(target.port_uuid)
             .or_insert(original);
@@ -485,14 +471,15 @@ fn resolve_port(
             is_extern: true,
         }),
         None => Err(Error::Compile(format!(
-            "extern `{slug}` has no port `{port}` in the base config; present ports: {}. \
+            "extern `{slug}` has no port `{port}` in the base config; present ports: {}{}. \
              (v0 cannot mint ports for unverified types — wire or set it once in Loxone \
              Config so the connector exists.)",
             known
                 .iter()
                 .map(|p| p.key.as_str())
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            suggest(port, known.iter().map(|p| p.key.as_str()))
         ))),
     }
 }

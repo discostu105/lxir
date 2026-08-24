@@ -50,7 +50,25 @@ types) contradict each other. Results and methodology:
       connector indexes, lifting the "port must exist in base" limitation.
 - [x] Preserve trailing comments and comments inside block bodies (D10).
       Trailing comments attach to their statement/parameter, body comments
-      are body items; `} # text` canonicalizes onto its own line.
+      are body items. (Since the 2026-08-25 revision, `} # text` stays on
+      the `}` line instead of being detached.)
+- [x] Language revision 2026-08-25 (from a syntax review; decisions
+      D13–D15): in-language lifecycle statements (`removed <slug>`,
+      `moved <old> -> <new>`); `let` named constants; `set` restricted to
+      extern ports; typed value tokens (fixes a `fmt` fixpoint bug with
+      string values like `"5+"`); strict number literals; static
+      type/port/direction validation in `lxir check` (no base needed);
+      "did you mean" suggestions; `lxir check --json` for structured
+      diagnostics.
+- [ ] Composite extern matching (e.g. `match title "Jalousie" room "Büro"`)
+      for real houses where titles repeat per room. **Blocked on format
+      verification**: how objects reference rooms/categories is not yet a
+      validated fact in [loxone-format.md](loxone-format.md) — establish it
+      from the corpus + oracle first (refuse, never guess).
+- [ ] Unit-suffixed values (`Time = 5s`, `TargetPos = 70%`) documenting
+      intent and catching unit errors. **Blocked on the connector DB**
+      learning per-port units — the plain number stays the canonical form
+      until then.
 
 ## Stufe 1 — Templates
 

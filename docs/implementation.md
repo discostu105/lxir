@@ -14,7 +14,8 @@ observe output), `sha2` (slug entities, config hashes), `thiserror`.
 | `src/connectors.rs` | verified `builtin()` table, evidence `observe()` | only live-verified types in `builtin` |
 | `src/lock.rs` | `Lockfile` (spec: [lockfile-spec.md](lockfile-spec.md)); load/save/stable JSON; `remove_object`/`rename_object`/`absorb_counters` | serialization is deterministic (BTreeMaps) |
 | `src/ir/parser.rs` | line-oriented lexer + parser | errors carry 1-based line numbers |
-| `src/ir/ast.rs` | `Module`, `Item` (incl. `Comment`), decls; `validate()`; canonical `to_text()` | `parse(to_text(m)) == m`; `to_text` is a fixpoint |
+| `src/ir/ast.rs` | `Module`, `Item` (incl. `Comment`), decls, typed `Value`; `validate()`; canonical `to_text()` | `parse(to_text(m)) == m`; `to_text` is a fixpoint |
+| `src/ir/validate.rs` | static builtin-table checks (`validate_ports`): types, port names, wire directions; "did you mean" suggestions | needs no base config — shared by `lxir check` and `compile` |
 | `src/ir/compile.rs` | the compiler (strategy: [design.md](design.md)) | tear-down/rebuild convergence; determinism |
 | `src/ir/decompile.rs` | config → IR view, `slugify`, `DecompileReport` | lifts only managed-touching wires (D7) |
 | `src/diff.rs` | UUID-keyed semantic diff, `locale_suspect` heuristic | `diff(a, a).is_empty()` |
@@ -71,8 +72,9 @@ evidence-first:
 ## Extending the IR
 
 Grammar changes touch, in order: `ir/parser.rs` (lexer/statement),
-`ir/ast.rs` (AST + `to_text` + `validate`), [ir-spec.md](ir-spec.md)
-(normative text), the VS Code grammar (`editor/vscode/syntaxes/`), and
+`ir/ast.rs` (AST + `to_text` + `validate`), `ir/validate.rs` when the
+builtin-table checks are affected, [ir-spec.md](ir-spec.md) (normative
+text), the VS Code grammar + snippets (`editor/vscode/`), and
 `docs/agents.md` if agent guidance changes. Keep `parse ∘ to_text = id` —
 the `text_roundtrip` test enforces it.
 

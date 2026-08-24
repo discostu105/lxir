@@ -26,6 +26,21 @@
   "set": {
     "prefix": "set",
     "body": "set ${1:slug}.${2:TargetPos} = ${3:70}",
-    "description": "Write a parameter (Def=) on a port; originals on externs are restored when removed"
+    "description": "Write a parameter (Def=) on an extern port; the original is restored when the set is removed"
+  },
+  "let": {
+    "prefix": "let",
+    "body": "let ${1:name} = ${2:28}",
+    "description": "Named constant, referenced by bare identifier in value positions"
+  },
+  "removed": {
+    "prefix": "removed",
+    "body": "removed ${1:slug}",
+    "description": "Authorize deleting a managed block that was dropped from source"
+  },
+  "moved": {
+    "prefix": "moved",
+    "body": "moved ${1:old_slug} -> ${2:new_slug}",
+    "description": "Rename a managed block's slug while keeping its identity (UUIDs survive)"
   }
 }

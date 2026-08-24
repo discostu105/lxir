@@ -71,7 +71,7 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
                     if s == "-" {
                         return Err(err("unexpected `-`".into()));
                     }
-                    toks.push(Tok::Num(s));
+                    toks.push(number(s, lineno)?);
                 }
             }
             '"' => {
@@ -104,7 +104,7 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
                         break;
                     }
                 }
-                toks.push(Tok::Num(s));
+                toks.push(number(s, lineno)?);
             }
             c if c.is_alphanumeric() || c == '_' => {
                 let mut s = String::new();
@@ -122,6 +122,18 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
         }
     }
     Ok((toks, comment))
+}
+
+/// A lexed digit-and-dot run must be exactly `-?digits(.digits)?`.
+fn number(s: String, lineno: usize) -> Result<Tok> {
+    if is_number_literal(&s) {
+        Ok(Tok::Num(s))
+    } else {
+        Err(Error::IrParse {
+            line: lineno,
+            msg: format!("invalid number literal `{s}` (expected digits with at most one `.`)"),
+        })
+    }
 }
 
 fn opt(c: Option<char>) -> String {
@@ -153,12 +165,8 @@ pub fn parse(src: &str) -> Result<Module> {
             // Inside a `{ … }` body: `Param = value` or `}`.
             match toks.as_slice() {
                 [Tok::RBrace] => {
+                    block.close_comment = comment;
                     items.push(Item::Block(open_block.take().unwrap()));
-                    // A comment trailing the `}` has no anchor of its own —
-                    // it becomes a whole-line comment after the block.
-                    if let Some(text) = comment {
-                        items.push(Item::Comment(text));
-                    }
                 }
                 [Tok::Ident(key), Tok::Eq, val] => {
                     block.body.push(BodyItem::Param(ParamDecl {
@@ -226,6 +234,7 @@ pub fn parse(src: &str) -> Result<Module> {
                         title: None,
                         body: Vec::new(),
                         comment,
+                        close_comment: None,
                     },
                     [
                         Tok::Ident(slug),
@@ -238,6 +247,7 @@ pub fn parse(src: &str) -> Result<Module> {
                         title: Some(title.clone()),
                         body: Vec::new(),
                         comment,
+                        close_comment: None,
                     },
                     _ => {
                         return Err(err("expected `block <slug>: <Type> [\"Title\"] [{]`".into()));
@@ -296,9 +306,48 @@ pub fn parse(src: &str) -> Result<Module> {
                 }
                 _ => return Err(err("expected `set <slug>.<Port> = <value>`".into())),
             },
+            "let" => match toks.as_slice() {
+                [_, Tok::Ident(name), Tok::Eq, val] => {
+                    let value = match value_of(val, lineno)? {
+                        Value::Ref(other) => {
+                            return Err(err(format!(
+                                "`let {name} = {other}` — a constant's value must be a \
+                                 number or a quoted string, not another identifier"
+                            )));
+                        }
+                        literal => literal,
+                    };
+                    items.push(Item::Let(LetDecl {
+                        name: check_slug(name, lineno)?,
+                        value,
+                        comment,
+                    }));
+                }
+                _ => return Err(err("expected `let <name> = <number | \"string\">`".into())),
+            },
+            "removed" => match toks.as_slice() {
+                [_, Tok::Ident(slug)] => {
+                    items.push(Item::Removed(RemovedDecl {
+                        slug: check_slug(slug, lineno)?,
+                        comment,
+                    }));
+                }
+                _ => return Err(err("expected `removed <slug>`".into())),
+            },
+            "moved" => match toks.as_slice() {
+                [_, Tok::Ident(from), Tok::Arrow, Tok::Ident(to)] => {
+                    items.push(Item::Moved(MovedDecl {
+                        from: check_slug(from, lineno)?,
+                        to: check_slug(to, lineno)?,
+                        comment,
+                    }));
+                }
+                _ => return Err(err("expected `moved <old_slug> -> <new_slug>`".into())),
+            },
             other => {
                 return Err(err(format!(
-                    "unknown statement `{other}` (expected extern, block, wire, or set)"
+                    "unknown statement `{other}` (expected extern, block, wire, set, \
+                     let, removed, or moved)"
                 )));
             }
         }
@@ -313,14 +362,16 @@ pub fn parse(src: &str) -> Result<Module> {
     Ok(Module { items })
 }
 
-fn value_of(tok: &Tok, lineno: usize) -> Result<String> {
+fn value_of(tok: &Tok, lineno: usize) -> Result<Value> {
     match tok {
-        Tok::Num(n) => Ok(n.clone()),
-        Tok::Str(s) => Ok(s.clone()),
-        Tok::Ident(s) => Ok(s.clone()),
+        Tok::Num(n) => Ok(Value::Number(n.clone())),
+        // A quoted string that reads as a number canonicalizes to the bare
+        // number — one canonical spelling per value.
+        Tok::Str(s) => Ok(Value::from_literal(s)),
+        Tok::Ident(s) => Ok(Value::Ref(s.clone())),
         _ => Err(Error::IrParse {
             line: lineno,
-            msg: "expected a number or quoted string".into(),
+            msg: "expected a number, quoted string, or constant name".into(),
         }),
     }
 }
@@ -361,8 +412,10 @@ mod tests {
 extern sonne: VirtualIn match iname "VI3"
 extern jal:   AutoJalousie match title "Beschattung Süd"
 
+let schwelle = 28
+
 block temp_hoch: GreaterEqual "Temp über 28" {
-    Input2 = 28
+    Input2 = schwelle
 }
 block beschatten: And
 
@@ -378,9 +431,12 @@ set jal.TargetPos = 70
         assert_eq!(m.blocks().count(), 2);
         assert_eq!(m.wires().count(), 2);
         assert_eq!(m.sets().count(), 1);
+        assert_eq!(m.lets().count(), 1);
         let block = m.blocks().next().unwrap();
         assert_eq!(block.title.as_deref(), Some("Temp über 28"));
-        assert_eq!(block.params().collect::<Vec<_>>(), vec![("Input2", "28")]);
+        let params: Vec<_> = block.params().collect();
+        assert_eq!(params, vec![("Input2", &Value::Ref("schwelle".into()))]);
+        assert_eq!(m.resolve_value(params[0].1).unwrap(), "28");
     }
 
     #[test]
@@ -403,7 +459,7 @@ block t: GreaterEqual { # threshold block
 } # done
 
 wire sonne.Q -> t.Input1 # main wire
-set t.Input2 = 30 # override
+set sonne.Qm = 30 # override
 ";
         let m = Module::parse(src).unwrap();
         let text = m.to_text();
@@ -413,18 +469,126 @@ set t.Input2 = 30 # override
             "{ # threshold block",
             "\t# body note",
             "28 # degrees",
+            "} # done",
             "-> t.Input1 # main wire",
             "= 30 # override",
         ] {
             assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
         }
-        // `} # done` has no anchor — it becomes its own line after the block
-        // (with the usual blank-line grouping between item kinds).
-        assert!(text.contains("}\n\n# done\n"), "{text}");
         // Canonical form is a fixpoint.
         let again = Module::parse(&text).unwrap();
         assert_eq!(m, again);
         assert_eq!(again.to_text(), text);
+    }
+
+    #[test]
+    fn string_values_never_emit_as_unparsable_bare_tokens() {
+        // Regression: values like "5+" or "1-2" read as bare-number-ish
+        // character runs; a content-sniffing emitter once printed them bare,
+        // breaking `parse(to_text(m)) == m`.
+        for tricky in ["5+", "1-2", "--1", "1.2.3", "+", "."] {
+            let src = format!("extern s: VirtualIn match iname \"VI1\"\nset s.Q = \"{tricky}\"\n");
+            let m = Module::parse(&src).unwrap();
+            let text = m.to_text();
+            let again = Module::parse(&text).unwrap_or_else(|e| {
+                panic!("canonical form for {tricky:?} does not re-parse: {e}\n{text}")
+            });
+            assert_eq!(m, again, "value {tricky:?} must survive the round trip");
+        }
+        // A quoted number canonicalizes to the bare spelling — one canonical
+        // form per value.
+        let m = Module::parse(
+            "block b: And\nextern s: VirtualIn match iname \"VI1\"\nset s.Q = \"28\"\n",
+        )
+        .unwrap();
+        assert!(m.to_text().contains("set s.Q = 28"), "{}", m.to_text());
+    }
+
+    #[test]
+    fn malformed_numbers_are_rejected() {
+        for bad in ["Input2 = 1.2.3", "Input2 = 5.", "Input2 = -5."] {
+            let src = format!("block b: GreaterEqual {{\n{bad}\n}}\n");
+            let e = Module::parse(&src).unwrap_err();
+            assert!(
+                e.to_string().contains("invalid number literal"),
+                "{bad}: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn let_statements_parse_and_resolve() {
+        let m = Module::parse(
+            "let schwelle = 28\nlet gruss = \"hallo\"\nblock b: GreaterEqual {\n\tInput2 = schwelle\n}\n",
+        )
+        .unwrap();
+        assert_eq!(m.lets().count(), 2);
+        let (_, v) = m.blocks().next().unwrap().params().next().unwrap();
+        assert_eq!(m.resolve_value(v).unwrap(), "28");
+
+        // Constants cannot reference constants.
+        let e = Module::parse("let a = 1\nlet b = a\n").unwrap_err();
+        assert!(e.to_string().contains("number or a quoted string"), "{e}");
+
+        // Undeclared references are errors, with a suggestion.
+        let e =
+            Module::parse("let schwelle = 28\nblock b: GreaterEqual {\n\tInput2 = schwele\n}\n")
+                .unwrap_err();
+        assert!(
+            e.to_string().contains("undeclared constant `schwele`"),
+            "{e}"
+        );
+        assert!(e.to_string().contains("did you mean `schwelle`?"), "{e}");
+
+        // Constants share the slug namespace and cannot be wired.
+        let e = Module::parse("let x = 1\nblock x: And\n").unwrap_err();
+        assert!(e.to_string().contains("duplicate name `x`"), "{e}");
+        let e = Module::parse("let x = 1\nblock b: And\nwire x.Q -> b.I1\n").unwrap_err();
+        assert!(e.to_string().contains("not a block or extern"), "{e}");
+    }
+
+    #[test]
+    fn removed_and_moved_parse_and_are_checked() {
+        let m = Module::parse("removed old_block # gone\nmoved a -> b\n").unwrap();
+        assert_eq!(m.removed().count(), 1);
+        assert_eq!(m.moved().count(), 1);
+        let text = m.to_text();
+        assert!(text.contains("removed old_block # gone"), "{text}");
+        assert!(text.contains("moved a -> b"), "{text}");
+        assert_eq!(Module::parse(&text).unwrap(), m);
+
+        let e = Module::parse("block a: And\nremoved a\n").unwrap_err();
+        assert!(e.to_string().contains("contradicts the declaration"), "{e}");
+        let e = Module::parse("removed a\nremoved a\n").unwrap_err();
+        assert!(e.to_string().contains("duplicate `removed a`"), "{e}");
+
+        let e = Module::parse("block a: And\nmoved a -> b\n").unwrap_err();
+        assert!(e.to_string().contains("must no longer be declared"), "{e}");
+        let e = Module::parse("moved a -> a\n").unwrap_err();
+        assert!(e.to_string().contains("to itself"), "{e}");
+        let e = Module::parse("moved a -> b\nmoved b -> c\n").unwrap_err();
+        assert!(e.to_string().contains("chained `moved`"), "{e}");
+        let e = Module::parse("moved a -> b\nremoved a\n").unwrap_err();
+        assert!(e.to_string().contains("conflicts with a `removed`"), "{e}");
+        let e =
+            Module::parse("extern e: VirtualIn match iname \"VI1\"\nmoved a -> e\n").unwrap_err();
+        assert!(e.to_string().contains("not a managed block"), "{e}");
+
+        let e = Module::parse("removed Bad\n").unwrap_err();
+        assert!(e.to_string().contains("invalid slug"), "{e}");
+        let e = Module::parse("moved a b\n").unwrap_err();
+        assert!(
+            e.to_string().contains("moved <old_slug> -> <new_slug>"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn set_on_managed_block_is_rejected() {
+        let e = Module::parse("block b: And\nset b.I1 = 3\n").unwrap_err();
+        let msg = e.to_string();
+        assert!(msg.contains("targets managed block `b`"), "{msg}");
+        assert!(msg.contains("block body"), "{msg}");
     }
 
     #[test]

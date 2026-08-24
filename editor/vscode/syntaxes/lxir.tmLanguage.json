@@ -8,6 +8,9 @@
     { "include": "#block" },
     { "include": "#wire" },
     { "include": "#set" },
+    { "include": "#let" },
+    { "include": "#removed" },
+    { "include": "#moved" },
     { "include": "#string" },
     { "include": "#number" }
   ],
@@ -111,6 +114,30 @@
         "3": { "name": "punctuation.accessor.lxir" },
         "4": { "name": "variable.other.member.lxir" },
         "5": { "name": "keyword.operator.assignment.lxir" }
+      }
+    },
+    "let": {
+      "match": "^\\s*(let)\\s+([a-z][a-z0-9_]*)\\s*(=)",
+      "captures": {
+        "1": { "name": "keyword.control.let.lxir" },
+        "2": { "name": "variable.other.constant.lxir" },
+        "3": { "name": "keyword.operator.assignment.lxir" }
+      }
+    },
+    "removed": {
+      "match": "^\\s*(removed)\\s+([a-z][a-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.removed.lxir" },
+        "2": { "name": "variable.other.lxir" }
+      }
+    },
+    "moved": {
+      "match": "^\\s*(moved)\\s+([a-z][a-z0-9_]*)\\s*(->)\\s*([a-z][a-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.moved.lxir" },
+        "2": { "name": "variable.other.lxir" },
+        "3": { "name": "keyword.operator.arrow.lxir" },
+        "4": { "name": "variable.other.lxir" }
       }
     }
   }

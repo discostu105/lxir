@@ -11,9 +11,11 @@
 //!    exactly the recorded object *and* port UUIDs (every `<In Input=…>`
 //!    in the config points at a port UUID).
 //! 2. New slug → mint UUIDs, advance `NextObj` monotonically.
-//! 3. Slug gone from source → hard error, unless removed explicitly via
-//!    [`Lockfile::remove_object`] (the `terraform state rm` analogue) or
-//!    renamed via [`Lockfile::rename_object`].
+//! 3. Slug gone from source → hard error, unless the removal or rename is
+//!    declared in source (`removed <slug>` / `moved <old> -> <new>` — the
+//!    preferred, reviewable path) or resolved out-of-band via
+//!    [`Lockfile::remove_object`] (the `terraform state rm` analogue) /
+//!    [`Lockfile::rename_object`].
 //! 4. Counters never decrease.
 
 use crate::error::{Error, Result};

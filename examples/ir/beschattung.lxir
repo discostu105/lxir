@@ -1,13 +1,15 @@
 # Beschattung Süd — Beispielmodul.
 # Externe Objekte gehören Loxone Config; Blöcke gehören dem Compiler.
 
+let temp_schwelle = 28
+
 extern aussentemp: VirtualIn match iname "VI1"
 extern wind_alarm: VirtualIn match iname "VI2"
 extern sonne: VirtualIn match iname "VI3"
 extern jal_sued: AutoJalousie match title "Beschattung Süd"
 
 block temp_hoch: GreaterEqual "Temp über 28" {
-	Input2 = 28
+	Input2 = temp_schwelle
 }
 block beschatten: And
 

@@ -87,15 +87,16 @@ safe.
 ## The removal trichotomy
 
 A managed slug present in the lock but missing from source is ambiguous
-(typo? intentional delete?), so the compiler refuses by default. The three
-explicit resolutions:
+(typo? intentional delete?), so the compiler refuses by default. The
+explicit resolutions — the in-language statements are preferred because
+they are scoped and show up in the PR diff (D13):
 
 | Intent | Mechanism | Effect on config | Effect on lock |
 |---|---|---|---|
 | oops, typo | fix the source | — | — |
-| delete it | `allow_removals` (CLI: `--allow-removals`) | block removed | entry dropped |
+| delete it | `removed <slug>` in source (or the global `allow_removals` / `--allow-removals`) | block removed | entry dropped |
 | stop managing it | `Lockfile::remove_object` | block **stays** (orphan) | entry dropped |
-| rename the slug | `Lockfile::rename_object` | identity survives | key renamed |
+| rename the slug | `moved <old> -> <new>` in source (or `Lockfile::rename_object`) | identity survives | key renamed |
 
 ## Refuse, never guess
 
@@ -152,9 +153,10 @@ Anything unverified is an error, not a heuristic:
   FTP/LoxCC/credentials live in `lox` / `lox-cli`.
 - **D10 — All comments survive the round trip**, so `lxir fmt` is
   non-destructive: whole-line comments are AST items, trailing comments
-  attach to their statement or parameter line, and comments inside block
-  bodies are body items. The one canonicalization: `} # text` moves the
-  comment onto its own line after the block.
+  attach to their statement, parameter line, or closing `}`, and comments
+  inside block bodies are body items. (Originally `} # text` was
+  canonicalized onto its own line; it now stays attached to the `}` —
+  detaching a comment from its anchor lost intent for no gain.)
 - **D11 — Counters (`NextObj`) advance by one per minted managed object**
   and never decrease (`Lockfile::absorb_counters` takes the max of lock and
   document). Whether ports also consume `NextObj` is unknown; object-only is
@@ -169,3 +171,31 @@ Anything unverified is an error, not a heuristic:
   and the planned sugar (expressions, templates — see
   [roadmap.md](roadmap.md)) wants first-class syntax. The grammar stays
   small enough to hand-parse ([ir-spec.md](ir-spec.md)).
+- **D13 — Lifecycle lives in the language: `removed` and `moved`
+  statements** (2026-08-25). The original design routed deletion through a
+  CLI flag and rename through a library call — out-of-band state surgery
+  that never appears in a reviewable diff, the exact gap Terraform closed
+  by moving `state rm`/`state mv` into `removed`/`moved` blocks. lxir's
+  whole pitch is "every change is a one-line diff in a PR", so intent to
+  delete or rename must be expressible in source: `removed <slug>` is
+  scoped to one block (unlike `--allow-removals`, which authorizes *all*
+  removals in a run), `moved <old> -> <new>` keeps object and port UUIDs
+  across a slug rename, and both are idempotent no-ops once applied so
+  history can keep them. The flag and library calls remain as escape
+  hatches.
+- **D14 — `set` is for extern ports only; managed parameters live in the
+  block body** (2026-08-25). v0 allowed `set` on managed blocks as a body
+  synonym with an override rule — two spellings for one thing, and a keyword
+  with different ownership semantics per target (tracked-and-reverting on
+  externs, plain param on blocks). One meaning per keyword: `set` now
+  always means "tracked write to somebody else's port", and the validator
+  points managed-block sets at the body.
+- **D15 — Values are typed tokens, not sniffed strings** (2026-08-25). The
+  AST records how a value was written (`Number` | `Str` | `Ref`), and the
+  formatter emits by variant. The previous content-sniffing emitter printed
+  string values like `"5+"` as bare tokens that did not re-parse, breaking
+  the advertised `parse(to_text(m)) == m` fixpoint. One canonicalization
+  remains, at parse time: a quoted string that reads exactly as a number
+  becomes the bare number. Bare identifiers in value position are `let`
+  references and must resolve — the previously undefined
+  bare-ident-as-string lenience is gone.

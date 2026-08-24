@@ -18,7 +18,7 @@ use crate::connectors::BUILTIN_TYPES;
 use crate::doc::{LoxoneDoc, ports};
 use crate::error::Result;
 use crate::ir::ast::{
-    BlockDecl, BodyItem, ExternDecl, Item, MatchSpec, Module, ParamDecl, PortRef, WireDecl,
+    BlockDecl, BodyItem, ExternDecl, Item, MatchSpec, Module, ParamDecl, PortRef, Value, WireDecl,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -133,7 +133,7 @@ pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, De
             .filter_map(|p| {
                 Some(BodyItem::Param(ParamDecl {
                     key: p.key,
-                    value: p.def?,
+                    value: Value::from_literal(&p.def?),
                     comment: None,
                 }))
             })
@@ -147,6 +147,7 @@ pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, De
             slug,
             body,
             comment: None,
+            close_comment: None,
         }));
     }
 

@@ -228,3 +228,130 @@ fn wire_direction_is_checked_on_managed_blocks() {
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
     assert!(err.to_string().contains("wire source"), "{err}");
 }
+
+#[test]
+fn removed_statement_authorizes_scoped_removal() {
+    let base = base();
+    let mut lock = Lockfile::new();
+    let full = compile(&base, &module(), &mut lock, &opts()).unwrap();
+
+    // Drop `beschatten` from source with an explicit `removed` — no
+    // allow_removals needed, and the removal is scoped to that one slug.
+    let without = Module::parse(
+        "extern aussentemp: VirtualIn match iname \"VI1\"\n\
+         block temp_hoch: GreaterEqual \"Temp \u{fc}ber 28\" {\n\tInput2 = 28\n}\n\
+         wire aussentemp.Q -> temp_hoch.Input1\n\
+         removed beschatten\n",
+    )
+    .unwrap();
+    let out = compile(&full, &without, &mut lock, &opts()).unwrap();
+    assert!(!out.objects().iter().any(|o| o.block_type == "And"));
+    assert!(!lock.objects.contains_key("beschatten"));
+    assert!(lock.objects.contains_key("temp_hoch"), "others survive");
+
+    // The stale `removed` is a no-op: recompiling is still a fixpoint.
+    let again = compile(&out, &without, &mut lock, &opts()).unwrap();
+    assert_eq!(out.to_bytes(), again.to_bytes());
+
+    // A `removed` authorizes exactly its slug — another vanished slug still
+    // refuses, and the error suggests the statement.
+    let mut lock2 = Lockfile::new();
+    compile(&base, &module(), &mut lock2, &opts()).unwrap();
+    let only_one = Module::parse("removed beschatten\n").unwrap();
+    let err = compile(&base, &only_one, &mut lock2, &opts()).unwrap_err();
+    assert!(err.to_string().contains("`temp_hoch`"), "{err}");
+    assert!(err.to_string().contains("removed temp_hoch"), "{err}");
+}
+
+#[test]
+fn moved_statement_renames_identity() {
+    let base = base();
+    let mut lock = Lockfile::new();
+    let first = compile(&base, &module(), &mut lock, &opts()).unwrap();
+    let old = lock.objects["beschatten"].clone();
+
+    let renamed_src = "\
+extern aussentemp: VirtualIn match iname \"VI1\"
+extern wind_alarm: VirtualIn match iname \"VI2\"
+extern sonne: VirtualIn match iname \"VI3\"
+extern jal_sued: AutoJalousie match title \"Beschattung S\u{fc}d\"
+
+block temp_hoch: GreaterEqual \"Temp \u{fc}ber 28\" {
+\tInput2 = 28
+}
+block schatten_gate: And
+
+wire aussentemp.Q -> temp_hoch.Input1
+wire temp_hoch.Q -> schatten_gate.I1
+wire sonne.Q -> schatten_gate.I2
+wire schatten_gate.Q -> jal_sued.AutoShade
+wire wind_alarm.Q -> jal_sued.Safety
+
+set jal_sued.TargetPos = 70
+
+moved beschatten -> schatten_gate
+";
+    let renamed = Module::parse(renamed_src).unwrap();
+    let second = compile(&first, &renamed, &mut lock, &opts()).unwrap();
+
+    // Identity survived the rename: same object and port UUIDs under the
+    // new slug; the only semantic change is the display title (which
+    // defaults to the slug).
+    assert!(!lock.objects.contains_key("beschatten"));
+    let new = &lock.objects["schatten_gate"];
+    assert_eq!(new.uuid, old.uuid);
+    assert_eq!(new.ports, old.ports);
+    let d = lxir::diff::diff(&first, &second);
+    assert!(d.added.is_empty() && d.removed.is_empty(), "no re-mint");
+    assert!(d.wires_added.is_empty() && d.wires_removed.is_empty());
+    assert_eq!(d.renamed.len(), 1, "only the title changed");
+
+    // Idempotent: the applied `moved` is a no-op on the next compile.
+    let third = compile(&second, &renamed, &mut lock, &opts()).unwrap();
+    assert_eq!(second.to_bytes(), third.to_bytes());
+
+    // With no matching lock entry at all, `moved` is an error (typo guard).
+    let err = compile(&base, &renamed, &mut Lockfile::new(), &opts()).unwrap_err();
+    assert!(err.to_string().contains("neither slug"), "{err}");
+}
+
+#[test]
+fn let_constants_resolve_to_defs() {
+    let with_let = Module::parse(
+        "let schwelle = 28\n\
+         extern aussentemp: VirtualIn match iname \"VI1\"\n\
+         block temp_hoch: GreaterEqual {\n\tInput2 = schwelle\n}\n\
+         wire aussentemp.Q -> temp_hoch.Input1\n\
+         set aussentemp.Qm = schwelle\n",
+    )
+    .unwrap();
+    let literal = Module::parse(
+        "extern aussentemp: VirtualIn match iname \"VI1\"\n\
+         block temp_hoch: GreaterEqual {\n\tInput2 = 28\n}\n\
+         wire aussentemp.Q -> temp_hoch.Input1\n\
+         set aussentemp.Qm = 28\n",
+    )
+    .unwrap();
+    let a = compile(&base(), &with_let, &mut Lockfile::new(), &opts()).unwrap();
+    let b = compile(&base(), &literal, &mut Lockfile::new(), &opts()).unwrap();
+    assert_eq!(
+        a.to_bytes(),
+        b.to_bytes(),
+        "a `let` reference compiles exactly like its literal"
+    );
+}
+
+#[test]
+fn extern_port_errors_suggest_close_names() {
+    let m = Module::parse(
+        "extern jal: AutoJalousie match title \"Beschattung S\u{fc}d\"\n\
+         block b: And\n\
+         wire b.Q -> jal.AutoShad\n",
+    )
+    .unwrap();
+    let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
+    assert!(
+        err.to_string().contains("did you mean `AutoShade`?"),
+        "{err}"
+    );
+}
