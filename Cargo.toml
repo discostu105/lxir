@@ -1,0 +1,15 @@
+[package]
+name = "lxc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Loxone config model: lossless .Loxone XML core, UUID/identity model, lockfile, IR compile/decompile, semantic diff"
+repository = "https://github.com/discostu105/lxc"
+# license: intentionally unset for now — see README "License" (open decision, Skizze §9.5).
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
