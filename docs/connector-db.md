@@ -52,7 +52,8 @@ A type becomes mintable only if **all** hold:
 
 1. **Complete, stable shape**: every instance in the corpus materializes
    the same key set, with identical connector indexes, contiguous from 0.
-   (≥3 instances; variadic growth like `And` `I3`+ is handled separately.)
+   (≥3 instances. There is no variadic growth: Loxone Config deletes
+   off-descriptor connectors on save — design decision D8.)
 2. **Every port's direction resolved**, in order of preference:
    - corpus wire evidence (sink→Input, source→Output, `Def`-only→Param);
    - agreement of a legacy db, with zero corpus contradiction;

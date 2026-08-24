@@ -70,7 +70,7 @@ extern jal:   AutoJalousie match title "Beschattung Süd"
 block temp_hoch: GreaterEqual "Temp über 28" {   # yours, compiler-owned
 	Input2 = 28                                  # Def= parameter
 }
-block beschatten: And                            # And/Or grow: I3, I4, …
+block beschatten: And                            # gates are fixed 2-input
 
 wire temp_hoch.Q -> beschatten.I1                # output -> input
 wire beschatten.Q -> jal.AutoShade

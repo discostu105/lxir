@@ -45,6 +45,44 @@ run did **not** reproduce this, so it is attributed to stray input during
 that first run, not to load-time pruning. Re-test before treating it as a
 format fact.
 
+## The grown-gate experiment (D8) — answered, negatively
+
+Second oracle run (2026-08-25), probing design decision D8 on the
+headless Xvfb rig. Three GUI facts first, established by driving the
+canvas:
+
+- Wiring an `And` gate's last free input (`I2`) does **not** make an `I3`
+  appear — not immediately, not after save + reload. The saved XML
+  confirms: the wire connected, the gate stayed `I1`/`I2`/`Q`, `Nio="3"`.
+- Dropping a wire on the gate *body* opens a connector picker
+  ("Anschluss auswählen") that enumerates **only the existing inputs** —
+  the GUI's own descriptor says a gate has exactly `I1` and `I2`.
+- The block's `⊕` expander only toggles *display* of existing descriptor
+  connectors (e.g. Monoflop's unwired `Off`/`Remanence`/`D`); there is no
+  input-count property, no context-menu entry, no resize handle.
+
+Then the compiler-side test: `lxir compile` minted `I3` at connector
+index 3 (after `Q`'s 2 — the D8 assumption) wired from an `InputRef`,
+onto the previously saved base. Loxone Config **loaded the file without
+complaint** — and on `Ctrl+S` **silently deleted the `I3` connector and
+its wire**, reverting the gate to `Nio="3"`. Everything else survived
+byte-for-byte (semantic diff: exactly the one wire removed, zero object /
+param / rename changes; the `NextObj` +2 burn and the `WF`
+147456 → 16384 normalization appeared again).
+
+Conclusions, now encoded in the compiler and docs (design.md D8,
+loxone-format.md):
+
+- **Gates are fixed two-input in Loxone Config 17.** `lxir` refuses
+  `I3`+ with a cascade hint instead of minting it.
+- **A save writes exactly the descriptor's connector set** —
+  off-descriptor `<Co>`s are dropped silently, wires included. Never
+  invent connectors.
+- Positive side-finding: a compiler-drawn wire from an existing
+  `InputRef.AQ` into a managed block survives the save untouched, and
+  re-emitting a GUI-drawn wire from source (after teardown) reproduces it
+  byte-identically.
+
 ## Crash: minimal synthetic configs
 
 Handing Loxone Config the crate's synthetic `examples/out` file
@@ -75,10 +113,20 @@ structure. Oracle runs must always compile onto a real base config.
   a freshly opened file is already dirty (schema migration), so the save
   always writes.
 - **Pointer injection does not work** via XTEST under KWin: fake motion
-  is ignored and clicks land at the physical cursor. Canvas interaction
-  (selecting blocks, drawing wires, the D8 grown-gate experiment) needs
-  `ydotool` (uinput, drives the real seat) or a headless
-  `Xvfb`+`xdotool` display, where XTEST pointer control is native.
+  is ignored and clicks land at the physical cursor. The fix is the
+  **headless rig** (used for the grown-gate experiment): run
+  `Xvfb :5 -screen 0 2560x1440x24 -fbdir <dir> +extension GLX +render
+  -noreset`, launch with `DISPLAY=:5` and `LIBGL_ALWAYS_SOFTWARE=1` —
+  there `xdotool` has full native pointer *and* keyboard control
+  (block selection, wire drags with mid-drag screenshots, menus).
+  Screenshots come straight off the framebuffer:
+  `magick xwd:<dir>/Xvfb_screen0 shot.png`.
+- Xvfb quirks: the QtWebEngine news panel renders as a white overlay
+  child window (~630×500) — find it via `xdotool search --name ".*"` +
+  geometry and remove it with `xdotool windowunmap <id>`. Wine popup
+  menus/pickers ignore Escape and outside clicks under Xvfb; unmap those
+  the same way. Trust `xdotool search --onlyvisible` over screenshots
+  (stale repaints), and trust the saved XML over the canvas.
 - Project bookkeeping: opening a file rewrites
   `drive_c/users/<user>/Documents/Loxone/Loxone Config/Projects/Projects.json`
   (maps project → file path + Miniserver address) — useful to verify

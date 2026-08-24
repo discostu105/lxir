@@ -179,10 +179,10 @@ cover the validation loop.
   compiled config and re-saved it with an empty semantic diff — every
   minted UUID, wire, and parameter survived. See
   [docs/oracle-wine.md](docs/oracle-wine.md).
-- Known assumption (no live evidence either way): connector indexes for
-  grown gate inputs (`I3`+) are assigned *after* the builtin ports. To be
-  verified the first time a compiled config with a grown gate passes
-  through Loxone Config.
+- The former grown-gate assumption is **resolved, negatively**: Loxone
+  Config 17 gates are fixed two-input, and an off-descriptor `I3` is
+  silently deleted on save (oracle-verified). The compiler refuses `I3`+
+  instead of minting it — see design decision D8.
 
 ## Relationship to `lox` / `lox-cli`
 

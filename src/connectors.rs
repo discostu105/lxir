@@ -118,15 +118,6 @@ pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
     }
 }
 
-/// Whether `key` is an auto-extendable input of a variadic gate
-/// (Loxone Config grows `And`/`Or` inputs `I3`, `I4`, … on demand).
-pub fn variadic_input(block_type: &str, key: &str) -> bool {
-    matches!(block_type, "And" | "Or")
-        && key.len() > 1
-        && key.starts_with('I')
-        && key[1..].chars().all(|c| c.is_ascii_digit())
-}
-
 /// Direction evidence for one port key of one block type, accumulated over
 /// every occurrence in a document (or, after [`merge`], a whole corpus).
 #[derive(Debug, Clone, Default, Serialize)]
@@ -348,10 +339,6 @@ mod tests {
             builtin("AutoJalousie").is_none(),
             "not verified — must not be mintable"
         );
-        assert!(variadic_input("Or", "I7"));
-        assert!(!variadic_input("Or", "Q"));
-        assert!(!variadic_input("Not", "I2"));
-
         // Corpus-consolidated entries: index order matches the observed
         // connector indexes (docs/connector-db.md).
         let formula = builtin("Formula").unwrap();

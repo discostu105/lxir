@@ -186,7 +186,10 @@ fn unverified_block_type_is_refused() {
 }
 
 #[test]
-fn variadic_gate_inputs_extend() {
+fn grown_gate_inputs_are_refused() {
+    // Oracle-verified (docs/oracle-wine.md): Loxone Config 17 silently
+    // deletes off-descriptor connectors on save. A grown `I3` must be a
+    // compile error, never minted.
     let m = Module::parse(
         "extern t1: VirtualIn match iname \"VI1\"\n\
          extern t2: VirtualIn match iname \"VI2\"\n\
@@ -197,18 +200,10 @@ fn variadic_gate_inputs_extend() {
          wire t3.Q -> any.I3\n",
     )
     .unwrap();
-    let mut lock = Lockfile::new();
-    let out = compile(&base(), &m, &mut lock, &opts()).unwrap();
-    let ports = &lock.objects["any"].ports;
-    assert_eq!(ports.len(), 4, "I1 I2 I3 Q");
-    // I3 minted with connector index 3 (after the builtin list).
-    let i3 = lxir::LoxUuid::parse(&ports["I3"]).unwrap();
-    assert_eq!(i3.connector_index(), Some(3));
-    let objs = out.objects();
-    let or = objs.iter().find(|o| o.block_type == "Or").unwrap();
-    let el = out.element_at(&or.path).unwrap();
-    assert_eq!(lxir::doc::ports(el).len(), 4);
-    assert_eq!(el.attr("Nio"), Some("4"));
+    let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("unknown port `I3`"), "{msg}");
+    assert!(msg.contains("cascade"), "{msg}");
 }
 
 #[test]

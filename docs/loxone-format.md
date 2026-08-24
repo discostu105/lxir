@@ -111,13 +111,20 @@ Mint order: Loxone Config mints a block's **ports first, then the object**
 (consecutive counters `…0749, 074a, 074b` ports, `…074c` object). The
 crate's minter mimics this.
 
-Grown connectors keep sequential indexes: a LightController2 whose `I5`–`I8`
-were added years later (different time segment, different entity bytes)
-still carries indexes `04`–`07`. **Assumption**: for variadic gates
-(`And`/`Or`), a grown `I3` takes the index *after* the builtin ports
-(3, after `Q`'s 2) — no grown gate exists in the corpus to confirm, and an
-output's UUID cannot change once wired, so index reshuffling is considered
-impossible.
+Late-added connectors keep sequential indexes: a LightController2 whose
+`I5`–`I8` were added years later (different time segment, different entity
+bytes) still carries indexes `04`–`07` — those came from a schema
+migration extending the type's descriptor, not from user action.
+
+**Gates do not grow.** `And`/`Or` in Loxone Config 17 are fixed two-input
+blocks: the GUI offers no way to add an input (wiring the last free input
+does not create one; the wire-drop connector picker enumerates only
+existing inputs), the corpus contains zero gates with more than two
+inputs, and — verified via the Wine oracle — a hand-grown `I3 <Co>`
+survives *loading* but is **silently deleted on save, together with its
+wires**. Generalized: a save writes exactly the type descriptor's
+connector set; off-descriptor `<Co>`s are dropped without warning. Any
+tool inventing connectors will silently lose logic on the next GUI save.
 
 ## The three writers
 

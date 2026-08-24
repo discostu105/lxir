@@ -11,7 +11,7 @@ observe output), `sha2` (slug entities, config hashes), `thiserror`.
 | `src/xml.rs` | Lossless CST: `XmlDocument`, `Element`, `Node`, `Attr`; hand-rolled parser; canonical writer; `escape`/`unescape` | `parse(bytes).to_bytes() == bytes` for real Loxone output |
 | `src/uuid.rs` | `LoxUuid` parse/format, `TailKind`, `Minter`, `parse_serial`, `entity_for_slug` | no clock, no RNG — fully caller-driven |
 | `src/doc.rs` | `LoxoneDoc` + read views: `objects()`, `ports()`, `wires()`, `index()`, counters, `page_path`, `remove_by_uuid` | views derive from the tree on demand; nothing caches |
-| `src/connectors.rs` | verified `builtin()` table, `variadic_input()`, evidence `observe()` | only live-verified types in `builtin` |
+| `src/connectors.rs` | verified `builtin()` table, evidence `observe()` | only live-verified types in `builtin` |
 | `src/lock.rs` | `Lockfile` (spec: [lockfile-spec.md](lockfile-spec.md)); load/save/stable JSON; `remove_object`/`rename_object`/`absorb_counters` | serialization is deterministic (BTreeMaps) |
 | `src/ir/parser.rs` | line-oriented lexer + parser | errors carry 1-based line numbers |
 | `src/ir/ast.rs` | `Module`, `Item` (incl. `Comment`), decls; `validate()`; canonical `to_text()` | `parse(to_text(m)) == m`; `to_text` is a fixpoint |
@@ -30,8 +30,8 @@ Three layers, all run by `cargo test`:
 2. **`tests/ir.rs`** — end-to-end pipeline properties: byte determinism,
    lock pinning across mint times, recompile-own-output fixpoint, counter
    monotonicity, set-restore and wire-teardown, the removal trichotomy,
-   refusal paths (unknown type/port, no-match, direction misuse), variadic
-   growth, decompile subset.
+   refusal paths (unknown type/port, grown gate inputs, no-match,
+   direction misuse), decompile subset.
 3. **`tests/roundtrip.rs`** — byte fidelity on the committed example
    configs, plus an opt-in corpus:
 
@@ -62,8 +62,9 @@ evidence-first:
    [connector-db.md](connector-db.md).
 3. Confirm the full connector list and index order against a real block
    instance in the XML (all `<Co>`s, in order).
-4. Add the `const` slice in index order with directions, plus a
-   `variadic_input` rule if the type grows inputs.
+4. Add the `const` slice in index order with directions. Emit the
+   descriptor's **complete** connector set and nothing beyond it — Loxone
+   Config deletes off-descriptor connectors on save (D8).
 5. Add a test pinning the shape, and ideally a compile test whose output
    you have loaded into Loxone Config once (the ultimate oracle).
 

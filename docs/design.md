@@ -136,10 +136,18 @@ Anything unverified is an error, not a heuristic:
   between two externs — even one the compiler itself created — belongs to
   the config, not the IR view. `decompile(compile(m))` is therefore a
   faithful *subset* of `m`, not an inverse.
-- **D8 — Variadic gate inputs (`I3`+) get connector indexes after the
-  builtin ports.** *Assumption*: no config in the validation corpus contains
-  a grown gate. To be verified the first time such a compile passes through
-  Loxone Config; tracked in [roadmap.md](roadmap.md).
+- **D8 — Gate inputs are fixed: `And`/`Or` have exactly `I1`, `I2`, `Q`,
+  and wiring `I3`+ is a compile error.** The original assumption (grown
+  inputs take indexes after the builtin ports) was **refuted by the Wine
+  oracle** (2026-08-25): Loxone Config 17 offers no way to grow a gate —
+  wiring the last free input does not add one, the wire-drop connector
+  picker lists only existing inputs — and a compiled `I3` at index 3
+  *loads*, but **saving silently deletes the off-descriptor connector and
+  its wire** while preserving everything else. Silent logic loss is the
+  worst outcome a compiler can produce, so the compiler refuses `I3`+ with
+  a hint to cascade 2-input gates. The corpus concurs: zero gates with
+  more than two inputs across six configs
+  ([oracle-wine.md](oracle-wine.md)).
 - **D9 — Transport is out of scope.** The library is pure (bytes → bytes);
   FTP/LoxCC/credentials live in `lox` / `lox-cli`.
 - **D10 — All comments survive the round trip**, so `lxir fmt` is

@@ -22,12 +22,11 @@
 //! - Wiring or `set`ting an extern port requires that port's `<Co>` to exist
 //!   in the base config (Loxone omits nothing we have observed, but an
 //!   unverified type could; we refuse to invent port UUIDs for them).
-//! - Growing `And`/`Or` beyond `I2` assigns connector indexes *after* the
-//!   builtin ports (`I3` → 3). No real config in the validation corpus has a
-//!   grown gate, so this ordering is an assumption to be verified against
-//!   Loxone Config output.
+//! - `And`/`Or` are fixed two-input blocks: wiring `I3`+ is an error. The
+//!   Wine oracle showed Loxone Config 17 silently deletes off-descriptor
+//!   connectors (and their wires) on save, so minting them would lose logic.
 
-use crate::connectors::{PortDir, builtin, variadic_input};
+use crate::connectors::{PortDir, builtin};
 use crate::doc::{Counters, LoxoneDoc, ports};
 use crate::error::{Error, Result};
 use crate::ir::ast::{MatchSpec, Module};
@@ -109,7 +108,7 @@ pub fn compile(
         restore_def(&mut doc, port_uuid, original.as_deref());
     }
 
-    // --- Plan managed blocks: full port list (builtin + variadic extras)
+    // --- Plan managed blocks: the builtin port list is the full port list
     //     and pinned identity for every one of them.
     let mut minter = Minter::new(opts.machine, opts.mint_time_unix);
     let mut managed: BTreeMap<String, PlannedBlock> = BTreeMap::new();
@@ -121,10 +120,7 @@ pub fn compile(
                 block.slug, block.block_type
             ))
         })?;
-        let mut keys: Vec<String> = specs.iter().map(|s| s.key.to_string()).collect();
-        // Variadic extras referenced anywhere in the module, sorted by their
-        // numeric suffix for a deterministic connector order.
-        let mut extras: BTreeSet<String> = BTreeSet::new();
+        let keys: Vec<String> = specs.iter().map(|s| s.key.to_string()).collect();
         let mut refs: Vec<&str> = Vec::new();
         for w in module.wires() {
             for r in [&w.from, &w.to] {
@@ -145,20 +141,27 @@ pub fn compile(
             if keys.iter().any(|k| k == key) {
                 continue;
             }
-            if variadic_input(&block.block_type, key) {
-                extras.insert(key.to_string());
+            // Loxone Config 17 silently DELETES off-descriptor connectors
+            // (and their wires) on save — verified via the Wine oracle with
+            // a grown `I3` on `And`. Gates are fixed two-input; refusing here
+            // is what keeps compiled logic from vanishing.
+            let gate_hint = if matches!(block.block_type.as_str(), "And" | "Or")
+                && key
+                    .strip_prefix('I')
+                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+            {
+                "; Loxone Config gates are fixed two-input (a grown I3 is \
+                 silently deleted on save) — cascade 2-input gates instead"
             } else {
-                return Err(Error::Compile(format!(
-                    "unknown port `{key}` on block `{}` (type `{}`); known ports: {}",
-                    block.slug,
-                    block.block_type,
-                    keys.join(", ")
-                )));
-            }
+                ""
+            };
+            return Err(Error::Compile(format!(
+                "unknown port `{key}` on block `{}` (type `{}`); known ports: {}{gate_hint}",
+                block.slug,
+                block.block_type,
+                keys.join(", ")
+            )));
         }
-        let mut extras: Vec<String> = extras.into_iter().collect();
-        extras.sort_by_key(|k| k[1..].parse::<u32>().unwrap_or(u32::MAX));
-        keys.extend(extras);
 
         // Pin identity: reuse the lock entry, minting only what is missing.
         // For a brand-new block, ports are minted before the object —

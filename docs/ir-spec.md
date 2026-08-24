@@ -94,8 +94,10 @@ deletes it when removal is explicitly allowed.
   `PulseGen`, `AnalogThresholdTrigger` — see
   [connector-db.md](connector-db.md)) — anything else
   is a compile error. See [design.md](design.md) "Refuse, never guess".
-- `And`/`Or` are variadic: referencing `I3`, `I4`, … anywhere in the module
-  grows the gate.
+- `And`/`Or` are fixed two-input blocks (`I1`, `I2`, `Q`): referencing
+  `I3`+ is a compile error — Loxone Config silently deletes grown inputs
+  on save (design decision D8). Need more inputs? Cascade gates:
+  `a.Q -> c.I1`, `b.Q -> c.I2`.
 
 ### `wire` — connect two ports
 
