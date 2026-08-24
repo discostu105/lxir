@@ -1,9 +1,10 @@
 # lxir - loxone intermediate language
 
-**lxir** (pronounced like *elixir*) is **config-as-code for Loxone**: a
-small text language for Miniserver logic — blocks, wires, parameters — and
-a deterministic compiler that applies it to a real `.Loxone` config without
-disturbing anything else in the file.
+**lxir** (pronounced like *elixir*) is **a git-friendly and AI-friendly
+text representation of Loxone config**. Miniserver logic — blocks, wires,
+parameters — becomes plain text that humans can review in a pull request
+and agents can safely write, and a deterministic compiler applies it to
+the real `.Loxone` config without disturbing anything else in the file.
 
 ```text
 # Beschattung Süd — Beispielmodul.
