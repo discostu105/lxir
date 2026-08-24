@@ -1,0 +1,31 @@
+{
+  "extern": {
+    "prefix": "extern",
+    "body": "extern ${1:slug}: ${2:VirtualIn} match ${3|iname,title,uuid|} \"${4:VI1}\"",
+    "description": "Reference an existing object owned by Loxone Config"
+  },
+  "block": {
+    "prefix": "block",
+    "body": "block ${1:slug}: ${2|And,Or,Not,Equal,GreaterEqual|}",
+    "description": "Managed logic block (compiler-owned)"
+  },
+  "block with params": {
+    "prefix": "blockp",
+    "body": [
+      "block ${1:slug}: ${2|And,Or,Not,Equal,GreaterEqual|} \"${3:Title}\" {",
+      "\t${4:Input2} = ${5:28}",
+      "}"
+    ],
+    "description": "Managed logic block with title and parameter body"
+  },
+  "wire": {
+    "prefix": "wire",
+    "body": "wire ${1:from}.${2:Q} -> ${3:to}.${4:I1}",
+    "description": "Connect an output port to an input port"
+  },
+  "set": {
+    "prefix": "set",
+    "body": "set ${1:slug}.${2:TargetPos} = ${3:70}",
+    "description": "Write a parameter (Def=) on a port; originals on externs are restored when removed"
+  }
+}

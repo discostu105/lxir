@@ -28,7 +28,26 @@ Miniserver configs (see *Validation* below).
 LoxCC compression, credentials. Those live in the `lox` / `lox-cli` CLIs,
 which are the intended consumers of this crate.
 
-## Quickstart
+## Quickstart (CLI)
+
+The `lxc` binary wraps the library so the pipeline works from a shell —
+for humans, scripts, and AI agents alike:
+
+```sh
+cargo run --bin lxc -- help          # or: cargo install --path .
+
+lxc check modules/beschattung.lox    # parse + validate (line-numbered errors)
+lxc fmt --write modules/beschattung.lox
+lxc compile --base current.Loxone --module modules/beschattung.lox \
+            --lock modules/beschattung.lock.json --out out.Loxone \
+            --serial 504F94112233
+lxc diff current.Loxone out.Loxone   # semantic diff, locale noise flagged
+lxc decompile current.Loxone         # IR view of an existing config
+lxc observe current.Loxone           # port-direction evidence (JSON)
+lxc roundtrip current.Loxone         # byte-fidelity self-check
+```
+
+## Quickstart (library)
 
 ```rust
 use lxc::{LoxoneDoc, Lockfile};
@@ -69,6 +88,31 @@ Runnable examples (`cargo run --example …`): `compile`, `decompile`, `diff`,
 `observe`, `roundtrip_check`. The committed `examples/out/` files are the
 output of the `compile` example; running it again reproduces them
 byte-for-byte.
+
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| [docs/vision.md](docs/vision.md) | Why config-as-code for Loxone; the Terraform analogy; non-goals |
+| [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D11 |
+| [docs/ir-spec.md](docs/ir-spec.md) | Normative spec of the `.lox` language (v0) |
+| [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v1) and its invariants |
+| [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
+| [docs/implementation.md](docs/implementation.md) | Module map, testing strategy, how to extend |
+| [docs/agents.md](docs/agents.md) | Operational guide for AI agents using the toolchain |
+| [docs/roadmap.md](docs/roadmap.md) | Stufen −1…3, tooling, open questions |
+
+[`AGENTS.md`](AGENTS.md) at the repo root gives agents the build/test
+commands and repo rules at a glance.
+
+## Editor support
+
+`editor/vscode/` contains a declarative VS Code extension for `.lox` files:
+syntax highlighting, comment/bracket support, and snippets for all four
+statement forms. Install by symlinking it into `~/.vscode/extensions/` (see
+[editor/vscode/README.md](editor/vscode/README.md)). A language server
+(completion of port names, live diagnostics) is scoped on the roadmap;
+until then `lxc check` / `lxc fmt --check` cover the validation loop.
 
 ## The model
 

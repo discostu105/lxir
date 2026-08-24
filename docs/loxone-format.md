@@ -1,0 +1,137 @@
+# The `.Loxone` format — validated field notes
+
+Everything in this document was established by examining real Miniserver
+configs (six generations, Aug 2024 – Aug 2026, 117 KB – 1.34 MB, ~1900
+objects) and a live Loxone Config / Miniserver installation (FW 17.x).
+Facts marked **assumption** have no direct evidence yet.
+
+There is no official specification; this is reverse-engineered knowledge and
+the reason the crate's parser is hand-rolled.
+
+## Container
+
+- UTF-8 with **BOM**, `<?xml version="1.0" encoding="utf-8"?>` declaration,
+  **CRLF** line endings, **tab** indentation, single space between
+  attributes, no space before `/>`. Empty elements are always self-closing.
+- Root: `<ControlList Version="…" NextObj="…" NextConst="…" NextNote="…"
+  NextMem="…">`. The `Next*` counters are bumped by Loxone Config on save
+  and must never decrease. `NextObj` correlates with auto-titles (`O1415`).
+- Inside: one `<C Type="Document">` (carrying `ConfigVersion=` among many
+  attributes), containing caption/folder `<C>` elements, `<C Type="Page">`
+  drawing pages, and the object tree.
+
+## Not actually XML
+
+Two deviations break conforming parsers:
+
+1. **Attribute names may start with digits**: `12hTF="true"`.
+2. **Attribute values may contain raw, unescaped newlines** — the `Code=`
+   attribute of a `Program` block holds multi-line PicoC source. A standard
+   parser normalizes these to spaces on re-serialization, corrupting the
+   program.
+
+Entities used: `&amp; &lt; &gt; &quot; &apos;` plus numeric character
+references. Text content appears only in `<Key>hex</Key>`-style elements and
+is rendered inline (`<Key>2B35</Key>`).
+
+## Objects: `<C>`
+
+```xml
+<C Type="Or" V="175" U="1e96b762-0130-074c-ffffed57184a04d2" Title="O1415"
+   Px="5952" Py="11136" Px2="7296" Py2="11832"
+   Cl="141,255,112" Nio="3" WF="147456">
+```
+
+- `Type` — block type (`Or`, `AutoJalousie`, `VirtualIn`, …).
+- `V` — format/version field, `"175"` on current blocks.
+- `U` — the object UUID (see below).
+- `Title` — display name. **Locale-volatile** for built-ins: saving the
+  config in a differently-localized Loxone Config renamed 111 built-in
+  objects (Modes, weather fields, caption folders) in one observed save.
+  Never use titles as identity.
+- `IName` — internal name for I/O objects (`VI1`, `AI3`); locale-stable.
+- `Px/Py/Px2/Py2` — drawing rectangle. Grid unit 96; logic blocks are 1344
+  wide and `504 + 192·(ports−2)` tall (Or with 3 ports: 696; Not with 2:
+  504).
+- `Cl` — RGB display color (logic green: `141,255,112`).
+- `Nio` — connector count. Matches the number of `<Co>` children: Loxone
+  emits **all** connectors, including unwired outputs and inputs without
+  values.
+- `WF` — flags (observed `147456`, `16384`; semantics unknown).
+- Complex blocks carry extra attributes (`LtE=`, `SpStates=`, `rec=`,
+  UUID-list attributes…). All of it round-trips untouched through the
+  lossless tree.
+
+## Connectors and wires: `<Co>` / `<In>`
+
+```xml
+<Co K="I1" Nc="1" U="1e96b762-0130-0749-00ff69723a2bac9e">
+	<In Input="1e96b5a8-02ec-bf33-02ffcb4248672396"/>
+</Co>
+<Co K="I2" Def="1" U="…-01ff…"/>
+<Co K="Q" U="…-02ff…"/>
+```
+
+- `K` — port key (the name the IR uses).
+- `U` — the **port's own UUID**; wires reference port UUIDs, not object
+  UUIDs.
+- Wires are stored at the **sink**: each `<In Input="…"/>` names the source
+  port's UUID. An output being wired leaves no trace on the output itself.
+- `Nc` — number of incoming wires (= count of `<In>` children); omitted
+  when zero.
+- `Def` — the port's parameter value; omitted at type default.
+- Attribute order: `K, Nc, Def, U`.
+
+## UUID anatomy
+
+Format `{8}-{4}-{4}-{16}` hex — the last segment is 8 bytes, so these are
+**not** RFC-4122 UUIDs.
+
+| Segment | Meaning |
+|---|---|
+| 1 (u32) | creation time, seconds since **2009-01-01 UTC** (`1230768000`) |
+| 2+3 (u16,u16) | mint-sequence counters |
+| 4 (8 bytes) | identity tail, see below |
+
+Tail shapes:
+
+- `ff ff` + 6 bytes — an **object**. The 6 bytes identify the minting
+  machine: a Config-PC id (`ed57184a04d2` observed) for GUI-created objects,
+  the **Miniserver serial** (`504f94a26236`) for objects the Miniserver
+  created itself (app-defined autopilot rules, device registrations). Block
+  *states* share the `ffff` shape with a per-object random suffix.
+- `<index> ff` + 6 bytes — a **connector**. Byte 0 is the connector's index
+  within its block (`I1`→`00`, `I2`→`01`, `Q`→`02` on a 2-input gate);
+  the remaining 6 bytes are a per-block entity shared by that block's
+  connectors.
+- anything else — reserved/system space. Built-ins like operating Modes
+  have fully deterministic UUIDs (`00000000-0000-0001-1500000000000000`).
+
+Mint order: Loxone Config mints a block's **ports first, then the object**
+(consecutive counters `…0749, 074a, 074b` ports, `…074c` object). The
+crate's minter mimics this.
+
+Grown connectors keep sequential indexes: a LightController2 whose `I5`–`I8`
+were added years later (different time segment, different entity bytes)
+still carries indexes `04`–`07`. **Assumption**: for variadic gates
+(`And`/`Or`), a grown `I3` takes the index *after* the builtin ports
+(3, after `Q`'s 2) — no grown gate exists in the corpus to confirm, and an
+output's UUID cannot change once wired, so index reshuffling is considered
+impossible.
+
+## The three writers
+
+1. **Loxone Config** — the GUI; rewrites the whole file on save, including
+   locale-dependent built-in titles.
+2. **The Miniserver** — creates objects at runtime (autopilots from the app,
+   device registrations), minting UUIDs with its serial in the tail.
+3. **This compiler** — see the ownership model in [design.md](design.md).
+
+Any tooling that assumes it is the only writer, or that titles are stable,
+breaks against 1 and 2.
+
+## Related, out of crate scope
+
+`.LoxCC` is the compressed container used for transport (magic
+`0xaabbccee`); `lox config compress`/`extract` round-trips it byte-
+identically. Handling lives in `lox`/`lox-cli`.

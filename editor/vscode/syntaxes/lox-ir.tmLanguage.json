@@ -1,0 +1,117 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Lox IR",
+  "scopeName": "source.lox-ir",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#extern" },
+    { "include": "#block" },
+    { "include": "#wire" },
+    { "include": "#set" },
+    { "include": "#string" },
+    { "include": "#number" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.lox-ir",
+      "match": "#.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.lox-ir",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.lox-ir",
+          "match": "\\\\[\"\\\\n]"
+        }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.lox-ir",
+      "match": "\\b-?[0-9]+(\\.[0-9]+)?\\b"
+    },
+    "slug": {
+      "name": "variable.other.lox-ir",
+      "match": "\\b[a-z][a-z0-9_]*\\b"
+    },
+    "portref": {
+      "match": "([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)",
+      "captures": {
+        "1": { "name": "variable.other.lox-ir" },
+        "2": { "name": "punctuation.accessor.lox-ir" },
+        "3": { "name": "variable.other.member.lox-ir" }
+      }
+    },
+    "extern": {
+      "match": "^\\s*(extern)\\s+([a-z][a-z0-9_]*)\\s*(:)\\s*([A-Za-z][A-Za-z0-9]*)\\s+(match)\\s+(uuid|iname|title)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.extern.lox-ir" },
+        "2": { "name": "entity.name.function.lox-ir" },
+        "3": { "name": "punctuation.separator.lox-ir" },
+        "4": { "name": "entity.name.type.lox-ir" },
+        "5": { "name": "keyword.control.match.lox-ir" },
+        "6": { "name": "constant.language.matchkind.lox-ir" }
+      }
+    },
+    "block": {
+      "begin": "^\\s*(block)\\s+([a-z][a-z0-9_]*)\\s*(:)\\s*([A-Za-z][A-Za-z0-9]*)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.block.lox-ir" },
+        "2": { "name": "entity.name.function.lox-ir" },
+        "3": { "name": "punctuation.separator.lox-ir" },
+        "4": { "name": "entity.name.type.lox-ir" }
+      },
+      "end": "(?<=\\})|^(?=\\S)|$(?<!\\{)",
+      "patterns": [
+        { "include": "#string" },
+        { "include": "#comment" },
+        {
+          "begin": "\\{",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.block.begin.lox-ir" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.block.end.lox-ir" }
+          },
+          "patterns": [
+            { "include": "#comment" },
+            {
+              "match": "^\\s*([A-Za-z][A-Za-z0-9_]*)\\s*(=)",
+              "captures": {
+                "1": { "name": "variable.parameter.lox-ir" },
+                "2": { "name": "keyword.operator.assignment.lox-ir" }
+              }
+            },
+            { "include": "#string" },
+            { "include": "#number" }
+          ]
+        }
+      ]
+    },
+    "wire": {
+      "match": "^\\s*(wire)\\s+([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)\\s*(->)\\s*([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)",
+      "captures": {
+        "1": { "name": "keyword.control.wire.lox-ir" },
+        "2": { "name": "variable.other.lox-ir" },
+        "3": { "name": "punctuation.accessor.lox-ir" },
+        "4": { "name": "variable.other.member.lox-ir" },
+        "5": { "name": "keyword.operator.arrow.lox-ir" },
+        "6": { "name": "variable.other.lox-ir" },
+        "7": { "name": "punctuation.accessor.lox-ir" },
+        "8": { "name": "variable.other.member.lox-ir" }
+      }
+    },
+    "set": {
+      "match": "^\\s*(set)\\s+([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)\\s*(=)",
+      "captures": {
+        "1": { "name": "keyword.control.set.lox-ir" },
+        "2": { "name": "variable.other.lox-ir" },
+        "3": { "name": "punctuation.accessor.lox-ir" },
+        "4": { "name": "variable.other.member.lox-ir" },
+        "5": { "name": "keyword.operator.assignment.lox-ir" }
+      }
+    }
+  }
+}
