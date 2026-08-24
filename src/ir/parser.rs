@@ -131,6 +131,14 @@ pub fn parse(src: &str) -> Result<Module> {
     for (i, raw) in src.lines().enumerate() {
         let lineno = i + 1;
         let err = |msg: String| Error::IrParse { line: lineno, msg };
+        // Whole-line comments are kept as items (so formatting preserves
+        // them) — except inside block bodies, where they are dropped.
+        if open_block.is_none()
+            && let Some(text) = raw.trim_start().strip_prefix('#')
+        {
+            items.push(Item::Comment(text.to_string()));
+            continue;
+        }
         let toks = lex(raw, lineno)?;
         if toks.is_empty() {
             continue;

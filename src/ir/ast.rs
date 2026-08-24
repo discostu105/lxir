@@ -15,6 +15,10 @@ pub enum Item {
     Block(BlockDecl),
     Wire(WireDecl),
     Set(SetDecl),
+    /// A whole-line `#` comment, stored verbatim (text after the `#`) so
+    /// formatting is non-destructive. Trailing comments on statement lines
+    /// and comments inside block bodies are *not* preserved.
+    Comment(String),
 }
 
 /// `extern slug: Type match kind "value"` — a reference to an object owned
@@ -187,6 +191,9 @@ impl Module {
                 }
                 Item::Set(s) => {
                     out.push_str(&format!("set {} = {}\n", s.target, value_token(&s.value)));
+                }
+                Item::Comment(text) => {
+                    out.push_str(&format!("#{text}\n"));
                 }
             }
         }
