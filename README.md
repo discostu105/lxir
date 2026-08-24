@@ -1,4 +1,4 @@
-# lxir
+# lxir - loxone intermediate language
 
 **lxir** (pronounced like *elixir*) is **config-as-code for Loxone**: a
 small text language for Miniserver logic — blocks, wires, parameters — and
@@ -180,7 +180,9 @@ cover the validation loop.
 ## Relationship to `lox` / `lox-cli`
 
 [`lox`](https://github.com/discostu105/lox) (server API, transport, LoxCC)
-and `lox-cli` (config manipulation CLI, DOM-level writer) already exist.
+and [`lox-cli`](https://github.com/eisber/lox-cli) (Markus Cozowicz's fork:
+config manipulation CLI, DOM-level writer, `lox sim` simulator) already
+exist.
 This crate is the missing foundation both lack: byte-faithful
 serialization, the UUID/identity model, and the IR/lockfile pipeline. The
 intended end state is `lox-cli` (or a successor) depending on `lxir` for
