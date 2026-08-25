@@ -62,6 +62,14 @@ USAGE:
   lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
 
+  lxir drift <cfg.Loxone> --lock <lock.json>
+        Check a config (typically a fresh download) against the semantic
+        fingerprint the lockfile recorded at the last adopt/compile.
+        Exit 0 = in sync; 1 = another writer changed something since
+        (position moves, save noise, and locale renames don't count).
+        One parse, no reference config needed — `lxir diff` tells you
+        *what* changed, this tells you *whether* cheaply.
+
   lxir observe <cfg.Loxone>... [--crosscheck <legacy.json>]...
         Port-direction evidence per block type, as JSON. Multiple configs
         merge into one corpus-level view. --crosscheck compares the
@@ -99,6 +107,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["decompile", rest @ ..] => cmd_decompile(rest),
         ["adopt", rest @ ..] => cmd_adopt(rest),
         ["diff", rest @ ..] => cmd_diff(rest),
+        ["drift", rest @ ..] => cmd_drift(rest),
         ["observe", rest @ ..] => cmd_observe(rest),
         ["roundtrip", path] => cmd_roundtrip(path),
         [cmd, ..] => {
@@ -539,6 +548,35 @@ fn cmd_diff(args: &[&str]) -> Result<ExitCode, AnyError> {
         return Ok(ExitCode::FAILURE);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_drift(args: &[&str]) -> Result<ExitCode, AnyError> {
+    let (config, lock_path) = match args {
+        [config, "--lock", lock] | ["--lock", lock, config] => (*config, *lock),
+        _ => return Err("usage: lxir drift <cfg.Loxone> --lock <lock.json>".into()),
+    };
+    let doc = read_doc(config)?;
+    let lock = Lockfile::load(Path::new(lock_path))?;
+    let Some(recorded) = &lock.target.semantic_fingerprint else {
+        return Err(format!(
+            "{lock_path} records no semantic fingerprint (it predates the \
+             feature) — one adopt or compile establishes the baseline"
+        )
+        .into());
+    };
+    let current = lxir::diff::semantic_fingerprint(&doc);
+    if &current == recorded {
+        println!("in sync: {config} matches the fingerprint in {lock_path}");
+        Ok(ExitCode::SUCCESS)
+    } else {
+        println!(
+            "drift: {config} no longer matches the fingerprint recorded in \
+             {lock_path} — another writer changed something since the last \
+             adopt/compile; run `lxir diff <last-compiled.Loxone> {config}` \
+             to see what"
+        );
+        Ok(ExitCode::FAILURE)
+    }
 }
 
 fn cmd_observe(args: &[&str]) -> Result<ExitCode, AnyError> {

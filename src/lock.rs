@@ -56,6 +56,12 @@ pub struct Target {
     pub config_version: Option<String>,
     pub miniserver_serial: Option<String>,
     pub source_config_sha256: Option<String>,
+    /// [`crate::diff::semantic_fingerprint`] of the last compiled output
+    /// (at adoption: of the adopted config — the first compile is a
+    /// semantic no-op, so the value is the same). The drift baseline
+    /// `lxir drift` checks a fresh download against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

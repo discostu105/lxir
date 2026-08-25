@@ -202,9 +202,12 @@ haus/
 - [ ] `adopt` (incremental form): `lxir adopt <uuid> --as
       beschattung.vorhandener_block` — adopting a single block into an
       *existing* module/lock pair.
-- [ ] Drift fingerprint: hash the unmanaged remainder (the sketch's
-      `raw_digest`) so tooling can cheaply detect "another writer changed
-      something" without a full diff.
+- [x] Drift fingerprint 2026-08-25 (D21): `semantic_fingerprint` hashes
+      exactly the projection the semantic diff compares (locale-suspect
+      titles excluded), recorded in the lock at adopt/compile; `lxir
+      drift <cfg> --lock <lock>` detects "another writer changed
+      something" from one parse — no reference config, no full diff.
+      Save noise, position moves, and locale renames don't fire it.
 - [ ] ConfigVersion pin policy: refuse compiling against a base whose
       ConfigVersion differs from the project pin; qualifying a new Loxone
       release = one oracle-CI run for that version.

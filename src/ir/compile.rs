@@ -503,6 +503,7 @@ pub fn compile(
             .collect::<String>(),
     );
     lock.target.source_config_sha256 = Some(sha256_hex(&base.to_bytes()));
+    lock.target.semantic_fingerprint = Some(crate::diff::semantic_fingerprint(&doc));
     Ok(doc)
 }
 

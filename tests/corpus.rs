@@ -73,6 +73,15 @@ fn corpus_adoptions_rebuild_as_semantic_noops() {
             "{}: adopted rebuild is not a semantic no-op:\n{d:#?}",
             path.display()
         );
+        // The drift baseline recorded at adoption must survive the
+        // rebuild: fingerprint stability under our own writes is the
+        // whole point of `lxir drift`.
+        assert_eq!(
+            lock.target.semantic_fingerprint.as_deref(),
+            Some(&*lxir::diff::semantic_fingerprint(&out)),
+            "{}: fingerprint moved across a semantic no-op rebuild",
+            path.display()
+        );
         // Determinism: compiling again with the updated lock reproduces
         // the bytes exactly.
         let out2 = compile(&base, &module, &mut lock1, &opts())

@@ -363,3 +363,19 @@ Anything unverified is an error, not a heuristic:
     the GUI edits via checkbox, exactly the ownership conflict externs
     exist to avoid, for a feature better expressed by an explicit `Not`
     block when the logic is lxir-authored.
+- **D21 — Drift baseline = a fingerprint of the diff's own projection**
+  (2026-08-25). "Did another writer change something since my last
+  adopt/compile?" should not require keeping the last compiled output
+  around, and must not false-alarm on what a GUI save touches anyway
+  (element positions, visualization residue, the save fingerprint,
+  locale renames of built-ins). Decision: `semantic_fingerprint(doc)`
+  hashes **exactly the projection `diff` compares** — objects by UUID
+  with type and title, `Def=`-carrying ports, attribute parameters, the
+  wire set — and lives next to `diff` in the same module so the two
+  cannot drift apart; locale-suspect titles are left out, so two
+  documents are fingerprint-equal iff their diff is empty apart from
+  locale-suspect renames. Adopt and compile record it in the lock
+  (`target.semantic_fingerprint`); `lxir drift <cfg> --lock <lock>`
+  answers from one parse of one file, with `lxir diff` remaining the
+  tool that says *what* changed. Corpus-enforced: every adopted rebuild
+  must reproduce the fingerprint recorded at adoption bit-for-bit.

@@ -384,6 +384,34 @@ fn adopt_then_compile_rebuilds_in_place() {
 }
 
 #[test]
+fn fingerprint_is_recorded_and_survives_the_rebuild() {
+    let existing = adopted_config();
+    let (module, mut lock, _) = adopt(&existing).unwrap();
+    let recorded = lock.target.semantic_fingerprint.clone().unwrap();
+    assert_eq!(recorded, lxir::diff::semantic_fingerprint(&existing));
+
+    // The rebuild is a semantic no-op, so compile re-records the same
+    // baseline — `lxir drift` stays green across the whole cycle.
+    let out = compile(&existing, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.target.semantic_fingerprint.as_deref(),
+        Some(&*recorded)
+    );
+    assert_eq!(lxir::diff::semantic_fingerprint(&out), recorded);
+
+    // Any real edit moves it (here: a changed Def value).
+    let changed_src = ADOPT_SRC.replace("Input2: 50", "Input2: 51");
+    let changed = compile(
+        &base(),
+        &Module::parse(&changed_src).unwrap(),
+        &mut Lockfile::new(),
+        &opts(),
+    )
+    .unwrap();
+    assert_ne!(lxir::diff::semantic_fingerprint(&changed), recorded);
+}
+
+#[test]
 fn formula_attribute_parameter_compiles_and_diffs() {
     let existing = adopted_config();
     let objs = existing.objects();

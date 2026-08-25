@@ -155,6 +155,7 @@ fn adopt_lock(doc: &LoxoneDoc, lift: &Lift, refused: Vec<String>) -> (Lockfile, 
     // serial stays unset for the same reason (it is a compile option).
     lock.target.config_version = doc.config_version();
     lock.target.source_config_sha256 = Some(sha256_hex(&doc.to_bytes()));
+    lock.target.semantic_fingerprint = Some(crate::diff::semantic_fingerprint(doc));
 
     let d = lift.report();
     (
