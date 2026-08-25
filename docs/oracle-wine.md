@@ -134,6 +134,25 @@ off-descriptor (D8, above), survival is decisive — the wire **survived
 the save intact**, so `Q` is an output. All three types are now in
 `connectors::builtin` (see [connector-db.md](connector-db.md)).
 
+## The D19 + AutoJalousie rebuild — passed
+
+Fourth session (2026-08-25, same day as D19 and the AutoJalousie
+admission): the full adopt-rebuild of the real house config — **49
+managed blocks**, including 12 AutoJalousie with carried
+`COHist`/`IoData`/`SpStates` residue, grey Memory blocks, `NDOC=`,
+`StatsType=` — opened and saved by Loxone Config.
+
+Result: **semantically empty diff in both directions** (vs the original
+and vs the rebuild we handed it). Byte-level, the save touched nothing
+of ours except one Formula whose `WF` it rewrote 16384 → 147456 — the
+*reverse* of the earlier 147456 → 16384 normalization, settling that
+`WF` is GUI view-state it freely recomputes (D19 carries whichever
+value the base has, so this never fights the GUI). Everything else in
+the save fingerprint was unrelated to managed blocks: a schema
+migration stamping `TId=` template ids onto 62 hardware-device
+elements, the known AutopilotRule re-layout, the `NextObj` +2 burn,
+and a one-pixel `Py2` nudge on an unmanaged Text note.
+
 ## Crash: minimal synthetic configs
 
 Handing Loxone Config the crate's synthetic `examples/out` file
