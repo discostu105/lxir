@@ -266,6 +266,34 @@ Testing of the real house base, opened and saved once:
 With session 8 (PulseAt, DayTimer, Switch2Button) this mint-validates
 every type of the second admission batch.
 
+## Expression titles (session 10, D24) — passed
+
+Ran 2026-08-25, same rig. D24 left one open note: expression-generated
+blocks carry their sub-expression as the `Title=` — text with `>=`,
+`(`, `)`, and dotted port references, XML-escaped correctly but never
+shown to the GUI. Compiled
+`relais_1_treppenlicht.AI <- not (montag.Q and dienstag.Q) or
+dienstag.Q >= 1` against a copy of the real house base (four blocks —
+And, Not, GreaterEqual, Or — placed on Automatik-Regeln, plus a second
+`<In>` on an already-wired extern sink), opened and saved once:
+
+- **Empty semantic diff across the save.** All four blocks, their
+  titles (`Title="dienstag.Q &gt;= 1"`, the full parenthesized Or
+  title), and all seven wires re-serialized byte-preserved — the GUI
+  parses, holds, and re-emits the special-character titles unchanged.
+- The canvas renders the titles as plain caption text (the And's
+  `montag.Q and dienstag.Q` was on screen); nothing in the title
+  pipeline treats `>=` or parens specially.
+- Second `<In>` children on an extern connector survive alongside the
+  pre-existing wire — additive wiring onto an already-wired sink is
+  legal.
+
+Rig note for next time: the canvas vertical scroll caps at the page
+extent computed on load — blocks compiled below the last used page
+row exist and save fine but cannot be scrolled into view without
+interaction that recomputes the extent. Read the XML instead of
+fighting the viewport.
+
 ## The rig
 
 - Prefix: `~/.local/share/loxone-config/wine`, exe under
