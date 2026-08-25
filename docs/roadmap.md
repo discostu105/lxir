@@ -107,6 +107,15 @@ types) contradict each other. Results and methodology:
       adoption subset); `--out-dir` writes one self-contained module per
       logic page, foreign references annotated with their origin page.
       Groundwork for the Stufe-4 `externals.lxir` / multi-module layout.
+- [x] Full-view readability 2026-08-25 (D29): `InputRef`/`OutputRef`
+      plumbing wires fold behind `# mirrors <Type> "<name>"` notes on
+      the ref externs (periphery objects connected only by plumbing stay
+      out entirely), the `<-` pile is sorted by sink then source, and a
+      block label the slug already encodes is dropped. All three are
+      full-view only — the adoptable `--managed-only` view keeps
+      document order and exact labels, because those are compiled
+      bytes. Real config: 2667 → 1818 lines, 486 wires folded, 674 →
+      396 externs.
 - [x] Composite extern matching 2026-08-25: `extern x = Type(title:
       "Deckenlicht", room: "Büro")` — `room:`/`category:` narrow an
       iname/title match via the object's `<IoData Pr=/Cr=>` reference

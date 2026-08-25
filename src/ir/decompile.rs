@@ -6,7 +6,9 @@
 //! bindings. In the default [`DecompileScope::Full`] view, every other
 //! page object with connectors becomes an `extern` declaration, and every
 //! wire between lifted objects is shown (wires into managed blocks in the
-//! argument list, wires onto extern ports as `target.Port <- source.Port`).
+//! argument list, wires onto extern ports as `target.Port <- source.Port`,
+//! sorted by sink) — except `InputRef`/`OutputRef` plumbing, which folds
+//! behind a `# mirrors …` note on the ref's extern declaration (D29).
 //! Output is grouped by logic page: `page "Title"` statements head the
 //! sections of the single-module view (D28), one module per page from
 //! [`decompile_pages`]; the periphery keeps a `# periphery` comment.
@@ -85,6 +87,11 @@ pub struct DecompileReport {
     /// Objects left as raw XML (not counting Document/Page containers) —
     /// the honest measure of what the view does not cover.
     pub raw_objects: usize,
+    /// Plumbing wires between an `InputRef`/`OutputRef` and the object
+    /// its `Ref=` attribute names, folded out of the `Full` view (D29) —
+    /// the ref's extern declaration carries a `# mirrors …` note instead.
+    /// Always 0 in the `ManagedOnly` view.
+    pub ref_wires_folded: usize,
 }
 
 /// One logic page's slice of the view, from [`decompile_pages`].
@@ -148,8 +155,11 @@ pub(super) struct Lift {
     pub(super) block_decls: BTreeMap<usize, BlockDecl>,
     pub(super) match_specs: BTreeMap<usize, MatchSpec>,
     /// `<-` statements with the sink and source object indexes,
-    /// deduplicated, document order.
+    /// deduplicated — document order in the adoptable view, sorted by
+    /// (sink, source) in the full view (D29).
     pub(super) wires: Vec<(WireDecl, usize, usize)>,
+    /// Ref plumbing wires folded out of the full view (D29).
+    ref_wires_folded: usize,
 }
 
 /// One page's (or the periphery's) share of the lifted items, as indexes
@@ -227,6 +237,28 @@ impl Lift {
             }
         }
 
+        // Ref plumbing (D29, full view only): an `InputRef`/`OutputRef`
+        // carries a `Ref=` attribute naming the object it mirrors, and the
+        // wires between the two are GUI routing, not logic. They are
+        // folded out of the view — the ref's extern declaration carries a
+        // `# mirrors …` note instead — and a periphery object whose only
+        // connection was such plumbing is never pulled in as an extern.
+        let mirror_target: BTreeMap<usize, &str> = if opts.scope == DecompileScope::Full {
+            objects
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| matches!(o.block_type.as_str(), "InputRef" | "OutputRef"))
+                .filter_map(|(i, o)| {
+                    doc.element_at(&o.path)
+                        .and_then(|el| el.attr("Ref"))
+                        .map(|r| (i, r))
+                })
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+        let mut ref_wires_folded = 0usize;
+
         // Wires touching the seed pull their other endpoint in as an
         // extern. Depth 1 on purpose: an extern lifted here does not pull
         // in *its* other wires, so periphery-to-periphery wiring stays out.
@@ -257,6 +289,15 @@ impl Lift {
                 // GUI content — carried verbatim by the rebuild (managed
                 // sink) or left untouched in the base (extern sink), and
                 // its source is not pulled in as an extern.
+                continue;
+            }
+            let plumbing = |ri: usize, oi: usize| {
+                mirror_target
+                    .get(&ri)
+                    .is_some_and(|t| *t == objects[oi].uuid)
+            };
+            if plumbing(ti, fi) || plumbing(fi, ti) {
+                ref_wires_folded += 1;
                 continue;
             }
             if !seen.insert((w.from_port.clone(), w.to_port.clone())) {
@@ -311,6 +352,14 @@ impl Lift {
             .chain(&externs)
             .map(|&i| (i, match_spec(i)))
             .collect();
+        // A ref extern says what it mirrors (D29) — the plumbing wires
+        // that carried that fact were folded above.
+        let mirror_note = |i: usize| -> Option<String> {
+            let &mi = obj_index.get(*mirror_target.get(&i)?)?;
+            let m = &objects[mi];
+            let name = m.title.as_deref().or(m.iname.as_deref()).unwrap_or(&m.uuid);
+            Some(format!(" mirrors {} \"{name}\"", m.block_type))
+        };
         let extern_decls: BTreeMap<usize, ExternDecl> = externs
             .iter()
             .map(|&i| {
@@ -322,7 +371,7 @@ impl Lift {
                         slug: slug_of[&objects[i].uuid].clone(),
                         block_type: objects[i].block_type.clone(),
                         match_spec: match_specs[&i].clone(),
-                        comment: None,
+                        comment: mirror_note(i),
                     },
                 )
             })
@@ -390,7 +439,13 @@ impl Lift {
                     block_type: o.block_type.clone(),
                     // A title identical to the slug is what `compile`
                     // defaults to — dropping it keeps the view minimal.
-                    title: o.title.clone().filter(|t| t != &slug),
+                    // The read-only full view also drops a title the slug
+                    // already encodes (`slugify(title) == slug`, D29); the
+                    // adoptable view keeps it, because rebuilding must
+                    // write the exact `Title=` back.
+                    title: o.title.clone().filter(|t| {
+                        t != &slug && (opts.scope != DecompileScope::Full || slugify(t) != slug)
+                    }),
                     slug,
                     args,
                     comment: None,
@@ -426,6 +481,20 @@ impl Lift {
                 fi,
             ));
         }
+        if opts.scope == DecompileScope::Full {
+            // Big fan-ins pile up dozens of `<-` lines; sorted by sink,
+            // then source, they read as a table (D29). View-only: the
+            // adoptable view keeps document order, because the relative
+            // `<In>` order within a sink is part of the compiled bytes.
+            wires.sort_by(|a, b| {
+                (&a.0.to.slug, &a.0.to.port, &a.0.from.slug, &a.0.from.port).cmp(&(
+                    &b.0.to.slug,
+                    &b.0.to.port,
+                    &b.0.from.slug,
+                    &b.0.from.port,
+                ))
+            });
+        }
 
         Lift {
             objects,
@@ -440,6 +509,7 @@ impl Lift {
             block_decls,
             match_specs,
             wires,
+            ref_wires_folded,
         }
     }
 
@@ -633,6 +703,7 @@ impl Lift {
                 .filter(|o| !matches!(o.block_type.as_str(), "Document" | "Page"))
                 .filter(|o| !self.slug_of.contains_key(&o.uuid))
                 .count(),
+            ref_wires_folded: self.ref_wires_folded,
         }
     }
 }

@@ -545,3 +545,24 @@ Anything unverified is an error, not a heuristic:
   concatenation order observable for the first time — documented in the
   spec with the convention (every fragment opens with its `page`
   statement) that neutralizes it.
+- **D29 — The full view optimizes for the reader; only the adoptable
+  view owes the compiler** (2026-08-25). The two decompile scopes have
+  different contracts — `ManagedOnly` output must recompile
+  byte-identically, the `Full` view is documentation — so they earn
+  different liberties. Three readability changes, all full-view only:
+  (1) `InputRef`/`OutputRef` plumbing folds. A ref's `Ref=` attribute
+  already names the object it mirrors; the wires between the two are GUI
+  routing, not logic. They vanish from the view, the ref's extern
+  declaration gains `# mirrors <Type> "<name>"`, and a periphery object
+  whose only connection was plumbing is never pulled in as an extern.
+  (2) The `<-` pile sorts by (sink slug, sink port, source slug, source
+  port) — big fan-ins read as a table instead of canvas order. Not
+  possible in the adoptable view: the relative `<In>` order within a
+  sink connector is part of the compiled bytes. (3) A block label the
+  slug already encodes (`slugify(title) == slug`, e.g. `"Temp über 28"`
+  → `temp_ueber_28`) is dropped; the adoptable view keeps every label
+  because the rebuild writes `Title=` back exactly. The report counts
+  folded wires honestly (`ref_wires_folded`, printed by the CLI). On the
+  real house config the view shrank from 2667 to 1818 lines — 486
+  plumbing wires folded and 278 of 674 externs turned out to exist only
+  to feed refs. Corpus adoption fidelity verified unchanged.

@@ -563,8 +563,16 @@ fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
         report
     };
     eprintln!(
-        "# {path}: {} managed, {} externs across {} pages, {} raw objects untouched",
-        report.managed, report.externs, report.pages, report.raw_objects
+        "# {path}: {} managed, {} externs across {} pages, {} raw objects untouched{}",
+        report.managed,
+        report.externs,
+        report.pages,
+        report.raw_objects,
+        if report.ref_wires_folded > 0 {
+            format!(", {} ref plumbing wires folded", report.ref_wires_folded)
+        } else {
+            String::new()
+        }
     );
     Ok(ExitCode::SUCCESS)
 }

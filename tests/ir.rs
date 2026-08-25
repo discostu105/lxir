@@ -773,6 +773,119 @@ fn full_view_decompile_shows_every_page_block_and_wire() {
     // The view is still canonical, parseable language text.
     let text = m.to_text();
     assert_eq!(Module::parse(&text).unwrap(), m);
+    // D29: a label the slug already encodes is dropped in the read-only
+    // full view ("Temp über 28" → temp_ueber_28, "Beschattung Süd" →
+    // beschattung_sued) — no block needs one here.
+    assert!(m.blocks().all(|b| b.title.is_none()));
+    // …while the adoptable view keeps every label: rebuilding must write
+    // the exact `Title=` back.
+    let mo = DecompileOptions {
+        scope: DecompileScope::ManagedOnly,
+        ..Default::default()
+    };
+    let (m, report) = decompile(&out, &mo).unwrap();
+    assert_eq!(report.ref_wires_folded, 0);
+    assert_eq!(
+        m.blocks()
+            .filter_map(|b| b.title.as_deref())
+            .collect::<Vec<_>>(),
+        ["Beschattung Süd", "Temp über 28"]
+    );
+}
+
+/// D29: `InputRef`/`OutputRef` plumbing folds out of the full view — the
+/// ref extern says what it mirrors, a periphery object connected only by
+/// plumbing stays out entirely, and the `<-` pile is sorted by sink.
+#[test]
+fn full_view_folds_ref_plumbing_and_sorts_extern_wires() {
+    let mut lock = Lockfile::new();
+    let mut out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
+
+    // A periphery VirtualIn nothing else references…
+    let caption = out
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "VirtualInCaption")
+        .unwrap()
+        .path
+        .clone();
+    let mut regen = Element::new("C");
+    regen.set_attr("Type", "VirtualIn");
+    regen.set_attr("V", "175");
+    regen.set_attr("U", "20000097-0000-0970-ffff504f94112233");
+    regen.set_attr("Title", "Regensensor");
+    regen.set_attr("IName", "VI9");
+    let mut q = Element::new("Co");
+    q.set_attr("K", "Q");
+    q.set_attr("U", "20000097-0000-0971-00ffaaaaaaaa0097");
+    regen.push_child(q);
+    out.element_at_mut(&caption).unwrap().push_child(regen);
+
+    // …page refs, the OutputRef first in document order. Its wire from
+    // the And block is logic (kept); the InputRef's wire from the
+    // Regensensor is the plumbing its `Ref=` already states (folded).
+    let page = out
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "Page")
+        .unwrap()
+        .path
+        .clone();
+    let and_q = lock.objects["beschatten"].ports["Q"].clone();
+    let mut zeta = Element::new("C");
+    zeta.set_attr("Type", "OutputRef");
+    zeta.set_attr("V", "175");
+    zeta.set_attr("U", "20000095-0000-0950-ffff504f94112233");
+    zeta.set_attr("Title", "Zeta Ref");
+    let mut i = Element::new("Co");
+    i.set_attr("K", "I");
+    i.set_attr("U", "20000095-0000-0951-00ffaaaaaaaa0095");
+    let mut inp = Element::new("In");
+    inp.set_attr("Input", &and_q);
+    i.push_child(inp);
+    zeta.push_child(i);
+    let mut alpha = Element::new("C");
+    alpha.set_attr("Type", "InputRef");
+    alpha.set_attr("V", "175");
+    alpha.set_attr("U", "20000096-0000-0960-ffff504f94112233");
+    alpha.set_attr("Title", "Alpha Ref");
+    alpha.set_attr("Ref", "20000097-0000-0970-ffff504f94112233");
+    let mut i = Element::new("Co");
+    i.set_attr("K", "I");
+    i.set_attr("U", "20000096-0000-0961-00ffaaaaaaaa0096");
+    let mut inp = Element::new("In");
+    inp.set_attr("Input", "20000097-0000-0971-00ffaaaaaaaa0097");
+    i.push_child(inp);
+    alpha.push_child(i);
+    let mut ai = Element::new("Co");
+    ai.set_attr("K", "AI");
+    ai.set_attr("U", "20000096-0000-0962-01ffaaaaaaaa0096");
+    let mut inp = Element::new("In");
+    // The Außentemperatur VirtualIn's Q — a real source, not the mirror.
+    inp.set_attr("Input", "20000001-0000-0011-00ffaaaaaaaa0001");
+    ai.push_child(inp);
+    alpha.push_child(ai);
+    let page_el = out.element_at_mut(&page).unwrap();
+    page_el.push_child(zeta);
+    page_el.push_child(alpha);
+
+    let (m, report) = decompile(&out, &DecompileOptions::default()).unwrap();
+    assert_eq!(report.ref_wires_folded, 1);
+    // The ref extern names what it mirrors instead of showing plumbing.
+    let alpha = m.externs().find(|e| e.slug == "alpha_ref").unwrap();
+    assert_eq!(
+        alpha.comment.as_deref(),
+        Some(" mirrors VirtualIn \"Regensensor\"")
+    );
+    // The Regensensor's only connection was plumbing — it is not lifted.
+    assert!(m.externs().all(|e| e.slug != "regensensor"));
+    // The kept `<-` wires are sorted by sink, reversing document order
+    // (the OutputRef was added first).
+    let pile: Vec<String> = m.extern_wires().map(|w| w.to.to_string()).collect();
+    assert_eq!(pile, ["alpha_ref.AI", "zeta_ref.I"]);
+    // Still canonical, parseable text.
+    let text = m.to_text();
+    assert_eq!(Module::parse(&text).unwrap(), m);
 }
 
 #[test]
