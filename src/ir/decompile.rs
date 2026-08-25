@@ -224,6 +224,95 @@ impl Lift {
             }
         }
 
+        // Ref plumbing (D29, full view only): an `InputRef`/`OutputRef`
+        // carries a `Ref=` attribute naming the object it mirrors, and the
+        // wires between the two are GUI routing, not logic. They are
+        // folded out of the view — the ref's extern declaration carries a
+        // `# mirrors …` note instead — and a periphery object whose only
+        // connection was such plumbing is never pulled in as an extern.
+        let mirror_target: BTreeMap<usize, &str> = objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| matches!(o.block_type.as_str(), "InputRef" | "OutputRef"))
+            .filter_map(|(i, o)| {
+                doc.element_at(&o.path)
+                    .and_then(|el| el.attr("Ref"))
+                    .map(|r| (i, r))
+            })
+            .collect();
+        // D34 inversion (both scopes): a consumer wire on a ref is emitted
+        // against the mirrored object itself — compile routes it back
+        // through the very same ref (same-page reuse, pinned by the base
+        // wire). Maps a ref's consumer-facing port uuid to the target
+        // (uuid, key) it stands for, plus the ref uuids carrying that
+        // port (InputRef mirrors share their output-port uuids); a wire
+        // folds only when its consumer shares a carrying ref's page.
+        type Fold = (String, String, Vec<String>);
+        let mut ref_fold: BTreeMap<String, Fold> = BTreeMap::new();
+        for (&ri, &tgt) in &mirror_target {
+            let Some(&mi) = obj_index.get(tgt) else {
+                continue;
+            };
+            // A mirror of a mirror is not resolvable, and only a nameable
+            // target type can appear in source.
+            if mirror_target.contains_key(&mi) || !is_ident(&objects[mi].block_type) {
+                continue;
+            }
+            let tel = doc
+                .element_at(&objects[mi].path)
+                .expect("path from objects()");
+            let tps = ports(tel);
+            let rel = doc
+                .element_at(&objects[ri].path)
+                .expect("path from objects()");
+            let rps = ports(rel);
+            let rp = |k: &str| rps.iter().find(|p| p.key == k);
+            let mut fold = |port_uuid: &str, tkey: &str| {
+                let e = ref_fold
+                    .entry(port_uuid.to_string())
+                    .or_insert_with(|| (tgt.to_string(), tkey.to_string(), Vec::new()));
+                if e.0 == tgt && e.1 == tkey {
+                    e.2.push(objects[ri].uuid.clone());
+                }
+            };
+            if objects[ri].block_type == "InputRef" {
+                // A fed input serves its output: target idx0 → AI serves
+                // AQ, idx1 → I serves Q (the GUI's own feed convention —
+                // anything else stays an explicit ref).
+                for (fed, serves, tidx) in [("AI", "AQ", 0usize), ("I", "Q", 1)] {
+                    if let (Some(f), Some(s), Some(tp)) = (rp(fed), rp(serves), tps.get(tidx))
+                        && f.inputs.as_slice() == std::slice::from_ref(&tp.uuid)
+                        && is_ident(&tp.key)
+                    {
+                        fold(&s.uuid, &tp.key);
+                    }
+                }
+            } else if let (Some(ai), Some(aq)) = (rp("AI"), rp("AQ")) {
+                // OutputRef: its AQ must feed exactly one port of the
+                // target — a write into the ref's AI stands for a write
+                // into that port.
+                let sinks: BTreeSet<String> = doc
+                    .wires()
+                    .iter()
+                    .filter(|w| w.from_port == aq.uuid)
+                    .map(|w| w.to_port.clone())
+                    .collect();
+                if sinks.len() == 1
+                    && let Some(one) = sinks.iter().next()
+                    && let Some((so, sk)) = idx.port_owner.get(one)
+                    && so == tgt
+                    && is_ident(sk)
+                {
+                    fold(&ai.uuid, sk);
+                }
+            }
+        }
+        // A fold applies when the consumer's page carries one of the refs.
+        let page_serves = |f: &Fold, consumer_uuid: &str| -> bool {
+            let cp = page_of.get(consumer_uuid);
+            cp.is_some() && f.2.iter().any(|r| page_of.get(r.as_str()) == cp)
+        };
+
         // Seed: managed-type objects; in the full view also every page
         // object with connectors and a language-writable type.
         let mut lifted = vec![false; objects.len()];
@@ -239,6 +328,9 @@ impl Lift {
             for (i, o) in objects.iter().enumerate() {
                 if !lifted[i]
                     && !matches!(o.block_type.as_str(), "Document" | "Page")
+                    // Refs are page visuals, not logic (D34): one appears
+                    // in the view only when an unfoldable wire names it.
+                    && !mirror_target.contains_key(&i)
                     && page_of.contains_key(&o.uuid)
                     && is_ident(&o.block_type)
                     && !ports(doc.element_at(&o.path).expect("path from objects()")).is_empty()
@@ -249,26 +341,6 @@ impl Lift {
             }
         }
 
-        // Ref plumbing (D29, full view only): an `InputRef`/`OutputRef`
-        // carries a `Ref=` attribute naming the object it mirrors, and the
-        // wires between the two are GUI routing, not logic. They are
-        // folded out of the view — the ref's extern declaration carries a
-        // `# mirrors …` note instead — and a periphery object whose only
-        // connection was such plumbing is never pulled in as an extern.
-        let mirror_target: BTreeMap<usize, &str> = if opts.scope == DecompileScope::Full {
-            objects
-                .iter()
-                .enumerate()
-                .filter(|(_, o)| matches!(o.block_type.as_str(), "InputRef" | "OutputRef"))
-                .filter_map(|(i, o)| {
-                    doc.element_at(&o.path)
-                        .and_then(|el| el.attr("Ref"))
-                        .map(|r| (i, r))
-                })
-                .collect()
-        } else {
-            BTreeMap::new()
-        };
         let mut ref_wires_folded = 0usize;
 
         // Wires touching the seed pull their other endpoint in as an
@@ -284,12 +356,35 @@ impl Lift {
             ) else {
                 continue; // dangling <In> — not representable, stays raw
             };
-            let (fi, ti) = (obj_index[fo.as_str()], obj_index[to.as_str()]);
-            if !(seed[fi] || seed[ti]) {
+            let (mut fi, mut ti) = (obj_index[fo.as_str()], obj_index[to.as_str()]);
+            let (mut fk, mut tk) = (fk.clone(), tk.clone());
+            // D34 inversion: a ref endpoint is rewritten to its target
+            // when the consumer sits on the ref's page — compile routes
+            // the wire back through that very ref.
+            if let Some(f) = ref_fold.get(&w.from_port)
+                && page_serves(f, &objects[ti].uuid)
+            {
+                fi = obj_index[f.0.as_str()];
+                fk = f.1.clone();
+            } else if let Some(f) = ref_fold.get(&w.to_port)
+                && page_serves(f, &objects[fi].uuid)
+            {
+                ti = obj_index[f.0.as_str()];
+                tk = f.1.clone();
+            }
+            // A page-placed ref an unfoldable wire still names re-enters
+            // the view here (it is no longer a seed by itself): plumbing
+            // below still folds its feeds, but a real wire lifts it.
+            let page_ref = |i: usize| {
+                opts.scope == DecompileScope::Full
+                    && mirror_target.contains_key(&i)
+                    && page_of.contains_key(&objects[i].uuid)
+            };
+            if !(seed[fi] || seed[ti] || page_ref(fi) || page_ref(ti)) {
                 continue;
             }
-            if !is_ident(fk)
-                || !is_ident(tk)
+            if !is_ident(&fk)
+                || !is_ident(&tk)
                 || !is_ident(&objects[fi].block_type)
                 || !is_ident(&objects[ti].block_type)
             {
@@ -308,7 +403,7 @@ impl Lift {
                     .get(&ri)
                     .is_some_and(|t| *t == objects[oi].uuid)
             };
-            if plumbing(ti, fi) || plumbing(fi, ti) {
+            if opts.scope == DecompileScope::Full && (plumbing(ti, fi) || plumbing(fi, ti)) {
                 ref_wires_folded += 1;
                 continue;
             }
@@ -321,7 +416,7 @@ impl Lift {
                     externs.push(i);
                 }
             }
-            touched.push((fi, fk.clone(), ti, tk.clone()));
+            touched.push((fi, fk, ti, tk));
         }
 
         // Slug assignment: managed first (document order), then externs
@@ -463,6 +558,12 @@ impl Lift {
                 for input in &p.inputs {
                     let Some((src_obj, src_key)) = idx.port_owner.get(input) else {
                         continue; // dangling <In> — not representable, stays raw
+                    };
+                    // D34 inversion, argument-list side: this block is the
+                    // consumer — a ref source on its page names the target.
+                    let (src_obj, src_key) = match ref_fold.get(input) {
+                        Some(f) if page_serves(f, &o.uuid) => (&f.0, &f.1),
+                        _ => (src_obj, src_key),
                     };
                     let Some(src_slug) = slug_of.get(src_obj) else {
                         continue;

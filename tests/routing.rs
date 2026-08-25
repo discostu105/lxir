@@ -288,6 +288,35 @@ fn cross_page_consumers_stay_direct() {
 }
 
 #[test]
+fn decompile_folds_consumer_wires_to_the_target() {
+    // The inverse view (D34): a consumer wire drawn on a ref is shown
+    // against the mirrored object itself; the ref and its plumbing
+    // disappear from the full view.
+    let base = base_with_mirrors("routing-base-decompile");
+    let dir = base.parent().unwrap();
+    // Decompile the *output* config — it carries the minted refs.
+    let out = lxir(dir, &["decompile", "out.Loxone"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let view = String::from_utf8_lossy(&out.stdout).into_owned();
+    // halter read spiegel.Q (I-fed from the VirtualIn's Qm) — the view
+    // names the VirtualIn's own port (decompile derives slugs from
+    // titles, so match on the port). The actor write through the
+    // OutputRef's AI names the actor port its AQ feeds.
+    assert!(view.contains("Input: "), "{view}");
+    assert!(
+        view.contains(".Qm,"),
+        "read must name the target port: {view}"
+    );
+    assert!(view.contains("Qm <- halter.Q"), "{view}");
+    assert!(!view.contains("InputRef"), "refs must fold away: {view}");
+    assert!(!view.contains("OutputRef"), "refs must fold away: {view}");
+}
+
+#[test]
 fn explicit_ref_externs_still_wire_literally() {
     let base = base_with_mirrors("routing-base-explicit");
     // The D32 form: name the ref itself, wire its ports — no rerouting,

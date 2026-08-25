@@ -866,6 +866,11 @@ fn full_view_folds_ref_plumbing_and_sorts_extern_wires() {
     let mut inp = Element::new("In");
     inp.set_attr("Input", &and_q);
     i.push_child(inp);
+    // A second, real source on the same connector: without it the ref
+    // would be pure plumbing and fold out of the view entirely (D34).
+    let mut inp = Element::new("In");
+    inp.set_attr("Input", "20000001-0000-0011-00ffaaaaaaaa0001");
+    i.push_child(inp);
     zeta.push_child(i);
     let mut alpha = Element::new("C");
     alpha.set_attr("Type", "InputRef");
@@ -909,9 +914,9 @@ fn full_view_folds_ref_plumbing_and_sorts_extern_wires() {
     assert_eq!(zeta.comment, None);
     // The Regensensor's only connection was plumbing — it is not lifted.
     assert!(m.externs().all(|e| e.slug != "regensensor"));
-    // Only the InputRef's off-page source wire survives the fold.
+    // Only the refs' real source wires survive the fold.
     let pile: Vec<String> = m.extern_wires().map(|w| w.to.to_string()).collect();
-    assert_eq!(pile, ["alpha_ref.AI"]);
+    assert_eq!(pile, ["alpha_ref.AI", "zeta_ref.I"]);
     // Still canonical, parseable text.
     let text = m.to_text();
     assert_eq!(Module::parse(&text).unwrap(), m);

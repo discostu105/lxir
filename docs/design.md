@@ -708,4 +708,11 @@ Anything unverified is an error, not a heuristic:
   cross-page consumers and source-fed export mirrors) recompiles
   byte-identical to the deployed config. e2e: reuse through `AQ`/`Q`,
   the `OutputRef.AI` redirect, shared-output twins, cross-page staying
-  direct, literal explicit-ref wiring.
+  direct, literal explicit-ref wiring. Decompile/adopt invert the same
+  rules: a consumer wire drawn on a ref is emitted against the mirrored
+  object when the consumer shares the ref's page (conventional feeds
+  only — target idx0 → `AI`, idx1 → `I`, one `OutputRef.AQ` sink), and
+  a ref is no longer page-lifted into the full view by itself — it
+  appears only while some unfoldable wire still names it, the way its
+  plumbing wires have always folded (D29). On the live r50 config the
+  full view drops from 174 ref externs to 12.
