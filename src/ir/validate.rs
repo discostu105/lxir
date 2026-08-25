@@ -6,9 +6,15 @@
 //! a compile is ever attempted. `compile` runs the same checks first, so the
 //! two entry points cannot drift apart.
 
-use super::ast::Module;
+use super::ast::{Module, Value};
 use crate::connectors::{BUILTIN_TYPES, PortDir, attr_params, builtin};
 use crate::error::{Error, Result};
+
+/// `InputRef`/`OutputRef` — block types whose managed form mirrors
+/// another object (`mirrors:` binding, design.md D33).
+pub(super) fn is_ref_type(block_type: &str) -> bool {
+    matches!(block_type, "InputRef" | "OutputRef")
+}
 
 /// Check every managed block's type, port names, and wire directions
 /// against the builtin table. Extern ports are open-world (they exist or
@@ -24,13 +30,44 @@ pub fn validate_ports(module: &Module) -> Result<()> {
                 block.slug, block.block_type
             )));
         }
-        for (key, _) in block.params() {
+        let mut mirrors = None;
+        for (key, v) in block.params() {
             // Attribute parameters (e.g. `Formula:` on Formula blocks)
             // bind like any parameter but are not connectors.
             if attr_params(&block.block_type).contains(&key) {
                 continue;
             }
+            // `mirrors:` on a minted ref names the mirrored object — an
+            // identity binding, not a connector (D33).
+            if is_ref_type(&block.block_type) && key == "mirrors" {
+                let Value::Ref(target) = v else {
+                    return Err(Error::Compile(format!(
+                        "block `{}`: `mirrors:` takes the name of an extern or \
+                         managed block, not a literal",
+                        block.slug
+                    )));
+                };
+                if !module.externs().any(|e| &e.slug == target)
+                    && !module.blocks().any(|b| &b.slug == target)
+                {
+                    return Err(Error::Compile(format!(
+                        "block `{}` mirrors `{target}`, but no extern or managed \
+                         block of this module has that name",
+                        block.slug
+                    )));
+                }
+                mirrors = Some(target);
+                continue;
+            }
             known_port(module, &block.slug, key)?;
+        }
+        if is_ref_type(&block.block_type) && mirrors.is_none() {
+            return Err(Error::Compile(format!(
+                "block `{}`: a minted {} mirrors another object — declare the \
+                 target with `mirrors: <name>` (to reference an existing ref \
+                 in the base instead, use `extern`)",
+                block.slug, block.block_type
+            )));
         }
     }
 

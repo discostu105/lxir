@@ -642,3 +642,25 @@ Anything unverified is an error, not a heuristic:
   `# mirrors …` note stays for periphery targets no slug can name).
   lxir still never *mints* refs — that write stays blocked on oracle
   verification.
+- **D33 — minted mirrors: `spiegel = InputRef(mirrors: quelle)`**
+  (2026-08-25). D32 closed with "lxir still never *mints* refs" — this
+  lifts that, as the foundation for eliminating ref plumbing from
+  source altogether (auto-routing). A managed block of type
+  `InputRef`/`OutputRef` takes a mandatory `mirrors:` binding naming any
+  extern or managed block of the module (a block minted the same compile
+  included — unlike the D32 *matcher*, which needs the ref to pre-exist
+  in the base). The compiler emits the mirror identity the corpus
+  shows on every GUI-created ref: `Ref=` (the target's UUID),
+  `LinkRefType=` (Loxone Config's type-registry code for the target's
+  XML type, learned per type from the house corpus —
+  `connectors::ref_link_type`), and `Analog=` where the target type is
+  analog. A target type without a verified code refuses the mint
+  (refuse-never-guess; extend the table from corpus evidence). The
+  three identity attributes are compiler-owned on ref blocks — excluded
+  from D19 residue carry, so a retargeted `mirrors:` wins over the
+  base's copy. Feed wires (`AI:`/`I:` from the target's outputs) stay
+  ordinary explicit wires for now; drawing them automatically is the
+  auto-routing step. Port shape verified across 189 InputRef +
+  154 OutputRef in the house config: `AI`/`I` in, `AQ`/`Q` out
+  (OutputRef: `AI` in, `AQ` out). Oracle status: minted refs await
+  their open+save verdict — session pending.

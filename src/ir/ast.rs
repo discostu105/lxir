@@ -884,7 +884,23 @@ impl Module {
                     for binding in b.bindings() {
                         match &binding.kind {
                             BindingKind::Param(v) => {
-                                value_refs(v)?;
+                                // `mirrors:` on a minted ref names an object,
+                                // not a constant (D33) — its target is
+                                // checked by `validate_ports`. On any other
+                                // type the key is a mistake worth a message
+                                // clearer than the constant-resolution one.
+                                if binding.port == "mirrors" {
+                                    if !matches!(b.block_type.as_str(), "InputRef" | "OutputRef") {
+                                        return compile_err(format!(
+                                            "`mirrors:` applies to InputRef/\
+                                             OutputRef only, not {} (in `{} = \
+                                             {}(…)`)",
+                                            b.block_type, b.slug, b.block_type
+                                        ));
+                                    }
+                                } else {
+                                    value_refs(v)?;
+                                }
                                 if !params_seen.insert(&binding.port) {
                                     return compile_err(format!(
                                         "duplicate parameter `{}` in `{} = {}(…)`",

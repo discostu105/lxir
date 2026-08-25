@@ -27,11 +27,11 @@
 //!   Wine oracle showed Loxone Config 17 silently deletes off-descriptor
 //!   connectors (and their wires) on save, so minting them would lose logic.
 
-use crate::connectors::{PortDir, attr_params, builtin};
+use crate::connectors::{PortDir, attr_params, builtin, ref_link_type};
 use crate::doc::{Counters, GUI_OWNED_ATTRS, GUI_OWNED_CHILDREN, LoxoneDoc, ports};
 use crate::error::{Error, Result};
 use crate::ir::ast::{Item, MatchSpec, Module, Value};
-use crate::ir::validate::{suggest, validate_ports};
+use crate::ir::validate::{is_ref_type, suggest, validate_ports};
 use crate::lock::{Layout, LockedExternal, LockedObject, LockedWire, Lockfile, sha256_hex};
 use crate::uuid::{Minter, entity_for_slug};
 use crate::xml::Element;
@@ -248,6 +248,13 @@ pub fn compile(
 
     // --- Resolve externs (against the untouched base).
     let extern_uuid = resolve_externs(&doc, module, lock)?;
+    // XML type per object, for `mirrors:` targets (D33) — taken before
+    // teardown so it covers everything the base knows.
+    let type_by_uuid: BTreeMap<String, String> = doc
+        .objects()
+        .iter()
+        .map(|o| (o.uuid.clone(), o.block_type.clone()))
+        .collect();
 
     // --- Tear down our previous output: managed objects, extern wires,
     //     extern sets. What remains is exactly the Loxone-Config-owned state.
@@ -502,6 +509,11 @@ pub fn compile(
     for block in module.blocks() {
         let attrs = attr_params(&block.block_type);
         for (k, v) in block.params() {
+            // `mirrors:` is an identity binding, not a value (D33) —
+            // resolved separately below.
+            if is_ref_type(&block.block_type) && k == "mirrors" {
+                continue;
+            }
             let target = if attrs.contains(&k) {
                 &mut managed_attrs // element attribute, not a connector Def
             } else {
@@ -509,6 +521,54 @@ pub fn compile(
             };
             target.insert((block.slug.clone(), k.to_string()), resolve(v)?);
         }
+    }
+
+    // --- `mirrors:` on minted refs (D33): resolve the mirrored object and
+    //     precompute the identity attributes its element carries (`Ref=`,
+    //     `LinkRefType=`, `Analog=`). The target is any managed block of
+    //     this module (a block minted this very compile included — the ref
+    //     is ours to create) or any resolved extern; the target's XML type
+    //     picks the GUI's type-registry code.
+    let mut mirror_of: BTreeMap<String, (String, u32, bool)> = BTreeMap::new();
+    for block in module.blocks() {
+        if !is_ref_type(&block.block_type) {
+            continue;
+        }
+        let target = block
+            .params()
+            .find_map(|(k, v)| match (k, v) {
+                ("mirrors", Value::Ref(t)) => Some(t.as_str()),
+                _ => None,
+            })
+            .expect("validate_ports requires mirrors: on ref blocks");
+        let (uuid, target_type) = if let Some(plan) = managed.get(target) {
+            (plan.uuid.clone(), plan.block_type.clone())
+        } else if let Some(u) = extern_uuid.get(target) {
+            let t = type_by_uuid.get(u).cloned().ok_or_else(|| {
+                Error::Compile(format!(
+                    "block `{}` mirrors extern `{target}`, whose resolved object \
+                     {u} is not in the base config",
+                    block.slug
+                ))
+            })?;
+            (u.clone(), t)
+        } else {
+            return Err(Error::Compile(format!(
+                "block `{}` mirrors `{target}`, but `{target}` is neither a \
+                 managed block nor an extern of this module",
+                block.slug
+            )));
+        };
+        let (code, analog) = ref_link_type(&target_type).ok_or_else(|| {
+            Error::Compile(format!(
+                "block `{}` mirrors `{target}` of type `{target_type}`, which has \
+                 no verified `LinkRefType=` code yet — extend \
+                 connectors::ref_link_type from corpus evidence before minting \
+                 a ref of it",
+                block.slug
+            ))
+        })?;
+        mirror_of.insert(block.slug.clone(), (uuid, code, analog));
     }
 
     // --- Build the managed <C> elements and append each to its pinned
@@ -540,6 +600,11 @@ pub fn compile(
             (None, _) => el.set_attr("Cl", "141,255,112"),
         }
         el.set_attr("Nio", &plan.keys.len().to_string());
+        // Minted-ref identity (D33), in the GUI's observed attribute
+        // order: `Ref=` after `Nio=`, `Analog=`/`LinkRefType=` after `WF=`.
+        if let Some((ref_uuid, _, _)) = mirror_of.get(&block.slug) {
+            el.set_attr("Ref", ref_uuid);
+        }
         if let Some(v) = carried("LtE") {
             el.set_attr_raw("LtE", v);
         }
@@ -547,6 +612,12 @@ pub fn compile(
             (Some(_), Some(v)) => el.set_attr_raw("WF", v),
             (Some(_), None) => {}
             (None, _) => el.set_attr("WF", "147456"),
+        }
+        if let Some((_, code, analog)) = mirror_of.get(&block.slug) {
+            if *analog {
+                el.set_attr("Analog", "true");
+            }
+            el.set_attr("LinkRefType", &code.to_string());
         }
         for name in attr_params(&block.block_type) {
             if let Some(v) = managed_attrs.get(&(block.slug.clone(), (*name).to_string())) {
@@ -562,7 +633,13 @@ pub fn compile(
         }
         if let Some(r) = res {
             for (n, v) in &r.attrs {
-                if !matches!(n.as_str(), "Cl" | "LtE" | "WF") {
+                // On a ref block the mirror identity is compiler-owned
+                // (recomputed from `mirrors:` above) — carrying the base's
+                // copy verbatim would clobber a retarget.
+                let compiler_owned = matches!(n.as_str(), "Cl" | "LtE" | "WF")
+                    || (is_ref_type(&block.block_type)
+                        && matches!(n.as_str(), "Ref" | "LinkRefType" | "Analog"));
+                if !compiler_owned {
                     el.set_attr_raw(n, v);
                 }
             }

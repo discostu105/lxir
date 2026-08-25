@@ -84,9 +84,17 @@ pub fn lint_source(module: &Module) -> Result<Vec<LintFinding>> {
                 for (_, src) in b.input_wires() {
                     object_refs.insert(&src.slug);
                 }
-                for (_, v) in b.params() {
+                for (k, v) in b.params() {
                     if let Value::Ref(name) = v {
-                        let_refs.insert(name);
+                        // `mirrors:` on a minted ref names an object (D33);
+                        // every other `Ref` value is a `let` reference.
+                        if k == "mirrors"
+                            && matches!(b.block_type.as_str(), "InputRef" | "OutputRef")
+                        {
+                            object_refs.insert(name);
+                        } else {
+                            let_refs.insert(name);
+                        }
                     }
                 }
             }

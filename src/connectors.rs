@@ -443,7 +443,64 @@ const CODE16: &[PortSpec] = &[
     p("TeQ", Output),
 ];
 
-/// Every block type `builtin` knows — the complete mintable set.
+// Mirror blocks: the on-page visual representation of an object living
+// elsewhere (an I/O device, a system object, a block on another page).
+// `AI`/`I` are fed by wires from the mirrored object's outputs; the
+// page's logic consumes `AQ`/`Q`. Shape verified across the house
+// config: 189 InputRef (all `Nio="4"`, AI always fed, I on 143),
+// 154 OutputRef (all `Nio="2"`, AI fed on 151). The mirrored identity
+// itself is not a connector — it lives in the `Ref=` element attribute
+// (see `ref_link_type` and design.md D33).
+const INPUT_REF: &[PortSpec] = &[
+    p("AI", Input),
+    p("I", Input),
+    p("AQ", Output),
+    p("Q", Output),
+];
+const OUTPUT_REF: &[PortSpec] = &[p("AI", Input), p("AQ", Output)];
+
+/// `LinkRefType=` code and `Analog=` flag a ref carries for a mirrored
+/// object of the given XML type — Loxone Config's internal type-registry
+/// number, learned from the house corpus (every code below observed on
+/// real refs, deterministic per target type). A type not in this table
+/// cannot be mirrored by a minted ref yet: extend the table from
+/// corpus evidence rather than guessing the code.
+///
+/// `Memory` is the one target the corpus shows with *both* flags
+/// (8× digital, 1× analog); minted mirrors of blocks default to digital
+/// until evidence for a rule emerges.
+pub fn ref_link_type(target_type: &str) -> Option<(u32, bool)> {
+    Some(match target_type {
+        "Online" => (2, false),
+        "DigitalIn" => (55, false),
+        "Actor" => (63, false),
+        "VirtualIn" => (71, false),
+        "VirtualUdpInCmd" => (79, false),
+        "VirtualTextIn" => (83, false),
+        "VirtualHttpInCmd" => (87, true),
+        "Lox1wireAsensor" => (103, true),
+        "OvertempShutdown" => (109, false),
+        "ApiActor" => (136, false),
+        "ModbusASensor" => (153, true),
+        "ModbusAActor" => (156, true),
+        "LoxAIRsensor" => (172, false),
+        "LoxAIRAsensor" => (173, true),
+        "LoxAIRactor" => (174, false),
+        "LoxAIRAactor" => (175, true),
+        "TreeSensor" => (182, false),
+        "TreeAsensor" => (183, true),
+        "TreeActor" => (184, false),
+        "TreeAactor" => (185, true),
+        "Daylight" => (281, false),
+        "Memory" => (320, false),
+        _ => return None,
+    })
+}
+
+/// Every *logic* block type `builtin` knows. This is the default managed
+/// set for decompile/adopt; `InputRef`/`OutputRef` are mintable too (see
+/// `builtin`) but deliberately absent here — as plumbing they are matched
+/// by externs or folded, never lifted into managed declarations.
 pub const BUILTIN_TYPES: &[&str] = &[
     "And",
     "Or",
@@ -506,6 +563,8 @@ pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
         "CentralShade" => Some(CENTRAL_SHADE),
         "CentralLight" => Some(CENTRAL_LIGHT),
         "Code16" => Some(CODE16),
+        "InputRef" => Some(INPUT_REF),
+        "OutputRef" => Some(OUTPUT_REF),
         _ => None,
     }
 }
