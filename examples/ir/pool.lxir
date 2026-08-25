@@ -1,0 +1,46 @@
+# Pool-Automatik — der End-to-End-Showcase aus der Design-Skizze:
+# Wassertemperatur, Abdeckungs-Interlock und PV-Überschuss-Freigabe
+# für die Wärmepumpe. Kompiliert gegen examples/configs/pool.Loxone.
+
+let wunschtemp = 26
+let pv_schwelle = 1500
+
+extern wassertemp = VirtualIn(iname: "VI1")
+extern pv_ueberschuss = VirtualIn(iname: "VI2")
+extern abdeckung_offen = VirtualIn(iname: "VI3")
+
+# Zwei Schalter heißen "Freigabe" — der Raum macht den Titel eindeutig.
+
+extern wp_freigabe = Switch(title: "Freigabe", room: "Technikraum")
+
+heizbedarf = Less(
+	"Wasser unter Soll",
+	Input1: wassertemp.Q,
+	Input2: wunschtemp,
+)
+
+pv_genug = GreaterEqual(
+	"PV-Überschuss reicht",
+	Input1: pv_ueberschuss.Q,
+	Input2: pv_schwelle,
+)
+
+# Nur heizen, wenn die Abdeckung zu ist (Verdunstungsverlust).
+
+abdeckung_zu = Not(
+	I: abdeckung_offen.Q,
+)
+
+# Gatter sind fix zweistellig (D8) — drei Bedingungen kaskadieren.
+
+bedarf_und_pv = And(
+	I1: heizbedarf.Q,
+	I2: pv_genug.Q,
+)
+
+wp_ein = And(
+	I1: bedarf_und_pv.Q,
+	I2: abdeckung_zu.Q,
+)
+
+wp_freigabe.On <- wp_ein.Q

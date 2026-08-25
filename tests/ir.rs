@@ -191,6 +191,45 @@ fn unverified_block_type_is_refused() {
 }
 
 #[test]
+fn pool_showcase_compiles_end_to_end() {
+    // The roadmap's showcase module: water temperature, cover interlock,
+    // PV-surplus enable — committed under examples/ and kept compiling.
+    let base = LoxoneDoc::parse(&std::fs::read("examples/configs/pool.Loxone").unwrap()).unwrap();
+    let src = std::fs::read_to_string("examples/ir/pool.lxir").unwrap();
+    let module = Module::parse(&src).unwrap();
+    assert_eq!(module.to_text(), src, "example stays canonical");
+
+    let opts = CompileOptions {
+        page_title: Some("Pool".into()),
+        ..opts()
+    };
+    let mut lock = Lockfile::new();
+    let out = compile(&base, &module, &mut lock, &opts).unwrap();
+
+    // `room: "Technikraum"` picked the right one of two "Freigabe".
+    assert_eq!(
+        lock.externals["wp_freigabe"].uuid,
+        "30000006-0000-0060-ffff504f94112233"
+    );
+    assert_eq!(lock.objects.len(), 5);
+    assert_eq!(out.counters().next_obj, 305);
+
+    // The enable wire landed on the Technikraum switch's On port.
+    let objs = out.objects();
+    let wp = objs
+        .iter()
+        .find(|o| o.uuid == "30000006-0000-0060-ffff504f94112233")
+        .unwrap();
+    let ports = lxir::doc::ports(out.element_at(&wp.path).unwrap());
+    let on = ports.iter().find(|p| p.key == "On").unwrap();
+    assert_eq!(on.inputs.len(), 1);
+
+    // Fixpoint: recompiling against its own output changes nothing.
+    let again = compile(&out, &module, &mut lock, &opts).unwrap();
+    assert_eq!(out.to_bytes(), again.to_bytes());
+}
+
+#[test]
 fn composite_extern_matching_narrows_by_room_and_category() {
     // Two identically-titled Switches in different rooms; the room lives
     // in `<IoData Pr=…>` pointing at a Place (docs/loxone-format.md).

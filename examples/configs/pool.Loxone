@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ControlList Version="1" NextObj="300" NextConst="1" NextNote="1" NextMem="1">
+	<C Type="Document" V="17010727" U="30000000-0000-0001-ffff504f94112233" Title="Pool" ConfigVersion="17010727">
+		<C Type="PlaceCaption" V="175" U="30000000-0000-0002-ffff504f94112233" Title="Räume">
+			<C Type="Place" V="175" U="30000000-0000-0003-ffff504f94112233" Title="Pool"/>
+			<C Type="Place" V="175" U="30000000-0000-0004-ffff504f94112233" Title="Technikraum"/>
+		</C>
+		<C Type="VirtualInCaption" V="175" U="30000000-0000-0005-ffff504f94112233" Title="Virtuelle Eingänge">
+			<C Type="VirtualIn" V="175" U="30000001-0000-0010-ffff504f94112233" Title="Wassertemperatur" IName="VI1" Nio="2">
+				<Co K="Q" U="30000001-0000-0011-00ffaaaaaaaa0001"/>
+				<Co K="Qm" U="30000001-0000-0012-01ffaaaaaaaa0001"/>
+			</C>
+			<C Type="VirtualIn" V="175" U="30000002-0000-0020-ffff504f94112233" Title="PV Überschuss" IName="VI2" Nio="2">
+				<Co K="Q" U="30000002-0000-0021-00ffaaaaaaaa0002"/>
+				<Co K="Qm" U="30000002-0000-0022-01ffaaaaaaaa0002"/>
+			</C>
+			<C Type="VirtualIn" V="175" U="30000003-0000-0030-ffff504f94112233" Title="Abdeckung offen" IName="VI3" Nio="2">
+				<Co K="Q" U="30000003-0000-0031-00ffaaaaaaaa0003"/>
+				<Co K="Qm" U="30000003-0000-0032-01ffaaaaaaaa0003"/>
+			</C>
+		</C>
+		<C Type="Page" V="175" U="30000004-0000-0040-ffff504f94112233" Title="Pool">
+			<C Type="Switch" V="175" U="30000005-0000-0050-ffff504f94112233" Title="Freigabe" Nio="2">
+				<Co K="On" U="30000005-0000-0051-00ffaaaaaaaa0005"/>
+				<Co K="Q" U="30000005-0000-0052-01ffaaaaaaaa0005"/>
+				<IoData Visu="true" Pr="30000000-0000-0003-ffff504f94112233"/>
+			</C>
+			<C Type="Switch" V="175" U="30000006-0000-0060-ffff504f94112233" Title="Freigabe" Nio="2">
+				<Co K="On" U="30000006-0000-0061-00ffaaaaaaaa0006"/>
+				<Co K="Q" U="30000006-0000-0062-01ffaaaaaaaa0006"/>
+				<IoData Visu="true" Pr="30000000-0000-0004-ffff504f94112233"/>
+			</C>
+		</C>
+	</C>
+</ControlList>

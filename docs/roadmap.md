@@ -214,9 +214,13 @@ haus/
       Loxone release = one oracle open+save run, then
       `--accept-version <v>` re-pins explicitly (the value must match
       the base exactly — no accidental double-bump acceptance).
-- [ ] A complete end-to-end showcase module (the sketch's `pool` idea:
-      water temperature, cover interlock, PV-surplus enable for the heat
-      pump).
+- [x] A complete end-to-end showcase module 2026-08-25: the sketch's
+      `pool` idea — water temperature below target, cover interlock,
+      PV-surplus enable for the heat pump — as
+      `examples/ir/pool.lxir` against `examples/configs/pool.Loxone`,
+      demonstrating lets, iname externs, composite `room:` matching,
+      the fixed-two-input gate cascade (D8), and an extern wire.
+      Kept compiling by `tests/ir.rs` (fixpoint + canonical form).
 
 ## Tooling & ecosystem
 
