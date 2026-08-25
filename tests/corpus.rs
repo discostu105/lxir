@@ -38,6 +38,7 @@ fn opts() -> CompileOptions {
         mint_time_unix: 1_767_225_600, // 2026-01-01T00:00:00Z
         page_title: None,
         allow_removals: false,
+        accept_version: None,
     }
 }
 

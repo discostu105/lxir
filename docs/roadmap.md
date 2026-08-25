@@ -208,9 +208,11 @@ haus/
       drift <cfg> --lock <lock>` detects "another writer changed
       something" from one parse — no reference config, no full diff.
       Save noise, position moves, and locale renames don't fire it.
-- [ ] ConfigVersion pin policy: refuse compiling against a base whose
-      ConfigVersion differs from the project pin; qualifying a new Loxone
-      release = one oracle-CI run for that version.
+- [x] ConfigVersion pin policy 2026-08-25 (D22): compile refuses a base
+      whose ConfigVersion differs from the lock's pin; qualifying a new
+      Loxone release = one oracle open+save run, then
+      `--accept-version <v>` re-pins explicitly (the value must match
+      the base exactly — no accidental double-bump acceptance).
 - [ ] A complete end-to-end showcase module (the sketch's `pool` idea:
       water temperature, cover interlock, PV-surplus enable for the heat
       pump).

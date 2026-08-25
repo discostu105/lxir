@@ -57,6 +57,12 @@ pub struct CompileOptions {
     /// [`Lockfile::remove_object`], *forgets* the block, leaving its XML
     /// in the config as an unmanaged orphan.
     pub allow_removals: bool,
+    /// Explicit acceptance of a base whose `ConfigVersion` differs from
+    /// the lock's pin (i.e. a new Loxone Config release). Must equal the
+    /// base's version exactly; `None` leaves the mismatch a hard error.
+    /// Qualify the release first — one oracle open+save run
+    /// (docs/oracle-wine.md) — then accept.
+    pub accept_version: Option<String>,
 }
 
 /// GUI-owned residue of an existing managed block (D19), harvested at
@@ -140,6 +146,29 @@ pub fn compile(
 ) -> Result<LoxoneDoc> {
     module.validate()?;
     validate_ports(module)?;
+
+    // --- ConfigVersion pin: a base written by a different Loxone release
+    //     than the one this project is qualified for is refused until the
+    //     new release is accepted explicitly.
+    let base_version = base.config_version();
+    if let Some(accept) = &opts.accept_version {
+        if base_version.as_ref() != Some(accept) {
+            return Err(Error::Compile(format!(
+                "--accept-version {accept} does not match the base's ConfigVersion {}",
+                base_version.as_deref().unwrap_or("<absent>")
+            )));
+        }
+    } else if let Some(pinned) = &lock.target.config_version
+        && base_version.as_ref() != Some(pinned)
+    {
+        return Err(Error::Compile(format!(
+            "base ConfigVersion {} differs from the project pin {pinned} — a new \
+             Loxone release must be qualified first (one oracle open+save run, \
+             docs/oracle-wine.md), then accepted with --accept-version {}",
+            base_version.as_deref().unwrap_or("<absent>"),
+            base_version.as_deref().unwrap_or("<version>")
+        )));
+    }
 
     // --- Apply `moved` statements to the lock (identity surgery, in
     //     source). Idempotent: once the new slug carries the entry, the

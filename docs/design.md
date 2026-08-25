@@ -379,3 +379,15 @@ Anything unverified is an error, not a heuristic:
   answers from one parse of one file, with `lxir diff` remaining the
   tool that says *what* changed. Corpus-enforced: every adopted rebuild
   must reproduce the fingerprint recorded at adoption bit-for-bit.
+- **D22 — ConfigVersion is a qualification pin, not metadata**
+  (2026-08-25). Every Loxone Config release may change descriptors,
+  schema migrations, and save behavior — the whole builtin table and
+  residue model are *validated against a specific release* (currently
+  17.1, oracle sessions 1–9). So the lock's `target.config_version` is
+  enforced: compiling against a base written by a different release is
+  a hard error until the release is qualified (one oracle open+save
+  run of a rebuilt config) and accepted with `--accept-version <v>`,
+  which must equal the base's version exactly. Acceptance is
+  per-compile and deliberate; the lock then pins the new version.
+  Adoption pins whatever release wrote the adopted config — the first
+  compile against the same file always passes.

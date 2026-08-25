@@ -29,7 +29,7 @@ USAGE:
 
   lxir compile --base <cfg.Loxone> --module <m.lxir | module-dir> --lock <lock.json> --out <out.Loxone>
               [--serial <12-hex>] [--time <unix-seconds>] [--page <title>]
-              [--allow-removals]
+              [--allow-removals] [--accept-version <v>]
         Compile IR against a base config, updating the lockfile.
         --serial defaults to the lockfile's recorded Miniserver serial;
         --time defaults to now (only affects newly minted UUIDs — the
@@ -38,6 +38,9 @@ USAGE:
         A module directory stands for a multi-file module: all *.lxir
         files inside, merged in file-name order (one file per page is
         the convention; a fragment may reference sibling-file slugs).
+        A base written by a different Loxone release than the lock's
+        ConfigVersion pin is refused; after qualifying the release
+        (one oracle open+save run), --accept-version <v> re-pins it.
 
   lxir decompile [--managed-only] [--out-dir <dir>] <cfg.Loxone>
         Print the IR view of a config, grouped into `# page:` sections
@@ -289,6 +292,7 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
     let mut time = None;
     let mut page = None;
     let mut allow_removals = false;
+    let mut accept_version = None;
 
     let mut it = args.iter();
     while let Some(&flag) = it.next() {
@@ -306,6 +310,7 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
             "--time" => time = Some(value()?.parse::<i64>()?),
             "--page" => page = Some(value()?.to_string()),
             "--allow-removals" => allow_removals = true,
+            "--accept-version" => accept_version = Some(value()?.to_string()),
             other => return Err(format!("unknown flag `{other}` — run `lxir help`").into()),
         }
     }
@@ -326,6 +331,7 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
         .ok_or("no --serial given and the lockfile has none recorded")?;
     let opts = CompileOptions {
         machine: parse_serial(&serial)?,
+        accept_version,
         mint_time_unix: time.unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

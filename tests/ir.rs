@@ -26,6 +26,7 @@ fn opts() -> CompileOptions {
         mint_time_unix: MINT_TIME,
         page_title: Some("Beschattung".into()),
         allow_removals: false,
+        accept_version: None,
     }
 }
 
@@ -187,6 +188,44 @@ fn unverified_block_type_is_refused() {
     let m = Module::parse("t = Irrigation()\n").unwrap();
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
     assert!(err.to_string().contains("builtin table"), "{err}");
+}
+
+#[test]
+fn config_version_pin_refuses_an_unqualified_release() {
+    let base = base(); // ConfigVersion="17010727"
+    let module = module();
+    let mut lock = Lockfile::new();
+    compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(lock.target.config_version.as_deref(), Some("17010727"));
+
+    // A new Loxone release rewrites the base's ConfigVersion.
+    let text = String::from_utf8(base.to_bytes()).unwrap();
+    let bumped = LoxoneDoc::parse(
+        text.replace("ConfigVersion=\"17010727\"", "ConfigVersion=\"17020101\"")
+            .as_bytes(),
+    )
+    .unwrap();
+    let err = compile(&bumped, &module, &mut lock.clone(), &opts()).unwrap_err();
+    assert!(err.to_string().contains("ConfigVersion"), "{err}");
+    assert!(err.to_string().contains("--accept-version"), "{err}");
+
+    // Acceptance must name the base's version exactly.
+    let wrong = CompileOptions {
+        accept_version: Some("17039999".into()),
+        ..opts()
+    };
+    let err = compile(&bumped, &module, &mut lock.clone(), &wrong).unwrap_err();
+    assert!(err.to_string().contains("does not match"), "{err}");
+
+    // Exact acceptance compiles and re-pins; the next plain compile
+    // against the new release is quiet again.
+    let accept = CompileOptions {
+        accept_version: Some("17020101".into()),
+        ..opts()
+    };
+    compile(&bumped, &module, &mut lock, &accept).unwrap();
+    assert_eq!(lock.target.config_version.as_deref(), Some("17020101"));
+    compile(&bumped, &module, &mut lock, &opts()).unwrap();
 }
 
 #[test]

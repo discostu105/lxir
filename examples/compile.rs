@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         mint_time_unix: MINT_TIME_UNIX,
         page_title: Some("Beschattung".into()),
         allow_removals: false,
+        accept_version: None,
     };
     let out = compile(&base, &module, &mut lock, &opts)?;
 
