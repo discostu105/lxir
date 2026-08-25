@@ -118,6 +118,23 @@ is rendered inline (`<Key>2B35</Key>`).
   lxir (design decision D20): carried verbatim, refused as a source-
   declared wire/value target.
 
+## Time functions: per-project singletons
+
+The GUI's *Zeitfunktionen* periphery folder is a `TimeCaption` element
+holding one instance each of the time-source types: `Day2009`, `Year`,
+`Month`, `Day`, `DayOfWeek`, `Calendar`, `Time` (minutes since
+midnight), `Hour`, `Minute`, `Second`, `SecondsBoot`, `DateTime`,
+`NightTime`, the impulse family (`ImpulseSecond` … `ImpulseYear`,
+`ImpulseSunrise`, `ImpulseSunset`, `ImpulseMorningtwilight`,
+`ImpulseEveningtwilight`), and `StartPulse`. Each type appears exactly
+once per project — the type *is* the identity. Unlike `SysVar`,
+`WeatherData`, or I/O objects they carry **no `IName=`**, and their
+titles are locale-volatile like every built-in's; their UUIDs are
+minted at project creation by the Config PC (machine id in segment 4),
+so they differ between projects. The operating modes (`Mode` under
+`ModeCaption`) share the singleton nature but use deterministic
+`00000000-…` system UUIDs, identical across projects.
+
 ## UUID anatomy
 
 Format `{8}-{4}-{4}-{16}` hex — the last segment is 8 bytes, so these are

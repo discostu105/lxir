@@ -106,6 +106,31 @@ e.g. `VI1`, `AI3`) is locale-stable and preferred for built-in I/O
 objects; `title` is human-friendly but locale-volatile — use it only for
 objects you named yourself.
 
+**Time functions and other singletons.** The periphery's time sources
+(the GUI's *Zeitfunktionen* folder: `DayOfWeek`, `Time`, `Hour`,
+`ImpulseMinute`, `ImpulseSunrise`, `StartPulse`, …) and the operating
+modes (*Betriebsmodi*, type `Mode`) exist exactly once per project and
+carry **no `IName=`**, so the matcher choice narrows: their titles are
+locale-volatile like all built-ins (a save can rename `Wochentag` on
+you), which leaves `uuid` as the durable pin:
+
+```text
+# Zeitfunktionen: singletons, no IName — pin by UUID
+extern wochentag = DayOfWeek(uuid: "15ea0aa4-0093-39e4-ffffed57184a04d2")
+extern minutenimpuls = ImpulseMinute(uuid: "15ea0aa4-01b6-3a20-ffffed57184a04d2")
+extern montag = Mode(uuid: "00000000-0000-0004-1500000000000000")
+```
+
+Wiring them follows the normal rules — the singleton's output feeds a
+managed block's input directly, no `InputRef` needed even across pages
+(oracle-verified for `Mode` wires, sessions 6–7; the time sources are
+the same class of periphery singleton). `title:` still *works* for a singleton
+while the locale holds, and `adopt` lifts it that way; switching the
+lifted spec to `uuid:` is a plain source edit (the lock pins the same
+object either way). `Mode` UUIDs are deterministic system UUIDs
+(`00000000-…`), identical across projects; time-function UUIDs are
+minted per project — read them off `lxir decompile` or the XML.
+
 ### Block declaration — a managed logic block
 
 ```text
