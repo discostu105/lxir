@@ -26,11 +26,14 @@ types) contradict each other. Results and methodology:
       `PushButton`, `PButtonT` — minted instances survived a Loxone
       Config save; `Memory.Q` proven an output by a surviving sourced
       wire ([connector-db.md](connector-db.md), [oracle-wine.md](oracle-wine.md)).
+- [x] AutoJalousie admitted (2026-08-25): 49 connectors in the uniform
+      house element order; `OutputAPI` bidirectionally evidenced →
+      new `PortDir::Api`. 12 of the house's 16 instances adopt (4 carry
+      Miniserver-created `FLG=` wire flags — refused until understood).
+      Details: [connector-db.md](connector-db.md).
 - [ ] Grow the corpus beyond one installation (foreign corpora exercise
       types this house doesn't) and admit the next batch — currently
-      blocked types: `PulseAt`, `DayTimer`, `AutoJalousie` (sized:
-      Nio=49; its `COHist`/`SpStates` residue is covered by D19, so
-      admission only needs the 49-connector table resolved).
+      blocked types: `PulseAt`, `DayTimer`.
 
 ## Stufe 0 — Hardening the v0 pipeline
 

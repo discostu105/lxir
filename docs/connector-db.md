@@ -113,10 +113,33 @@ only remaining refusals in the real config are genuine `Inv=` input
 inversions).
 
 Still kept out: `PulseAt` and `DayTimer` (no oracle run yet; DayTimer
-additionally has `RtD`/`AQm`/`AQmt` unresolved), and `AutoJalousie`
-(16 instances, uniform Nio=49 — sized; its `COHist`/`SpStates` residue
-is covered by D19, so admission now only needs its 49-connector table
-resolved).
+additionally has `RtD`/`AQm`/`AQmt` unresolved).
+
+## AutoJalousie, admitted 2026-08-25
+
+The strongest evidence base yet: 78 corpus occurrences, 16 of them the
+house's Config-17 instances with an **identical 49-key element order**.
+The corpus-wide `index_conflict`s are older-generation configs plus
+connectors added later by schema migration (their UUIDs, minted on the
+house Miniserver, reuse index bytes — `Rdd`, `TargetPos`) — the element
+order, not the UUID index byte, is the canonical order.
+
+Directions: `EndUp`/`EndDown` corpus-sink ×70; 18 params carry `Def=` on
+every instance with both legacy dbs agreeing; the 9 `Output*`/`TargetPos`
+outputs agree across both legacy dbs with zero corpus contradiction; the
+19 never-touched keys classify Input by the inert-flag rule.
+
+`OutputAPI` forced a model extension: the house wires **into** it on 4
+instances and **from** it on 12 (corpus: 12 sink / 36 source) — the API
+connector is genuinely bidirectional. It is classified `PortDir::Api`:
+valid as wire source *and* sink, never a `Def=` target. (PushButton/
+PButtonT keep `OutputAPI` as Output — zero sink evidence there; one
+observed counterexample flips them to Api.)
+
+Known limitation: 4 house instances carry `FLG="1"` on their incoming
+API wires (Miniserver/app-created wire metadata of unknown meaning) —
+the rebuild cannot reproduce the flag, so those instances refuse
+adoption. Resolving what `FLG` means is a future oracle experiment.
 
 ## Growing the table
 

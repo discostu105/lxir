@@ -57,9 +57,10 @@ pub fn validate_ports(module: &Module) -> Result<()> {
                 .map(|s| s.dir)
                 .expect("port validated above");
             let ok = match want {
-                PortDir::Output => dir == PortDir::Output,
-                // Wire sinks accept inputs and params alike.
-                PortDir::Input | PortDir::Param => dir != PortDir::Output,
+                // Api connectors are wire-bidirectional (see PortDir::Api).
+                PortDir::Output => matches!(dir, PortDir::Output | PortDir::Api),
+                // Wire sinks accept inputs, params, and Api connectors alike.
+                PortDir::Input | PortDir::Param | PortDir::Api => dir != PortDir::Output,
             };
             if !ok {
                 return Err(Error::Compile(format!(
@@ -182,7 +183,7 @@ mod tests {
             "; did you mean `GreaterEqual`?"
         );
         // Nothing close: no hint.
-        assert_eq!(suggest("AutoJalousie", BUILTIN_TYPES.iter().copied()), "");
+        assert_eq!(suggest("DayTimer", BUILTIN_TYPES.iter().copied()), "");
         // Short names use the tight cutoff.
         assert_eq!(suggest("Q1", ["Q", "I1", "I2"]), "; did you mean `Q`?");
         assert_eq!(suggest("xyz", ["Q", "I1", "I2"]), "");

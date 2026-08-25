@@ -25,6 +25,11 @@ pub enum PortDir {
     Input,
     Output,
     Param,
+    /// A bidirectional API connector: accepts wires in *and* serves as a
+    /// wire source. Direct evidence on `AutoJalousie.OutputAPI` — the real
+    /// house config wires into it on 4 instances and from it on 12, and
+    /// the corpus shows 12 sink / 36 source uses. Never carries `Def=`.
+    Api,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +42,7 @@ const fn p(key: &'static str, dir: PortDir) -> PortSpec {
     PortSpec { key, dir }
 }
 
-use PortDir::{Input, Output, Param};
+use PortDir::{Api, Input, Output, Param};
 
 // Verified live: Or{I1,I2,Q} at indexes 0,1,2 (And shares the shape).
 const GATE: &[PortSpec] = &[p("I1", Input), p("I2", Input), p("Q", Output)];
@@ -116,6 +121,68 @@ const PBUTTON_T: &[PortSpec] = &[
     p("OutputAPI", Output),
 ];
 
+// Admitted 2026-08-25 from the strongest evidence base yet: 78 corpus
+// occurrences (16 in the house config with an identical 49-key element
+// order — the corpus-wide index conflicts come from older-generation
+// configs and from connectors added later by schema migration, whose
+// UUIDs reuse index bytes). Directions: EndUp/EndDown corpus-sink ×70;
+// the 18 params carry Def= on every instance and both legacy dbs agree;
+// the 9 Output*/TargetPos outputs agree across both legacy dbs with zero
+// corpus contradiction; OutputAPI is bidirectionally evidenced (see
+// [`PortDir::Api`]); the remaining never-touched keys classify Input by
+// the inert-flag rule (docs/connector-db.md).
+const AUTO_JALOUSIE: &[PortSpec] = &[
+    p("InputTrigger", Input),
+    p("InputTriggerUp", Input),
+    p("InputTriggerDown", Input),
+    p("EndUp", Input),
+    p("EndDown", Input),
+    p("Shade", Input),
+    p("AutoShade", Input),
+    p("EnAutoShade", Input),
+    p("ReactAutoShade", Input),
+    p("Safety", Input),
+    p("Window", Input),
+    p("Stop", Input),
+    p("ManualPosition", Input),
+    p("ManualLamelle", Input),
+    p("Gesture", Input),
+    p("InputDisable", Input),
+    p("Type", Input),
+    p("Dir", Param),
+    p("TimeEnd", Param),
+    p("TimeEndDown", Param),
+    p("SO", Input),
+    p("WP", Input),
+    p("AutoShadeEnd", Param),
+    p("AutMode", Param),
+    p("MinPulse", Param),
+    p("DblClk", Param),
+    p("DirTol", Param),
+    p("DirTol2", Param),
+    p("AutoShadeTime", Param),
+    p("SRoff", Param),
+    p("SSoff", Param),
+    p("Width", Param),
+    p("Space", Param),
+    p("Rdd", Input),
+    p("TimeBlock", Param),
+    p("TurnOffset", Param),
+    p("Deadtime", Input),
+    p("MinMove", Param),
+    p("Back", Param),
+    p("OutputUp", Output),
+    p("OutputDown", Output),
+    p("OutputPos", Output),
+    p("OutputLPos", Output),
+    p("OutputAutoShade", Output),
+    p("OutputSafety", Output),
+    p("OutputLock", Output),
+    p("OutputCombined", Output),
+    p("TargetPos", Output),
+    p("OutputAPI", Api),
+];
+
 /// Every block type `builtin` knows — the complete mintable set.
 pub const BUILTIN_TYPES: &[&str] = &[
     "And",
@@ -134,6 +201,7 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "Memory",
     "PushButton",
     "PButtonT",
+    "AutoJalousie",
 ];
 
 /// Element-attribute parameters per block type: logic Loxone stores as an
@@ -163,6 +231,7 @@ pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
         "Memory" => Some(MEMORY),
         "PushButton" => Some(PUSH_BUTTON),
         "PButtonT" => Some(PBUTTON_T),
+        "AutoJalousie" => Some(AUTO_JALOUSIE),
         _ => None,
     }
 }
@@ -333,6 +402,10 @@ pub fn crosscheck(obs: &Observations, legacy: &LegacyDb) -> BTreeMap<String, Typ
                     let ours = match dir {
                         PortDir::Output => "O",
                         PortDir::Input | PortDir::Param => "I",
+                        // Inference never yields Api (bidirectional is a
+                        // per-type judgment, not a corpus rule); nothing
+                        // to compare on the input/output axis.
+                        PortDir::Api => continue,
                     };
                     let ldir = if ldir == "P" { "I" } else { ldir };
                     if ours == ldir {
@@ -384,10 +457,16 @@ mod tests {
         assert_eq!(and.len(), 3);
         assert_eq!(and[2].key, "Q");
         assert_eq!(and[2].dir, PortDir::Output);
-        assert!(
-            builtin("AutoJalousie").is_none(),
-            "not verified — must not be mintable"
-        );
+        // AutoJalousie: 49 connectors in the uniform house element order;
+        // OutputAPI is the first bidirectional (Api) port.
+        let aj = builtin("AutoJalousie").unwrap();
+        assert_eq!(aj.len(), 49);
+        assert_eq!((aj[0].key, aj[0].dir), ("InputTrigger", PortDir::Input));
+        assert_eq!((aj[6].key, aj[6].dir), ("AutoShade", PortDir::Input));
+        assert_eq!((aj[17].key, aj[17].dir), ("Dir", PortDir::Param));
+        assert_eq!((aj[39].key, aj[39].dir), ("OutputUp", PortDir::Output));
+        assert_eq!((aj[47].key, aj[47].dir), ("TargetPos", PortDir::Output));
+        assert_eq!((aj[48].key, aj[48].dir), ("OutputAPI", PortDir::Api));
         // Corpus-consolidated entries: index order matches the observed
         // connector indexes (docs/connector-db.md).
         let formula = builtin("Formula").unwrap();

@@ -553,9 +553,14 @@ fn resolve_port(
             .and_then(|specs| specs.get(index).map(|s| s.dir))
             .unwrap_or(PortDir::Input);
         let ok = match want {
-            PortDir::Output => dir == PortDir::Output,
-            // Wire sinks and assignment targets are inputs/params on blocks.
-            PortDir::Input | PortDir::Param => dir != PortDir::Output,
+            // Api connectors are wire-bidirectional (see PortDir::Api).
+            PortDir::Output => matches!(dir, PortDir::Output | PortDir::Api),
+            // Wire sinks accept inputs, params, and Api connectors; a Def
+            // assignment does not (Api ports never carry Def= — evidence
+            // on PortDir::Api).
+            PortDir::Input => dir != PortDir::Output,
+            PortDir::Param => !matches!(dir, PortDir::Output | PortDir::Api),
+            PortDir::Api => unreachable!("no caller wants Api"),
         };
         if !ok {
             return Err(Error::Compile(format!(

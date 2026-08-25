@@ -184,7 +184,7 @@ fn ambiguity_and_no_match_are_reported() {
 
 #[test]
 fn unverified_block_type_is_refused() {
-    let m = Module::parse("j = AutoJalousie()\n").unwrap();
+    let m = Module::parse("t = DayTimer()\n").unwrap();
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
     assert!(err.to_string().contains("builtin table"), "{err}");
 }
@@ -216,15 +216,16 @@ fn decompile_of_compiled_output_reflects_the_module() {
         ..Default::default()
     };
     let (m, report) = decompile(&out, &managed_only).unwrap();
-    assert_eq!(report.managed, 2);
-    // wind_alarm only touches the extern→extern wire (Safety), which the
-    // managed-only view deliberately does not lift — 3 externs, 4 of the
-    // 5 wires.
+    // The fixture's AutoJalousie is a managed type since its admission, so
+    // the view lifts it as a block (adopt, with verification, would refuse
+    // this partial old-generation instance — but views don't verify).
+    assert_eq!(report.managed, 3);
     assert_eq!(report.externs, 3);
-    assert_eq!(m.blocks().count(), 2);
-    // 3 wires land in block argument lists, 1 (AutoShade) as a `<-`.
-    assert_eq!(m.wire_pairs().len(), 4);
-    assert_eq!(m.extern_wires().count(), 1);
+    assert_eq!(m.blocks().count(), 3);
+    // Every wire lands in a block argument list — the AutoShade and Safety
+    // sinks are on the lifted AutoJalousie now.
+    assert_eq!(m.wire_pairs().len(), 5);
+    assert_eq!(m.extern_wires().count(), 0);
     // Everything the compiler owns sits on the one page it compiled onto.
     assert_eq!(report.pages, 1);
     // The IR text parses back to the same module (canonical fixpoint).
@@ -237,14 +238,15 @@ fn full_view_decompile_shows_every_page_block_and_wire() {
     let mut lock = Lockfile::new();
     let out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
     let (m, report) = decompile(&out, &DecompileOptions::default()).unwrap();
-    assert_eq!(report.managed, 2);
-    // All three VirtualIns (periphery) and the AutoJalousie (page object).
-    assert_eq!(report.externs, 4);
+    // The AutoJalousie lifts as a managed block since its admission.
+    assert_eq!(report.managed, 3);
+    // The three VirtualIns (periphery).
+    assert_eq!(report.externs, 3);
     // Only the VirtualInCaption container stays raw.
     assert_eq!(report.raw_objects, 1);
     assert_eq!(report.pages, 1);
-    // The extern→extern Safety wire is visible in the full view.
-    assert_eq!(m.extern_wires().count(), 2);
+    // Every wire sinks on a lifted block now — nothing needs `<-`.
+    assert_eq!(m.extern_wires().count(), 0);
     assert_eq!(m.wire_pairs().len(), 5);
     // Output is grouped into page sections.
     assert!(
@@ -275,15 +277,15 @@ fn per_page_decompile_produces_self_contained_modules() {
     // Self-contained: the periphery VirtualIns the page references are
     // declared as foreign externs with an origin note.
     let m = &p.module;
-    assert_eq!(m.blocks().count(), 2);
-    assert_eq!(m.externs().count(), 4);
+    assert_eq!(m.blocks().count(), 3);
+    assert_eq!(m.externs().count(), 3);
     assert_eq!(
         m.externs()
             .filter(|e| e.comment.as_deref() == Some(" periphery"))
             .count(),
         3
     );
-    assert_eq!(m.extern_wires().count(), 2);
+    assert_eq!(m.extern_wires().count(), 0);
     // Each page module is canonical, parseable language text.
     let text = m.to_text();
     assert_eq!(&Module::parse(&text).unwrap(), m);
@@ -324,7 +326,14 @@ fn adopt_then_compile_rebuilds_in_place() {
     assert_eq!(report.blocks, 2);
     assert_eq!(report.pages, 1);
 
-    assert!(report.refused.is_empty(), "{:?}", report.refused);
+    // The fixture's partial old-generation AutoJalousie (4 of 49
+    // connectors) refuses — its rebuild would mint the missing 45.
+    assert_eq!(report.refused.len(), 1, "{:?}", report.refused);
+    assert!(
+        report.refused[0].contains("AutoJalousie"),
+        "{:?}",
+        report.refused
+    );
 
     // The lock pins the blocks' existing identities.
     let objs = existing.objects();
@@ -385,13 +394,16 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
         .clone();
     existing.element_at_mut(&path).unwrap().set_attr("M", "3");
     let (module, lock, report) = adopt(&existing).unwrap();
-    assert_eq!(report.refused.len(), 1);
-    assert!(
-        report.refused[0].contains("attribute `M="),
-        "{}",
-        report.refused[0]
-    );
-    assert!(report.refused[0].contains("Summe"), "{}", report.refused[0]);
+    // One refusal for the M= attribute (plus the fixture's standing
+    // partial-AutoJalousie refusal).
+    let refused: Vec<&String> = report
+        .refused
+        .iter()
+        .filter(|r| !r.contains("AutoJalousie"))
+        .collect();
+    assert_eq!(refused.len(), 1, "{:?}", report.refused);
+    assert!(refused[0].contains("attribute `M="), "{}", refused[0]);
+    assert!(refused[0].contains("Summe"), "{}", refused[0]);
     assert_eq!(report.blocks, 1, "the GreaterEqual still adopts");
     assert!(!lock.objects.contains_key("summe"));
     assert!(lock.objects.contains_key("heiss"));
@@ -419,12 +431,17 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
         .unwrap()
         .set_attr("Inv", "true");
     let (module, lock, report) = adopt(&existing).unwrap();
-    assert_eq!(report.refused.len(), 1);
-    assert!(report.refused[0].contains("`Inv`"), "{}", report.refused[0]);
+    let refused: Vec<&String> = report
+        .refused
+        .iter()
+        .filter(|r| !r.contains("AutoJalousie"))
+        .collect();
+    assert_eq!(refused.len(), 1, "{:?}", report.refused);
+    assert!(refused[0].contains("`Inv`"), "{}", refused[0]);
     assert!(
-        report.refused[0].contains("Not block"),
+        refused[0].contains("Not block"),
         "hints at the workaround: {}",
-        report.refused[0]
+        refused[0]
     );
     assert!(lock.objects.contains_key("summe"), "Formula still adopts");
     // The refused block's incoming wire from adopted logic must appear as
@@ -471,9 +488,14 @@ fn adopt_carries_gui_owned_residue_verbatim() {
     el.push_child(display);
 
     // Adoption accepts the residue, and the rebuild reproduces the config
-    // byte for byte — values, order, escaping, self-closing form.
+    // byte for byte — values, order, escaping, self-closing form. (The
+    // fixture's standing partial-AutoJalousie refusal is not about us.)
     let (module, lock, report) = adopt(&existing).unwrap();
-    assert!(report.refused.is_empty(), "{:?}", report.refused);
+    assert!(
+        report.refused.iter().all(|r| r.contains("AutoJalousie")),
+        "{:?}",
+        report.refused
+    );
     let out = compile(&existing, &module, &mut lock.clone(), &opts()).unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.to_bytes()),
