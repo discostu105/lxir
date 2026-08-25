@@ -29,6 +29,7 @@ pub mod doc;
 pub mod error;
 pub mod ir;
 pub mod lock;
+pub mod observed_defaults;
 pub mod project;
 pub mod uuid;
 pub mod xml;

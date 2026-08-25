@@ -116,6 +116,14 @@ types) contradict each other. Results and methodology:
       document order and exact labels, because those are compiled
       bytes. Real config: 2667 → 1818 lines, 486 wires folded, 674 →
       396 externs.
+- [x] Observed-default parameter elision 2026-08-25 (D30): the full
+      view hides a lifted parameter whose value equals the GUI default,
+      defined statistically over the corpus (modal `Def=` at ≥90% share,
+      ≥10 occurrences; `tools/extract-defaults.py` →
+      docs/data/param-defaults.json evidence + generated
+      src/observed_defaults.rs). `--all-params` shows everything, the
+      report counts elisions, `--managed-only` never elides. With D29
+      the real config's full view halved: 2667 → 1332 lines.
 - [x] Composite extern matching 2026-08-25: `extern x = Type(title:
       "Deckenlicht", room: "Büro")` — `room:`/`category:` narrow an
       iname/title match via the object's `<IoData Pr=/Cr=>` reference

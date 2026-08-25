@@ -566,3 +566,24 @@ Anything unverified is an error, not a heuristic:
   real house config the view shrank from 2667 to 1818 lines — 486
   plumbing wires folded and 278 of 674 externs turned out to exist only
   to feed refs. Corpus adoption fidelity verified unchanged.
+- **D30 — Corpus-observed defaults: elide what the GUI wrote, show what
+  a human chose** (2026-08-25). Loxone Config writes a `Def=` for nearly
+  every port at block placement — at the GUI default — so a decompiled
+  block drowns its two configured values in twenty boilerplate ones. The
+  observed default for a (type, port) is defined statistically:
+  the modal `Def=` value across the local corpus, accepted at ≥90% share
+  and ≥10 occurrences. `tools/extract-defaults.py` writes the full
+  evidence (every candidate, share, counts, the rejected tail) to
+  docs/data/param-defaults.json and generates src/observed_defaults.rs
+  restricted to the builtin types — the only ones whose parameters the
+  decompiler lifts. The full view elides a lifted parameter whose value
+  equals the observed default; `--all-params` shows everything, and the
+  report counts elisions honestly. The adoptable ManagedOnly view never
+  elides — rebuilding writes the exact `Def=` back. This is the same
+  boundary as D29: corpus statistics clear the bar for *view-only*
+  knowledge because a wrong entry can hide a value from a reading human
+  but can never change what compiles; the connector DB proper (what the
+  compiler may *write*) still demands live verification. Real config:
+  486 parameters elided; with D28+D29 the full view halved, 2667 → 1332
+  lines. Minted blocks already write no `Def=` for unbound parameters,
+  so the two conventions agree: absence means default, on both sides.

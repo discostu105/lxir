@@ -55,12 +55,15 @@ USAGE:
         ConfigVersion pin is refused; after qualifying the release
         (one oracle open+save run), --accept-version <v> re-pins it.
 
-  lxir decompile [--managed-only] [--out-dir <dir>] <cfg.Loxone>
+  lxir decompile [--managed-only] [--all-params] [--out-dir <dir>] <cfg.Loxone>
         Print the IR view of a config, grouped into sections headed by
-        `page \"<Title>\"` statements (report on stderr). The default full view shows every page block
-        and wire — it is for reading, not compiling. --managed-only
-        restricts it to managed-type blocks and what they touch (the
-        adoption subset). --out-dir writes one module per logic page
+        `page \"<Title>\"` statements (report on stderr). The default
+        full view shows every page block and wire — it is for reading,
+        not compiling — and elides parameters at their corpus-observed
+        GUI default (--all-params shows them; the report counts them).
+        --managed-only restricts the view to managed-type blocks and
+        what they touch (the adoption subset), keeps every parameter,
+        and folds nothing. --out-dir writes one module per logic page
         instead of printing.
 
   lxir adopt <cfg.Loxone> (--out-module <m.lxir> | --out-dir <dir>) --out-lock <lock.json>
@@ -513,10 +516,12 @@ fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
     let mut path = None;
     let mut out_dir: Option<PathBuf> = None;
     let mut scope = DecompileScope::Full;
+    let mut all_params = false;
     let mut it = args.iter();
     while let Some(&a) = it.next() {
         match a {
             "--managed-only" => scope = DecompileScope::ManagedOnly,
+            "--all-params" => all_params = true,
             "--out-dir" => {
                 out_dir = Some(PathBuf::from(
                     it.next().copied().ok_or("--out-dir needs a value")?,
@@ -527,18 +532,23 @@ fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
             }
             p if path.is_none() => path = Some(p),
             _ => {
-                return Err("usage: lxir decompile [--managed-only] [--out-dir <dir>] \
-                            <cfg.Loxone>"
+                return Err("usage: lxir decompile [--managed-only] [--all-params] \
+                            [--out-dir <dir>] <cfg.Loxone>"
                     .into());
             }
         }
     }
     let Some(path) = path else {
-        return Err("usage: lxir decompile [--managed-only] [--out-dir <dir>] <cfg.Loxone>".into());
+        return Err(
+            "usage: lxir decompile [--managed-only] [--all-params] [--out-dir <dir>] \
+                    <cfg.Loxone>"
+                .into(),
+        );
     };
     let doc = read_doc(path)?;
     let opts = DecompileOptions {
         scope,
+        all_params,
         ..Default::default()
     };
 
@@ -568,10 +578,21 @@ fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
         report.externs,
         report.pages,
         report.raw_objects,
-        if report.ref_wires_folded > 0 {
-            format!(", {} ref plumbing wires folded", report.ref_wires_folded)
-        } else {
-            String::new()
+        {
+            let mut notes = String::new();
+            if report.ref_wires_folded > 0 {
+                notes.push_str(&format!(
+                    ", {} ref plumbing wires folded",
+                    report.ref_wires_folded
+                ));
+            }
+            if report.default_params_elided > 0 {
+                notes.push_str(&format!(
+                    ", {} default params elided",
+                    report.default_params_elided
+                ));
+            }
+            notes
         }
     );
     Ok(ExitCode::SUCCESS)

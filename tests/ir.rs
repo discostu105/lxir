@@ -888,6 +888,69 @@ fn full_view_folds_ref_plumbing_and_sorts_extern_wires() {
     assert_eq!(Module::parse(&text).unwrap(), m);
 }
 
+/// D30: the full view elides a parameter whose value equals the
+/// corpus-observed GUI default (`--all-params` shows it, the report
+/// counts it); the adoptable view keeps every parameter because
+/// rebuilding writes the exact `Def=` back.
+#[test]
+fn full_view_elides_observed_default_params() {
+    // The base AutoJalousie gains two Defs: `Dir` at the observed GUI
+    // default (180) and `Width` off it (the observed default is 70).
+    let mut doc = base();
+    let jal = doc
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "AutoJalousie")
+        .unwrap()
+        .path
+        .clone();
+    for (key, uuid, def) in [
+        ("Dir", "20000005-0000-0055-30ffaaaaaaaa0005", "180"),
+        ("Width", "20000005-0000-0056-31ffaaaaaaaa0005", "50"),
+    ] {
+        let mut co = Element::new("Co");
+        co.set_attr("K", key);
+        co.set_attr("Def", def);
+        co.set_attr("U", uuid);
+        doc.element_at_mut(&jal).unwrap().push_child(co);
+    }
+    let params = |m: &Module| -> Vec<(String, String)> {
+        m.blocks()
+            .flat_map(|b| b.bindings())
+            .filter_map(|x| match &x.kind {
+                BindingKind::Param(v) => Some((x.port.clone(), v.to_string())),
+                _ => None,
+            })
+            .collect()
+    };
+
+    let (m, report) = decompile(&doc, &DecompileOptions::default()).unwrap();
+    assert_eq!(report.default_params_elided, 1);
+    assert_eq!(
+        params(&m),
+        [
+            ("TargetPos".into(), "100".into()),
+            ("Width".into(), "50".into())
+        ]
+    );
+
+    let all = DecompileOptions {
+        all_params: true,
+        ..Default::default()
+    };
+    let (m, report) = decompile(&doc, &all).unwrap();
+    assert_eq!(report.default_params_elided, 0);
+    assert!(params(&m).contains(&("Dir".into(), "180".into())));
+
+    let mo = DecompileOptions {
+        scope: DecompileScope::ManagedOnly,
+        ..Default::default()
+    };
+    let (m, report) = decompile(&doc, &mo).unwrap();
+    assert_eq!(report.default_params_elided, 0);
+    assert!(params(&m).contains(&("Dir".into(), "180".into())));
+}
+
 #[test]
 fn per_page_decompile_produces_self_contained_modules() {
     let mut lock = Lockfile::new();

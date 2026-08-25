@@ -63,6 +63,11 @@ pub struct DecompileOptions {
     /// `managed_types` (they can still appear as externs). `adopt` uses
     /// this for individual blocks whose rebuild would not be faithful.
     pub exclude: BTreeSet<String>,
+    /// Show parameters whose value equals the corpus-observed GUI default
+    /// (D30) in the `Full` view instead of eliding them (`--all-params`).
+    /// The `ManagedOnly` view always keeps every parameter — rebuilding
+    /// must write the exact `Def=` back — so this only affects `Full`.
+    pub all_params: bool,
 }
 
 impl Default for DecompileOptions {
@@ -71,6 +76,7 @@ impl Default for DecompileOptions {
             managed_types: BUILTIN_TYPES.iter().map(|t| String::from(*t)).collect(),
             scope: DecompileScope::Full,
             exclude: BTreeSet::new(),
+            all_params: false,
         }
     }
 }
@@ -92,6 +98,10 @@ pub struct DecompileReport {
     /// the ref's extern declaration carries a `# mirrors …` note instead.
     /// Always 0 in the `ManagedOnly` view.
     pub ref_wires_folded: usize,
+    /// Parameters elided from the `Full` view because their value equals
+    /// the corpus-observed GUI default (D30, [`crate::observed_defaults`]);
+    /// `all_params` shows them. Always 0 in the `ManagedOnly` view.
+    pub default_params_elided: usize,
 }
 
 /// One logic page's slice of the view, from [`decompile_pages`].
@@ -160,6 +170,8 @@ pub(super) struct Lift {
     pub(super) wires: Vec<(WireDecl, usize, usize)>,
     /// Ref plumbing wires folded out of the full view (D29).
     ref_wires_folded: usize,
+    /// Observed-default parameters elided from the full view (D30).
+    default_params_elided: usize,
 }
 
 /// One page's (or the periphery's) share of the lifted items, as indexes
@@ -380,6 +392,7 @@ impl Lift {
         // Blocks: per port in connector order, the `Def=` value becomes a
         // parameter binding, then each incoming wire a wire binding.
         let mut block_decls: BTreeMap<usize, BlockDecl> = BTreeMap::new();
+        let mut default_params_elided = 0usize;
         for &i in &managed {
             let o = &objects[i];
             let el = doc.element_at(&o.path).expect("path from objects()");
@@ -406,11 +419,23 @@ impl Lift {
                     continue;
                 }
                 if let Some(def) = &p.def {
-                    args.push(ArgItem::Binding(Binding {
-                        port: p.key.clone(),
-                        kind: BindingKind::Param(Value::from_literal(def)),
-                        comment: None,
-                    }));
+                    // A value at the corpus-observed GUI default is noise
+                    // to a reader — elided from the full view (D30,
+                    // `--all-params` shows it). The adoptable view keeps
+                    // every parameter: rebuilding writes `Def=` back.
+                    if opts.scope == DecompileScope::Full
+                        && !opts.all_params
+                        && crate::observed_defaults::observed_default(&o.block_type, &p.key)
+                            == Some(def.as_str())
+                    {
+                        default_params_elided += 1;
+                    } else {
+                        args.push(ArgItem::Binding(Binding {
+                            port: p.key.clone(),
+                            kind: BindingKind::Param(Value::from_literal(def)),
+                            comment: None,
+                        }));
+                    }
                 }
                 for input in &p.inputs {
                     let Some((src_obj, src_key)) = idx.port_owner.get(input) else {
@@ -510,6 +535,7 @@ impl Lift {
             match_specs,
             wires,
             ref_wires_folded,
+            default_params_elided,
         }
     }
 
@@ -704,6 +730,7 @@ impl Lift {
                 .filter(|o| !self.slug_of.contains_key(&o.uuid))
                 .count(),
             ref_wires_folded: self.ref_wires_folded,
+            default_params_elided: self.default_params_elided,
         }
     }
 }
