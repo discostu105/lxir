@@ -1,6 +1,8 @@
 # Beschattung Süd — Beispielmodul.
 # Externe Objekte gehören Loxone Config; Blöcke gehören dem Compiler.
 
+page "Beschattung"
+
 let temp_schwelle = 28
 
 extern aussentemp = VirtualIn(iname: "VI1")

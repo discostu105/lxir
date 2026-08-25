@@ -192,8 +192,10 @@ fn unverified_block_type_is_refused() {
 
 #[test]
 fn pool_showcase_compiles_end_to_end() {
-    // The roadmap's showcase module: water temperature, cover interlock,
-    // PV-surplus enable — committed under examples/ and kept compiling.
+    // The showcase module exercising the whole language: page, let,
+    // extern (iname / title+room), a template instance, an expression
+    // binding, a unit value, and an expression wire — committed under
+    // examples/ and kept compiling.
     let base = LoxoneDoc::parse(&std::fs::read("examples/configs/pool.Loxone").unwrap()).unwrap();
     let src = std::fs::read_to_string("examples/ir/pool.lxir").unwrap();
     let module = Module::parse(&src).unwrap();
@@ -211,8 +213,25 @@ fn pool_showcase_compiles_end_to_end() {
         lock.externals["wp_freigabe"].uuid,
         "30000006-0000-0060-ffff504f94112233"
     );
-    assert_eq!(lock.objects.len(), 5);
-    assert_eq!(out.counters().next_obj, 305);
+    // Two declared blocks (the template's `frost_alarm`, the Monoflop)
+    // plus six desugared gates: one from the argument expression, five
+    // from the three-way wire expression.
+    assert_eq!(lock.objects.len(), 8);
+    assert!(lock.objects.contains_key("frost_alarm"));
+    assert!(lock.objects["nachlauf_inputtrigger__ge1"].expr_owned);
+    assert!(lock.objects["wp_freigabe_on__and2"].expr_owned);
+    // `Time: 30min` compiled exactly to seconds.
+    let nachlauf = out
+        .objects()
+        .iter()
+        .find(|o| o.uuid == lock.objects["nachlauf"].uuid)
+        .map(|o| o.path.clone())
+        .unwrap();
+    let time = lxir::doc::ports(out.element_at(&nachlauf).unwrap())
+        .into_iter()
+        .find(|p| p.key == "Time")
+        .unwrap();
+    assert_eq!(time.def.as_deref(), Some("1800"));
 
     // The enable wire landed on the Technikraum switch's On port.
     let objs = out.objects();

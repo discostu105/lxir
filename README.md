@@ -10,6 +10,8 @@ the real `.Loxone` config without disturbing anything else in the file.
 # Beschattung Süd — Beispielmodul.
 # Externe Objekte gehören Loxone Config; Blöcke gehören dem Compiler.
 
+page "Beschattung"
+
 let temp_schwelle = 28
 
 extern aussentemp = VirtualIn(iname: "VI1")
@@ -50,6 +52,8 @@ Boolean logic can skip the blocks entirely:
 desugars into the same verified gate and comparator blocks — each
 labeled with its sub-expression, so the rule stays readable in Loxone
 Config — and editing the expression re-derives them without ceremony.
+Physical values read as written — `Time: 30min`, `2700K`, `70%` — and
+compile to the port's base unit.
 
 ## Why
 
@@ -156,10 +160,12 @@ are the output of the `compile` example; running it again reproduces them
 byte-for-byte.
 
 For a complete end-to-end module, see `examples/ir/pool.lxir` against
-`examples/configs/pool.Loxone`: named constants, externs matched by iname
-and by composite `title` + `room:`, a two-input gate cascade, and a wire
-onto an extern port — the sketch's pool idea, kept compiling by the test
-suite.
+`examples/configs/pool.Loxone`: it exercises the whole language — `page`
+placement, named constants, externs matched by iname and by composite
+`title` + `room:`, a template with an instance, an expression as an
+argument, a unit-suffixed value (`Time: 30min`), and a boolean expression
+wired onto an extern port — the sketch's pool idea, kept compiling by the
+test suite.
 
 ## Scope
 
@@ -171,7 +177,7 @@ suite.
 | `uuid` | The anatomy of Loxone UUIDs — creation time, mint counters, minting-machine id, connector index — plus a deterministic minter (no clock, no RNG). |
 | `doc` | Semantic read layer: objects, ports, wires, counters, pages. |
 | `connectors` | Port-direction knowledge: a **verified** builtin table (gates, comparators, `Formula`, `Monoflop`, `PulseGen`, `AnalogThresholdTrigger` — see [docs/connector-db.md](docs/connector-db.md)) and evidence-based inference (`observe`, corpus merge, legacy-db crosscheck) over real configs. |
-| `ir` | The text language: constructor-style block declarations with inline wires/parameters, `extern`, `let`, lifecycle statements; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view), `adopt` (existing blocks → module + identity-pinning lockfile). |
+| `ir` | The text language: constructor-style block declarations with inline wires/parameters, `extern`, `let`, `page` placement, templates with instances, boolean/comparison expressions (as arguments and on wires), unit-suffixed values, lifecycle statements; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view), `adopt` (existing blocks → module + identity-pinning lockfile). |
 | `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, extern-port `Def=` originals. |
 | `diff` | Semantic diff between two configs, with locale-rename noise flagged. |
 
@@ -184,7 +190,7 @@ which are the intended consumers of this crate.
 | Doc | Contents |
 |---|---|
 | [docs/vision.md](docs/vision.md) | Why config-as-code for Loxone; the Terraform analogy; the two-masters workflow |
-| [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D16 |
+| [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D30 |
 | [docs/ir-spec.md](docs/ir-spec.md) | Normative spec of the `.lxir` language (v0) |
 | [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v1) and its invariants |
 | [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
