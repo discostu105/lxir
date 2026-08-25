@@ -100,7 +100,7 @@ fn corpus_adoptions_rebuild_as_semantic_noops() {
         refused.values().sum::<usize>()
     );
     let mut causes: Vec<(usize, &String)> = refused.iter().map(|(c, n)| (*n, c)).collect();
-    causes.sort_by(|a, b| b.0.cmp(&a.0));
+    causes.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (n, cause) in causes {
         eprintln!("  {n:4} × {cause}");
     }
