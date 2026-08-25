@@ -18,6 +18,14 @@ pub enum Item {
     Let(LetDecl),
     Removed(RemovedDecl),
     Moved(MovedDecl),
+    /// `template <name>(<params>)` … `end` — a reusable statement body
+    /// (D23). Declares nothing by itself; each instantiation expands it.
+    Template(TemplateDecl),
+    /// `<slug> = <template_name>(<param>: <arg>, …)` — a template
+    /// instantiation, distinguished from a block declaration by the
+    /// lowercase callee. Shares [`BlockDecl`]'s shape (`block_type`
+    /// holds the template name; a label string is not allowed).
+    Instance(BlockDecl),
     /// A whole-line `#` comment, stored verbatim (text after the `#`) so
     /// formatting is non-destructive. Statements carry their own trailing
     /// comments; argument lists carry theirs as [`ArgItem`]s.
@@ -279,6 +287,53 @@ pub struct MovedDecl {
     pub comment: Option<String>,
 }
 
+/// `template <name>(<params>)` … `end` — a reusable body of block, wire,
+/// and port-assignment statements (D23). Body slugs are private to the
+/// template: instance `sued` expands body block `hoch` to `sued_hoch`.
+/// Free identifiers (neither parameter nor body slug) resolve in the
+/// module namespace after expansion — a template may capture module
+/// externs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateDecl {
+    pub name: String,
+    pub params: Vec<TemplateParam>,
+    /// Block declarations, wires, port assignments, and comments.
+    pub body: Vec<Item>,
+    /// Trailing `#` comment on the header line, verbatim.
+    pub comment: Option<String>,
+    /// Trailing `#` comment on the `end` line, verbatim.
+    pub end_comment: Option<String>,
+}
+
+/// One parameter of a template header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TemplateParam {
+    /// `name: Type` — the instance passes an extern or block slug. The
+    /// annotation is checked against the slug's declared type when that
+    /// is known.
+    Object { name: String, block_type: String },
+    /// `name = <literal>` — a value parameter with a default; the
+    /// instance may override it with a literal or a `let` reference.
+    Value { name: String, default: Value },
+}
+
+impl TemplateParam {
+    pub fn name(&self) -> &str {
+        match self {
+            TemplateParam::Object { name, .. } | TemplateParam::Value { name, .. } => name,
+        }
+    }
+}
+
+impl fmt::Display for TemplateParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TemplateParam::Object { name, block_type } => write!(f, "{name}: {block_type}"),
+            TemplateParam::Value { name, default } => write!(f, "{name} = {default}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PortRef {
     pub slug: String,
@@ -297,6 +352,8 @@ enum NameKind {
     Extern,
     Block,
     Let,
+    Template,
+    Instance,
 }
 
 impl NameKind {
@@ -305,6 +362,8 @@ impl NameKind {
             NameKind::Extern => "an extern",
             NameKind::Block => "a managed block",
             NameKind::Let => "a `let` constant",
+            NameKind::Template => "a template",
+            NameKind::Instance => "a template instance",
         }
     }
 }
@@ -427,6 +486,8 @@ impl Module {
                 Item::Extern(e) => (e.slug.as_str(), NameKind::Extern),
                 Item::Block(b) => (b.slug.as_str(), NameKind::Block),
                 Item::Let(l) => (l.name.as_str(), NameKind::Let),
+                Item::Template(t) => (t.name.as_str(), NameKind::Template),
+                Item::Instance(b) => (b.slug.as_str(), NameKind::Instance),
                 _ => continue,
             };
             if names.insert(name, kind).is_some() {
@@ -448,6 +509,17 @@ impl Module {
                 Some(NameKind::Let) => compile_err(format!(
                     "`{}` is a `let` constant, not a block or extern (in `{r}`)",
                     r.slug
+                )),
+                Some(NameKind::Template) => compile_err(format!(
+                    "`{slug}` is a template, not an object — instantiate it first \
+                     (`<slug> = {slug}(…)`) (in `{r}`)",
+                    slug = r.slug
+                )),
+                Some(NameKind::Instance) => compile_err(format!(
+                    "`{slug}` is a template instance and names no object itself — \
+                     reference one of its blocks by its expanded name \
+                     (`{slug}_<block>`) (in `{r}`)",
+                    slug = r.slug
                 )),
                 Some(_) => Ok(()),
             }
@@ -531,6 +603,128 @@ impl Module {
                         ));
                     }
                     value_refs(&s.value)?;
+                }
+                Item::Template(t) => {
+                    // Parameters and body slugs share one template-local
+                    // namespace. Body references are resolved per
+                    // instantiation, not here.
+                    let mut local: BTreeSet<&str> = BTreeSet::new();
+                    for p in &t.params {
+                        if !local.insert(p.name()) {
+                            return compile_err(format!(
+                                "template `{}`: duplicate parameter `{}`",
+                                t.name,
+                                p.name()
+                            ));
+                        }
+                    }
+                    for item in &t.body {
+                        match item {
+                            Item::Block(b) => {
+                                if !local.insert(&b.slug) {
+                                    return compile_err(format!(
+                                        "template `{}`: duplicate name `{}` in the body",
+                                        t.name, b.slug
+                                    ));
+                                }
+                                let mut seen: BTreeSet<&str> = BTreeSet::new();
+                                for binding in b.bindings() {
+                                    if matches!(binding.kind, BindingKind::Param(_))
+                                        && !seen.insert(&binding.port)
+                                    {
+                                        return compile_err(format!(
+                                            "template `{}`: duplicate parameter `{}` in \
+                                             `{} = {}(…)`",
+                                            t.name, binding.port, b.slug, b.block_type
+                                        ));
+                                    }
+                                }
+                            }
+                            Item::Wire(_) | Item::Set(_) | Item::Comment(_) => {}
+                            _ => {
+                                return compile_err(format!(
+                                    "template `{}`: only block declarations, wires, port \
+                                     assignments, and comments are allowed in a body",
+                                    t.name
+                                ));
+                            }
+                        }
+                    }
+                }
+                Item::Instance(call) => {
+                    let Some(t) = self.items.iter().find_map(|i| match i {
+                        Item::Template(t) if t.name == call.block_type => Some(t),
+                        _ => None,
+                    }) else {
+                        let hint = super::validate::suggest(
+                            &call.block_type,
+                            self.items.iter().filter_map(|i| match i {
+                                Item::Template(t) => Some(t.name.as_str()),
+                                _ => None,
+                            }),
+                        );
+                        return compile_err(format!(
+                            "`{} = {name}(…)` instantiates unknown template `{name}`{hint}",
+                            call.slug,
+                            name = call.block_type
+                        ));
+                    };
+                    if call.title.is_some() {
+                        return compile_err(format!(
+                            "`{} = {}(…)`: an instantiation takes no label string — \
+                             titles belong on the template's blocks",
+                            call.slug, call.block_type
+                        ));
+                    }
+                    let mut seen: BTreeSet<&str> = BTreeSet::new();
+                    for binding in call.bindings() {
+                        if !seen.insert(&binding.port) {
+                            return compile_err(format!(
+                                "`{} = {}(…)`: duplicate argument `{}`",
+                                call.slug, call.block_type, binding.port
+                            ));
+                        }
+                        let Some(p) = t.params.iter().find(|p| p.name() == binding.port) else {
+                            let hint = super::validate::suggest(
+                                &binding.port,
+                                t.params.iter().map(|p| p.name()),
+                            );
+                            return compile_err(format!(
+                                "`{} = {}(…)`: unknown parameter `{}`{hint}",
+                                call.slug, call.block_type, binding.port
+                            ));
+                        };
+                        match (p, &binding.kind) {
+                            (TemplateParam::Object { .. }, BindingKind::Param(Value::Ref(_))) => {}
+                            (TemplateParam::Object { name, .. }, _) => {
+                                return compile_err(format!(
+                                    "`{} = {}(…)`: object parameter `{name}` takes an \
+                                     extern or block slug (`{name}: <slug>`)",
+                                    call.slug, call.block_type
+                                ));
+                            }
+                            (TemplateParam::Value { .. }, BindingKind::Param(v)) => {
+                                value_refs(v)?;
+                            }
+                            (TemplateParam::Value { name, .. }, BindingKind::Wire(_)) => {
+                                return compile_err(format!(
+                                    "`{} = {}(…)`: value parameter `{name}` takes a \
+                                     number, string, or constant — not a port",
+                                    call.slug, call.block_type
+                                ));
+                            }
+                        }
+                    }
+                    for p in &t.params {
+                        if let TemplateParam::Object { name, .. } = p
+                            && !seen.contains(name.as_str())
+                        {
+                            return compile_err(format!(
+                                "`{} = {}(…)`: object parameter `{name}` must be given",
+                                call.slug, call.block_type
+                            ));
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -630,7 +824,7 @@ impl Module {
                         tail(&e.comment)
                     ));
                 }
-                Item::Block(b) => {
+                Item::Block(b) | Item::Instance(b) => {
                     out.push_str(&format!("{} = {}(", b.slug, b.block_type));
                     if b.args.is_empty() {
                         // Single line: `slug = Type()` or `slug = Type("Label")`.
@@ -688,6 +882,34 @@ impl Module {
                         m.to,
                         tail(&m.comment)
                     ));
+                }
+                Item::Template(t) => {
+                    let params = t
+                        .params
+                        .iter()
+                        .map(|p| p.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(
+                        "template {}({params}){}\n",
+                        t.name,
+                        tail(&t.comment)
+                    ));
+                    // The body is a module in miniature — reuse its
+                    // canonical form, indented one level.
+                    let body = Module {
+                        items: t.body.clone(),
+                    }
+                    .to_text();
+                    for line in body.lines() {
+                        if !line.is_empty() {
+                            out.push('\t');
+                            out.push_str(line);
+                        }
+                        out.push('\n');
+                    }
+                    out.push_str(&format!("end{}\n", tail(&t.end_comment)));
+                    prev_multiline = true;
                 }
                 Item::Comment(text) => {
                     out.push_str(&format!("#{text}\n"));

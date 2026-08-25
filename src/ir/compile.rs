@@ -144,6 +144,9 @@ pub fn compile(
     lock: &mut Lockfile,
     opts: &CompileOptions,
 ) -> Result<LoxoneDoc> {
+    // Templates expand first (D23): everything below — validation, the
+    // lockfile, minting — sees only plain statements.
+    let module = &module.expand()?;
     module.validate()?;
     validate_ports(module)?;
 

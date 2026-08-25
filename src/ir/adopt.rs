@@ -117,6 +117,14 @@ pub fn adopt_one(
     lock: &mut Lockfile,
 ) -> Result<AdoptedBlock> {
     let fail = |m: String| Error::Compile(m);
+    // Templates (D23): the checks below — slug freshness, wires already
+    // declared on managed sinks — must see the expanded module, where an
+    // instance's blocks exist under their lock-key names. Expansion of a
+    // partial (leniently loaded) module can fail; then the raw view has
+    // to do, and the caller's no-op verification stays the backstop.
+    let raw = module;
+    let expanded = module.expand();
+    let module = expanded.as_ref().unwrap_or(module);
     let objects = doc.objects();
     let Some(o) = objects.iter().find(|o| o.uuid == uuid) else {
         return Err(fail(format!("no object with uuid `{uuid}` in the config")));
@@ -173,6 +181,11 @@ pub fn adopt_one(
         .map(|e| e.slug.clone())
         .chain(module.blocks().map(|b| b.slug.clone()))
         .chain(module.lets().map(|l| l.name.clone()))
+        .chain(raw.items.iter().filter_map(|i| match i {
+            Item::Template(t) => Some(t.name.clone()),
+            Item::Instance(b) => Some(b.slug.clone()),
+            _ => None,
+        }))
         .chain(lock.objects.keys().cloned())
         .chain(lock.externals.keys().cloned())
         .collect();

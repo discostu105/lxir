@@ -391,3 +391,35 @@ Anything unverified is an error, not a heuristic:
   per-compile and deliberate; the lock then pins the new version.
   Adoption pins whatever release wrote the adopted config — the first
   compile against the same file always passes.
+- **D23 — Templates are macro expansion with locked identities**
+  (2026-08-25, Stufe 1). The sketch's `template` + `use` (v0 braces)
+  becomes, in v1 grammar: `template <name>(<params>)` … `end` declares a
+  reusable body of block/wire/assignment statements, and
+  `<slug> = <name>(<param>: <arg>, …)` instantiates it — the lowercase
+  callee distinguishes instantiation from a block declaration, because a
+  template instance *is* a composite block. Parameters are either object
+  parameters (`jalousie: AutoJalousie` — the instance passes an extern
+  or block slug; the annotation is checked when the slug's declared
+  type is known) or value parameters with a default (`pos = 70`; the
+  instance may override with a literal or a `let` reference). Expansion
+  is a pure source-to-source pass before compilation: body slug `b` in
+  instance `sued` becomes `sued_b`, object parameters substitute to the
+  passed slugs, value parameters substitute like shadowing `let`s, and
+  free identifiers resolve in the module namespace after expansion — a
+  template may capture module externs (`aussentemp`, `wind_alarm`).
+  Identity: the lockfile keys the *expanded* slugs, so `sued_hoch` is
+  pinned exactly like a hand-written block — re-instantiating never
+  re-mints, editing a template body mints only what it adds, and the
+  existing lifecycle statements apply unchanged (`removed sued_alt` per
+  instance when the body drops a block, `moved` to rename). Other
+  statements reference an instance's blocks by their expanded names;
+  the instance slug itself names no object. Nothing downstream knows
+  templates exist: compile, lockfile, diff, drift, and the oracle all
+  see plain blocks, so no new format risk and no oracle run is needed.
+  - Rejected alternatives: brace-delimited bodies (v0 syntax that v1
+    deliberately removed) and indentation-sensitive bodies (the lexer
+    is whitespace-agnostic everywhere else; `end` keeps the grammar
+    line-oriented). A dedicated `use`/`instance` keyword lost to the
+    block-declaration form — one call syntax, distinguished by case.
+    Nested templates and template-local `let`/`extern` are deferred,
+    not rejected.

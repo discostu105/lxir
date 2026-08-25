@@ -640,7 +640,9 @@ fn is_ident(s: &str) -> bool {
 /// Statement-initial keywords (v1, plus reserved v0 words). A slug
 /// colliding with one would change the meaning of the line it starts, so
 /// [`SlugTable`] never hands them out.
-pub(super) const RESERVED: &[&str] = &["let", "extern", "removed", "moved", "block", "wire", "set"];
+pub(super) const RESERVED: &[&str] = &[
+    "let", "extern", "removed", "moved", "template", "end", "use", "block", "wire", "set",
+];
 
 /// Slug generation with umlaut transliteration and `_2`-style
 /// deduplication; statement keywords are pre-claimed.

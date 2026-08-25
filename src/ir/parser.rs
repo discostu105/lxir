@@ -167,10 +167,51 @@ fn opt(c: Option<char>) -> String {
     c.map(String::from).unwrap_or_else(|| "<eol>".into())
 }
 
+/// The statement sink: an open `template` body, or the module itself.
+fn sink<'a>(
+    open_template: &'a mut Option<TemplateDecl>,
+    items: &'a mut Vec<Item>,
+) -> &'a mut Vec<Item> {
+    match open_template {
+        Some(t) => &mut t.body,
+        None => items,
+    }
+}
+
+/// A closed call becomes a block declaration or — lowercase callee — a
+/// template instantiation.
+fn finish_call(call: BlockDecl, in_template: bool, lineno: usize) -> Result<Item> {
+    let lower = call
+        .block_type
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase());
+    if !lower {
+        return Ok(Item::Block(call));
+    }
+    let err = |msg: String| Error::IrParse { line: lineno, msg };
+    if in_template {
+        return Err(err(format!(
+            "`{} = {}(…)` — a template body cannot instantiate another template (v1)",
+            call.slug, call.block_type
+        )));
+    }
+    if call.title.is_some() {
+        return Err(err(format!(
+            "`{} = {}(…)`: an instantiation takes no label string — titles belong \
+             on the template's blocks",
+            call.slug, call.block_type
+        )));
+    }
+    Ok(Item::Instance(call))
+}
+
 pub fn parse(src: &str) -> Result<Module> {
     let mut items = Vec::new();
     // A block declaration whose `( … )` argument list is still open.
     let mut open_call: Option<BlockDecl> = None;
+    // A `template` whose body is still open (until `end`).
+    let mut open_template: Option<TemplateDecl> = None;
 
     for (i, raw) in src.lines().enumerate() {
         let lineno = i + 1;
@@ -188,7 +229,9 @@ pub fn parse(src: &str) -> Result<Module> {
             let outcome = parse_call_args(call, &toks, lineno)?;
             if outcome.closed {
                 call.close_comment = comment;
-                items.push(Item::Block(open_call.take().unwrap()));
+                let in_template = open_template.is_some();
+                let item = finish_call(open_call.take().unwrap(), in_template, lineno)?;
+                sink(&mut open_template, &mut items).push(item);
             } else if let Some(text) = comment {
                 match call.args.last_mut() {
                     Some(ArgItem::Binding(b)) if outcome.pushed_binding => b.comment = Some(text),
@@ -202,12 +245,98 @@ pub fn parse(src: &str) -> Result<Module> {
             // Blank line, or a whole-line comment — kept verbatim as an
             // item so formatting is non-destructive.
             if let Some(text) = comment {
-                items.push(Item::Comment(text));
+                sink(&mut open_template, &mut items).push(Item::Comment(text));
             }
             continue;
         }
 
+        if open_template.is_some()
+            && let Tok::Ident(kw) = &toks[0]
+            && matches!(kw.as_str(), "let" | "extern" | "removed" | "moved")
+        {
+            return Err(err(format!(
+                "`{kw}` is not allowed inside a template body — only block \
+                 declarations, wires, port assignments, and comments (D23)"
+            )));
+        }
+
         match &toks[0] {
+            Tok::Ident(kw) if kw == "template" => {
+                if open_template.is_some() {
+                    return Err(err(
+                        "nested `template` — close the open one with `end`".into()
+                    ));
+                }
+                let [_, Tok::Ident(name), Tok::LParen, rest @ .., Tok::RParen] = toks.as_slice()
+                else {
+                    return Err(err(
+                        "expected `template <name>(<param>: <Type> | <param> = <literal>, …)`"
+                            .into(),
+                    ));
+                };
+                let mut params = Vec::new();
+                if !rest.is_empty() {
+                    let mut it = rest.iter();
+                    loop {
+                        match (it.next(), it.next(), it.next()) {
+                            (Some(Tok::Ident(n)), Some(Tok::Colon), Some(Tok::Ident(ty))) => {
+                                params.push(TemplateParam::Object {
+                                    name: check_slug(n, lineno)?,
+                                    block_type: check_type(ty, lineno)?,
+                                });
+                            }
+                            (
+                                Some(Tok::Ident(n)),
+                                Some(Tok::Eq),
+                                Some(v @ (Tok::Num(_) | Tok::Str(_))),
+                            ) => {
+                                params.push(TemplateParam::Value {
+                                    name: check_slug(n, lineno)?,
+                                    default: value_of(v, lineno)?,
+                                });
+                            }
+                            _ => {
+                                return Err(err(
+                                    "expected `<name>: <Type>` (object parameter) or \
+                                     `<name> = <literal>` (value parameter with default)"
+                                        .into(),
+                                ));
+                            }
+                        }
+                        match it.next() {
+                            None => break,
+                            Some(Tok::Comma) => continue,
+                            Some(_) => {
+                                return Err(err("expected `,` between parameters".into()));
+                            }
+                        }
+                    }
+                }
+                open_template = Some(TemplateDecl {
+                    name: check_slug(name, lineno)?,
+                    params,
+                    body: Vec::new(),
+                    comment,
+                    end_comment: None,
+                });
+            }
+            Tok::Ident(kw) if kw == "end" => match toks.as_slice() {
+                [_] => {
+                    let Some(mut t) = open_template.take() else {
+                        return Err(err("`end` without an open `template`".into()));
+                    };
+                    t.end_comment = comment;
+                    items.push(Item::Template(t));
+                }
+                _ => return Err(err("expected `end` on its own line".into())),
+            },
+            Tok::Ident(kw) if kw == "use" => {
+                return Err(err(
+                    "the `use` keyword is v0 syntax — instantiate a template as \
+                     `<slug> = <template_name>(<param>: <arg>, …)`"
+                        .into(),
+                ));
+            }
             Tok::Ident(kw) if kw == "let" => match toks.as_slice() {
                 [_, Tok::Ident(name), Tok::Eq, val] => {
                     let value = match value_of(val, lineno)? {
@@ -361,7 +490,15 @@ pub fn parse(src: &str) -> Result<Module> {
                 ));
             }
             Tok::Ident(_) => {
-                parse_ident_statement(&toks, comment, lineno, &mut items, &mut open_call)?;
+                let in_template = open_template.is_some();
+                parse_ident_statement(
+                    &toks,
+                    comment,
+                    lineno,
+                    sink(&mut open_template, &mut items),
+                    &mut open_call,
+                    in_template,
+                )?;
             }
             _ => {
                 return Err(err(
@@ -380,6 +517,12 @@ pub fn parse(src: &str) -> Result<Module> {
             msg: format!("unclosed `(` in `{} = {}(…`", call.slug, call.block_type),
         });
     }
+    if let Some(t) = open_template {
+        return Err(Error::IrParse {
+            line: src.lines().count(),
+            msg: format!("unclosed `template {}` — missing `end`", t.name),
+        });
+    }
     Ok(Module { items })
 }
 
@@ -392,10 +535,12 @@ fn parse_ident_statement(
     lineno: usize,
     items: &mut Vec<Item>,
     open_call: &mut Option<BlockDecl>,
+    in_template: bool,
 ) -> Result<()> {
     let err = |msg: String| Error::IrParse { line: lineno, msg };
     match toks {
-        // slug = Type( … — a block declaration (possibly spanning lines).
+        // slug = Type( … — a block declaration (possibly spanning lines);
+        // a lowercase callee is a template instantiation.
         [
             Tok::Ident(slug),
             Tok::Eq,
@@ -403,9 +548,14 @@ fn parse_ident_statement(
             Tok::LParen,
             rest @ ..,
         ] => {
+            let callee = if ty.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
+                check_slug(ty, lineno)?
+            } else {
+                check_type(ty, lineno)?
+            };
             let mut call = BlockDecl {
                 slug: check_slug(slug, lineno)?,
-                block_type: check_type(ty, lineno)?,
+                block_type: callee,
                 title: None,
                 args: Vec::new(),
                 comment: None,
@@ -416,7 +566,7 @@ fn parse_ident_statement(
             // closed on this same line it is the statement comment.
             call.comment = comment;
             if outcome.closed {
-                items.push(Item::Block(call));
+                items.push(finish_call(call, in_template, lineno)?);
             } else {
                 *open_call = Some(call);
             }

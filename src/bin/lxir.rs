@@ -214,15 +214,23 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["--json", path] | [path, "--json"] => (true, *path),
         _ => return Err("usage: lxir check [--json] <module.lxir>".into()),
     };
-    // Full static validation: parse (syntax + references), then types,
-    // ports, and wire directions against the builtin table.
+    // Full static validation: parse (syntax + references), then template
+    // expansion, then types, ports, and wire directions against the
+    // builtin table. Counts describe the source; the deep checks run on
+    // the expanded form (what compile will see).
     let checked = load_module(path).and_then(|m| {
-        lxir::ir::validate_ports(&m)
-            .map(|()| m)
+        m.expand()
+            .and_then(|x| x.validate().map(|()| x))
+            .and_then(|x| lxir::ir::validate_ports(&x).map(|()| x))
+            .map(|x| (m, x))
             .map_err(|e| (path.to_string(), e))
     });
+    let count =
+        |m: &Module, f: fn(&lxir::ir::Item) -> bool| m.items.iter().filter(|i| f(i)).count();
     match checked {
-        Ok(m) => {
+        Ok((m, x)) => {
+            let templates = count(&m, |i| matches!(i, lxir::ir::Item::Template(_)));
+            let instances = count(&m, |i| matches!(i, lxir::ir::Item::Instance(_)));
             if json {
                 println!(
                     "{}",
@@ -231,6 +239,8 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
                         "wires": m.wire_pairs().len(), "sets": m.sets().count(),
                         "lets": m.lets().count(), "removed": m.removed().count(),
                         "moved": m.moved().count(),
+                        "templates": templates, "instances": instances,
+                        "expanded_blocks": x.blocks().count(),
                     }})
                 );
             } else {
@@ -245,6 +255,12 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
                     m.removed().count(),
                     m.moved().count()
                 );
+                if templates + instances > 0 {
+                    println!(
+                        "    {templates} templates, {instances} instances -> {} blocks expanded",
+                        x.blocks().count()
+                    );
+                }
             }
             Ok(ExitCode::SUCCESS)
         }

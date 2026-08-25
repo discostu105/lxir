@@ -114,9 +114,20 @@ types) contradict each other. Results and methodology:
 
 ## Stufe 1 — Templates
 
-Instantiate one definition N times (`template jalousie(...)` +
-`instance`), slug-namespaced, lockfile-aware. Design open: parameter
-passing, per-instance extern binding.
+- [x] Templates 2026-08-25 (D23): `template fassade(jalousie:
+      AutoJalousie, schwelle = 28, pos = 70) … end` declares a reusable
+      body; `sued = fassade(jalousie: jal_sued, pos: 55)` instantiates it
+      (lowercase callee = template, PascalCase = block type). Pure macro
+      expansion before compile: body slug `hoch` becomes `sued_hoch`, and
+      the **expanded** slug keys the lockfile — re-instantiation never
+      re-mints, body edits mint only the additions per instance,
+      `removed`/`moved` apply per expanded slug. Object params pass slugs
+      (annotation checked against the declared type when known); value
+      params default and are overridable with literals or `let` refs; free
+      body identifiers capture module externs/lets. Body limited to
+      blocks/wires/sets/comments — nesting and template-local
+      `let`/`extern` deferred. Spec: [ir-spec.md](ir-spec.md), rationale:
+      design.md D23.
 
 ## Stufe 2 — Expression sugar
 

@@ -1,0 +1,217 @@
+//! Template expansion (D23): a pure source-to-source pass replacing
+//! `template` declarations and their instantiations with plain statements
+//! before anything downstream runs. Body slug `b` in instance `sued`
+//! becomes `sued_b`, object parameters substitute to the passed slugs,
+//! value parameters substitute like shadowing `let`s, and everything else
+//! passes through untouched — the lockfile, compiler, and diff only ever
+//! see the expanded form, so an instance's blocks are pinned exactly like
+//! hand-written ones.
+
+use crate::error::{Error, Result};
+use crate::ir::ast::{
+    ArgItem, Binding, BindingKind, BlockDecl, Item, Module, PortRef, SetDecl, TemplateDecl,
+    TemplateParam, Value, WireDecl,
+};
+use std::collections::BTreeMap;
+
+impl Module {
+    /// The module with every template instantiated: `Template` items drop
+    /// (they declare nothing), each `Instance` becomes its expansion, all
+    /// other items pass through. A module without templates expands to a
+    /// plain clone. Name resolution of the result is the caller's job
+    /// ([`Module::validate`]) — expansion only checks what it needs.
+    pub fn expand(&self) -> Result<Module> {
+        if !self
+            .items
+            .iter()
+            .any(|i| matches!(i, Item::Template(_) | Item::Instance(_)))
+        {
+            return Ok(self.clone());
+        }
+        let mut templates: BTreeMap<&str, &TemplateDecl> = BTreeMap::new();
+        for item in &self.items {
+            if let Item::Template(t) = item
+                && templates.insert(&t.name, t).is_some()
+            {
+                return Err(Error::Compile(format!("duplicate template `{}`", t.name)));
+            }
+        }
+        let mut items = Vec::new();
+        for item in &self.items {
+            match item {
+                Item::Template(_) => {}
+                Item::Instance(call) => {
+                    let Some(t) = templates.get(call.block_type.as_str()) else {
+                        return Err(Error::Compile(format!(
+                            "`{} = {name}(…)` instantiates unknown template `{name}`",
+                            call.slug,
+                            name = call.block_type
+                        )));
+                    };
+                    items.extend(self.instantiate(t, call)?);
+                }
+                other => items.push(other.clone()),
+            }
+        }
+        Ok(Module { items })
+    }
+
+    fn instantiate(&self, t: &TemplateDecl, call: &BlockDecl) -> Result<Vec<Item>> {
+        let ctx = format!("in `{} = {}(…)`", call.slug, call.block_type);
+        let fail = |m: String| Error::Compile(format!("{ctx}: {m}"));
+
+        // Bind arguments: object parameters to the passed slugs (type
+        // annotation checked where the slug's declaration is visible),
+        // value parameters to the given value or their default.
+        let mut objects: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut values: BTreeMap<&str, Value> = t
+            .params
+            .iter()
+            .filter_map(|p| match p {
+                TemplateParam::Value { name, default } => Some((name.as_str(), default.clone())),
+                TemplateParam::Object { .. } => None,
+            })
+            .collect();
+        for binding in call.bindings() {
+            let Some(p) = t.params.iter().find(|p| p.name() == binding.port) else {
+                return Err(fail(format!("unknown parameter `{}`", binding.port)));
+            };
+            match (p, &binding.kind) {
+                (TemplateParam::Object { name, block_type }, BindingKind::Param(Value::Ref(s))) => {
+                    if let Some(declared) = self.declared_type(s) {
+                        if declared != block_type {
+                            return Err(fail(format!(
+                                "`{s}` is a {declared}, but parameter `{name}` \
+                                 expects a {block_type}"
+                            )));
+                        }
+                    } else if self.items.iter().any(|i| {
+                        matches!(i, Item::Instance(other) if other.slug == *s)
+                            || matches!(i, Item::Template(other) if other.name == *s)
+                    }) {
+                        return Err(fail(format!(
+                            "`{s}` is a template or instance, not an object — pass one \
+                             of an instance's blocks by its expanded name (`{s}_<block>`)"
+                        )));
+                    }
+                    objects.insert(name, s);
+                }
+                (TemplateParam::Object { name, .. }, _) => {
+                    return Err(fail(format!(
+                        "object parameter `{name}` takes an extern or block slug"
+                    )));
+                }
+                (TemplateParam::Value { name, .. }, BindingKind::Param(v)) => {
+                    values.insert(name, v.clone());
+                }
+                (TemplateParam::Value { name, .. }, BindingKind::Wire(_)) => {
+                    return Err(fail(format!(
+                        "value parameter `{name}` takes a number, string, or constant"
+                    )));
+                }
+            }
+        }
+        for p in &t.params {
+            if let TemplateParam::Object { name, .. } = p
+                && !objects.contains_key(name.as_str())
+            {
+                return Err(fail(format!("object parameter `{name}` must be given")));
+            }
+        }
+
+        let body_slugs: Vec<&str> = t
+            .body
+            .iter()
+            .filter_map(|i| match i {
+                Item::Block(b) => Some(b.slug.as_str()),
+                _ => None,
+            })
+            .collect();
+        let map_slug = |s: &str| -> String {
+            if body_slugs.contains(&s) {
+                format!("{}_{s}", call.slug)
+            } else if let Some(o) = objects.get(s) {
+                (*o).to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        let map_ref = |r: &PortRef| PortRef {
+            slug: map_slug(&r.slug),
+            port: r.port.clone(),
+        };
+        let map_value = |v: &Value| -> Result<Value> {
+            if let Value::Ref(n) = v {
+                if let Some(val) = values.get(n.as_str()) {
+                    return Ok(val.clone());
+                }
+                if objects.contains_key(n.as_str()) {
+                    return Err(fail(format!(
+                        "object parameter `{n}` used as a value — reference one of its \
+                         ports (`{n}.<Port>`) or a value parameter instead"
+                    )));
+                }
+            }
+            Ok(v.clone())
+        };
+
+        let mut out = Vec::new();
+        for item in &t.body {
+            match item {
+                Item::Block(b) => {
+                    let mut args = Vec::with_capacity(b.args.len());
+                    for arg in &b.args {
+                        match arg {
+                            ArgItem::Binding(x) => args.push(ArgItem::Binding(Binding {
+                                port: x.port.clone(),
+                                kind: match &x.kind {
+                                    BindingKind::Param(v) => BindingKind::Param(map_value(v)?),
+                                    BindingKind::Wire(r) => BindingKind::Wire(map_ref(r)),
+                                },
+                                comment: x.comment.clone(),
+                            })),
+                            ArgItem::Comment(c) => args.push(ArgItem::Comment(c.clone())),
+                        }
+                    }
+                    out.push(Item::Block(BlockDecl {
+                        slug: format!("{}_{}", call.slug, b.slug),
+                        block_type: b.block_type.clone(),
+                        title: b.title.clone(),
+                        args,
+                        comment: b.comment.clone(),
+                        close_comment: b.close_comment.clone(),
+                    }));
+                }
+                Item::Wire(w) => out.push(Item::Wire(WireDecl {
+                    to: map_ref(&w.to),
+                    from: map_ref(&w.from),
+                    comment: w.comment.clone(),
+                })),
+                Item::Set(s) => out.push(Item::Set(SetDecl {
+                    target: map_ref(&s.target),
+                    value: map_value(&s.value)?,
+                    comment: s.comment.clone(),
+                })),
+                // Template-source commentary, not per-instance content.
+                Item::Comment(_) => {}
+                other => {
+                    return Err(fail(format!(
+                        "template `{}` carries an unexpected {other:?} in its body",
+                        t.name
+                    )));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The declared type of a top-level extern or managed block, if the
+    /// slug names one.
+    fn declared_type(&self, slug: &str) -> Option<&str> {
+        self.items.iter().find_map(|i| match i {
+            Item::Extern(e) if e.slug == slug => Some(e.block_type.as_str()),
+            Item::Block(b) if b.slug == slug => Some(b.block_type.as_str()),
+            _ => None,
+        })
+    }
+}

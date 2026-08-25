@@ -513,6 +513,192 @@ fn incremental_adopt_refuses_claimed_or_unverified_identities() {
     assert!(err.to_string().contains("builtin table"), "{err}");
 }
 
+const FASSADE_MODULE: &str = "\
+extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+extern wind_alarm = VirtualIn(iname: \"VI2\")\n\
+extern sonne = VirtualIn(iname: \"VI3\")\n\
+extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+\n\
+template fassade(jalousie: AutoJalousie, schwelle = 28, pos = 70)\n\
+\thoch = GreaterEqual(Input1: aussentemp.Q, Input2: schwelle)\n\
+\n\
+\tbeschatten = And(I1: hoch.Q, I2: sonne.Q)\n\
+\n\
+\tjalousie.AutoShade <- beschatten.Q\n\
+\tjalousie.Safety <- wind_alarm.Q\n\
+\n\
+\tjalousie.TargetPos = pos\n\
+end\n\
+\n\
+sued = fassade(jalousie: jal_sued)\n";
+
+#[test]
+fn templates_expand_with_locked_identities() {
+    let base = base();
+    let module = Module::parse(FASSADE_MODULE).unwrap();
+
+    // The canonical form keeps the template intact and is a fixpoint
+    // (call arguments canonicalize to one per line, so the compact
+    // fixture is not itself canonical).
+    let text = module.to_text();
+    assert_eq!(
+        Module::parse(&text).unwrap(),
+        module,
+        "parse ∘ to_text = id"
+    );
+    assert_eq!(Module::parse(&text).unwrap().to_text(), text, "fixpoint");
+    assert!(
+        text.contains("template fassade(jalousie: AutoJalousie, schwelle = 28, pos = 70)"),
+        "{text}"
+    );
+    assert!(text.contains("\tjalousie.TargetPos = pos\nend"), "{text}");
+
+    // Compiling sees only the expansion: instance `sued` owns two blocks
+    // under their expanded, lockfile-keyed names.
+    let mut lock = Lockfile::new();
+    let out = compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.objects.keys().collect::<Vec<_>>(),
+        ["sued_beschatten", "sued_hoch"]
+    );
+
+    // The captured externs and the object parameter resolved: AutoShade
+    // fed by the instance's And, Safety by the wind alarm, TargetPos 70.
+    let jal = |doc: &LoxoneDoc| {
+        let objs = doc.objects();
+        let o = objs
+            .iter()
+            .find(|o| o.block_type == "AutoJalousie")
+            .unwrap();
+        lxir::doc::ports(doc.element_at(&o.path).unwrap())
+    };
+    let ports = jal(&out);
+    let target = ports.iter().find(|p| p.key == "TargetPos").unwrap();
+    assert_eq!(target.def.as_deref(), Some("70"));
+    let wired: usize = ports.iter().map(|p| p.inputs.len()).sum();
+    assert_eq!(wired, 2);
+
+    // Fixpoint, and value overrides re-parameterize without re-minting.
+    let again = compile(&out, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(out.to_bytes(), again.to_bytes());
+    let tuned = Module::parse(&FASSADE_MODULE.replace(
+        "sued = fassade(jalousie: jal_sued)",
+        "sued = fassade(jalousie: jal_sued, schwelle: 30, pos: 55)",
+    ))
+    .unwrap();
+    let next_obj = out.counters().next_obj;
+    let tuned_out = compile(&base, &tuned, &mut lock, &opts()).unwrap();
+    assert_eq!(tuned_out.counters().next_obj, next_obj, "nothing re-minted");
+    let ports = jal(&tuned_out);
+    assert_eq!(
+        ports
+            .iter()
+            .find(|p| p.key == "TargetPos")
+            .unwrap()
+            .def
+            .as_deref(),
+        Some("55")
+    );
+
+    // Growing the template body mints only the addition; shrinking it is
+    // the usual vanished-slug error, per instance.
+    let grown = Module::parse(&FASSADE_MODULE.replace(
+        "\tjalousie.TargetPos = pos\n",
+        "\tjalousie.TargetPos = pos\n\twarnung = Not(I: hoch.Q)\n",
+    ))
+    .unwrap();
+    let grown_out = compile(&base, &grown, &mut lock, &opts()).unwrap();
+    assert!(lock.objects.contains_key("sued_warnung"));
+    assert_eq!(grown_out.counters().next_obj, next_obj + 1);
+    let err = compile(&base, &module, &mut lock.clone(), &opts()).unwrap_err();
+    assert!(err.to_string().contains("sued_warnung"), "{err}");
+}
+
+#[test]
+fn two_instances_get_disjoint_identities() {
+    let src = "\
+extern vi_a = VirtualIn(iname: \"VI1\")\n\
+extern vi_b = VirtualIn(iname: \"VI2\")\n\
+\n\
+template melder(quelle: VirtualIn, schwelle = 1)\n\
+\talarm = GreaterEqual(Input1: quelle.Q, Input2: schwelle)\n\
+end\n\
+\n\
+a = melder(quelle: vi_a)\n\
+b = melder(quelle: vi_b, schwelle: 5)\n";
+    let module = Module::parse(src).unwrap();
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.objects.keys().collect::<Vec<_>>(),
+        ["a_alarm", "b_alarm"]
+    );
+    assert_ne!(lock.objects["a_alarm"].uuid, lock.objects["b_alarm"].uuid);
+    let fixpoint = compile(&out, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(out.to_bytes(), fixpoint.to_bytes());
+}
+
+#[test]
+fn template_misuse_is_reported() {
+    let fails = |src: &str, needle: &str| {
+        let err = match Module::parse(src) {
+            Err(e) => e.to_string(),
+            Ok(m) => compile(&base(), &m, &mut Lockfile::new(), &opts())
+                .unwrap_err()
+                .to_string(),
+        };
+        assert!(err.contains(needle), "`{needle}` not in: {err}");
+    };
+    let tmpl = "template t(x: VirtualIn, n = 1)\n\ty = Not(I: x.Q)\nend\n";
+    let vi = "extern vi = VirtualIn(iname: \"VI1\")\n";
+
+    fails("a = nirgends(x: 1)\n", "unknown template `nirgends`");
+    fails(&format!("{tmpl}a = t()\n"), "`x` must be given");
+    fails(
+        &format!("{vi}{tmpl}a = t(x: vi, oops: 2)\n"),
+        "unknown parameter `oops`",
+    );
+    fails(
+        &format!("{vi}{tmpl}a = t(x: vi, x: vi)\n"),
+        "duplicate argument",
+    );
+    fails(
+        &format!("{vi}{tmpl}a = t(x: 5)\n"),
+        "takes an extern or block slug",
+    );
+    fails(&format!("{vi}{tmpl}a = t(x: vi, n: vi.Q)\n"), "not a port");
+    fails(
+        &format!("{vi}{tmpl}a = t(\"Label\", x: vi)\n"),
+        "no label string",
+    );
+    fails(
+        "template t(x: VirtualIn)\n\tlet n = 1\nend\n",
+        "not allowed inside a template body",
+    );
+    fails(
+        "template a(x: VirtualIn)\n\ty = Not(I: x.Q)\nend\n\
+           template b(x: VirtualIn)\n\tz = a(x: x)\nend\n",
+        "cannot instantiate another template",
+    );
+    fails("use fassade(jal)\n", "v0 syntax");
+    fails(
+        "template t(x: VirtualIn)\n\ty = Not(I: x.Q)\n",
+        "missing `end`",
+    );
+    fails("end\n", "`end` without an open `template`");
+    // The instance slug names no object; the message points at the
+    // expanded names.
+    fails(
+        &format!("{vi}{tmpl}a = t(x: vi)\nb = Not(I: a.Q)\n"),
+        "template instance",
+    );
+    // A wrong object-arg type is caught where the declaration is known.
+    fails(
+        &format!("extern j = AutoJalousie(title: \"X\")\n{tmpl}a = t(x: j)\n"),
+        "expects a VirtualIn",
+    );
+}
+
 #[test]
 fn grown_gate_inputs_are_refused() {
     // Oracle-verified (docs/oracle-wine.md): Loxone Config 17 silently

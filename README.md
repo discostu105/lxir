@@ -39,6 +39,12 @@ drawn — UUIDs, counters, per-port connectors, canvas layout — and records
 every identity it minted in a lockfile, so the next compile changes only
 what you changed.
 
+Rules you repeat become templates: `template fassade(jalousie:
+AutoJalousie, pos = 70) … end` declares the body once, `sued =
+fassade(jalousie: jal_sued)` stamps it out per facade. Each instance's
+blocks get stable expanded slugs (`sued_hoch`) in the lockfile, so
+re-instantiating never re-mints identities.
+
 ## Why
 
 A Miniserver's entire behavior lives in one opaque `.Loxone` XML file,

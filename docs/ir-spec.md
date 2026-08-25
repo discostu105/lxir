@@ -18,7 +18,7 @@ errors.
 ```ebnf
 module     = { line } ;
 line       = comment | let | extern | block-head | arg-line
-           | wire | set | removed | moved | blank ;
+           | wire | set | removed | moved | template | instance | blank ;
 
 comment    = "#" any-text ;                        (* whole line *)
 let        = "let" slug "=" ( number | string ) [ comment ] ;
@@ -39,6 +39,15 @@ wire       = slug "." port "<-" slug "." port [ comment ] ;   (* extern target *
 set        = slug "." port "=" value [ comment ] ;            (* extern target *)
 removed    = "removed" slug [ comment ] ;
 moved      = "moved" slug "->" slug [ comment ] ;
+
+template   = "template" slug "(" [ params ] ")" [ comment ]
+             { comment | block-head | arg-line | wire | set }
+             "end" [ comment ] ;
+params     = param { "," param } ;
+param      = slug ":" type                         (* object parameter *)
+           | slug "=" ( number | string ) ;        (* value parameter, default *)
+instance   = slug "=" slug "(" [ inst-args ] ")" [ comment ] ;
+inst-args  = param-name ":" ( slug | value ) { "," … } [ "," ] ;
 
 slug       = lowercase-letter { lowercase-letter | digit | "_" } ;
 type       = uppercase-letter { letter | digit } ;          (* PascalCase *)
@@ -65,9 +74,12 @@ Notes:
   it must name a `let` in the same module. A dotted identifier
   (`slug.Port`) is always a **port reference**. String values are always
   quoted.
-- The keywords `let`, `extern`, `removed`, `moved` are reserved, as are
-  v0's `block`, `wire`, and `set` (migration errors) — none can be used as
-  a slug in statement position.
+- The keywords `let`, `extern`, `removed`, `moved`, `template`, and
+  `end` are reserved, as are v0's `block`, `wire`, `set`, and `use`
+  (migration errors) — none can be used as a slug in statement position.
+- An instantiation is distinguished from a block declaration by the case
+  of the callee: `sued = fassade(…)` (lowercase = template name) vs
+  `hoch = GreaterEqual(…)` (PascalCase = block type).
 
 ## Statements
 
@@ -255,6 +267,46 @@ deleted. It is an error when neither slug is in the lockfile (typo guard),
 when the old slug is still declared, or when moves are chained
 (`a -> b`, `b -> c`).
 
+### `template` — a reusable, parameterized body
+
+```text
+template fassade(jalousie: AutoJalousie, schwelle = 28, pos = 70)
+	hoch = GreaterEqual(I2: schwelle)
+	hoch.I1 <- temp_aussen.AQ
+	beschatten = And(I1: hoch, I2: jalousie.Sd)
+	jalousie.TargetPos = pos
+end
+
+sued = fassade(jalousie: jal_sued)
+west = fassade(jalousie: jal_west, pos: 55)
+```
+
+A `template` declares a body of blocks, wires and sets once; each
+instantiation stamps out an independent copy. The lowercase callee is what
+distinguishes an instantiation from a block declaration: `sued =
+fassade(…)` calls the template `fassade`, while `hoch = GreaterEqual(…)`
+declares a `GreaterEqual` block (block types are PascalCase).
+
+Parameters come in two forms. An **object parameter** (`jalousie:
+AutoJalousie`) is required at every call site and passes a slug; the
+annotation is checked against the argument's declared type when it is
+known. A **value parameter** (`pos = 70`) carries a default and may be
+overridden with a literal or a `let` reference. Free identifiers in the
+body that are not parameters capture the module's surrounding names
+(externs, lets, blocks), like any other reference.
+
+Expansion is pure macro substitution before compile: body slug `hoch` in
+instance `sued` becomes `sued_hoch`, and that **expanded slug is the
+lockfile key**. Re-instantiating therefore never re-mints; editing the
+body mints only what is new in each instance; `removed` and `moved` apply
+per expanded slug (`removed sued_hoch`). Reference an instance's blocks by
+their expanded names.
+
+The body may contain only block declarations, wires, sets and comments —
+no nesting, no template-local `let`/`extern` (deferred, D23). `template`
+and `end` are reserved words; `use` is reserved for the v0 migration
+error.
+
 ## Name resolution and validation
 
 - Externs, blocks, and `let` constants share one namespace per module;
@@ -298,7 +350,7 @@ with remedies in [agents.md](agents.md#errors-and-remedies).
 ## Versioning
 
 This is v1; there are no v0 files in the wild (pre-release revision).
-Anything not specified here (templates, expressions, imports, multi-file
-modules, composite match qualifiers, unit-suffixed values) is future work —
+Anything not specified here (expressions, imports, template nesting and
+template-local declarations, unit-suffixed values) is future work —
 see [roadmap.md](roadmap.md). Future versions will keep v1 files parsing
 unchanged or provide a migration tool.
