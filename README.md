@@ -105,6 +105,14 @@ lxir observe current.Loxone          # port-direction evidence (JSON)
 lxir roundtrip current.Loxone        # byte-fidelity self-check
 ```
 
+For a repo holding your `.lxir` sources, [examples/ci.sh](examples/ci.sh)
+is the CI check path: parse/validate, canonical formatting, lock currency,
+byte-determinism, optionally byte-comparison against a committed expected
+output — and `--sync` mode, which additionally requires the sources to
+equal the deployed state (empty semantic diff, drift green). This repo's
+own [workflow](.github/workflows/ci.yml) runs it against the shipped
+example.
+
 ## Quickstart (library)
 
 ```rust

@@ -163,8 +163,15 @@ arithmetic).
 
       Time-dependent logic needs simulated-clock support (`clock 23:00`),
       a known gap in the current simulator.
-- [ ] CI recipe: `check` + `fmt --check` + compile against a pinned base +
-      `diff --exit-code` against the committed expected output.
+- [x] CI recipe 2026-08-25: `examples/ci.sh`, a tree-untouched check path
+      for a repo holding lxir sources — `check`, `fmt --check`, lock
+      currency (compile against a lock copy must change nothing),
+      byte-determinism (second compile identical), optional
+      byte-comparison against a committed `EXPECTED` output; `--sync`
+      additionally requires empty semantic diff and green drift against
+      the base (the post-push/download state). Exercised by
+      `.github/workflows/ci.yml` on the shipped example, alongside cargo
+      test / clippy / fmt.
 
 ## Stufe 4 — Multi-module projects
 
