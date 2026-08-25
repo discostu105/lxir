@@ -108,6 +108,15 @@ is rendered inline (`<Key>2B35</Key>`).
   stored state: round-tripped verbatim, never regenerated, and a
   stripped flag is accepted without repair or wire loss
   ([oracle-wine.md](oracle-wine.md)).
+- A `<Co>` may carry `Inv="true"` — the GUI's input inversion. Its
+  dominant real-world use is not inverting wires: **unwired**, it turns
+  the constant-0 input into a constant 1, and that is how the GUI
+  encodes boolean checkbox settings like an enabled Remanenz (every one
+  of the house's 23 `LightController2`s, its `PushButton`s and
+  `DayTimer`s carry `Inv="true"` on unwired `Remanence`). Wired, it
+  negates the incoming signal. Either way the connector is GUI-owned in
+  lxir (design decision D20): carried verbatim, refused as a source-
+  declared wire/value target.
 
 ## UUID anatomy
 

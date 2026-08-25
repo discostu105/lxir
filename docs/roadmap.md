@@ -41,6 +41,16 @@ types) contradict each other. Results and methodology:
       managed-type blocks adopt; all 8 refusals are `Inv=`.
       Remaining leads: loxforum.com and the Loxone Library (both need
       free-account logins).
+- [x] Second 2026-08-25 batch: `LightController2` (75 connectors, the
+      house's flagship type), `Switch2Button`, `CentralShade`,
+      `CentralLight`, `Code16` — modern house-V273 element orders, zero
+      direction conflicts ([connector-db.md](connector-db.md)). Together
+      with D20 (GUI-owned `Inv=` connectors, [design.md](design.md)) the
+      house config now adopts **100 of 100** managed-type blocks. The
+      corpus doubles as a mechanized counterexample hunt:
+      `LXIR_CORPUS=corpus/web cargo test --release --test corpus`
+      re-checks every admitted classification against every corpus
+      config.
 
 ## Stufe 0 — Hardening the v0 pipeline
 
@@ -61,7 +71,8 @@ types) contradict each other. Results and methodology:
       rig has full control; Wine on Linux replaces the Windows-VM plan
       entirely).
 - [ ] More verified block types: timers (`TimerDelay`…), flip-flops,
-      `Formula`, `Switch` — prioritized by what real modules need.
+      `Switch` — prioritized by what real modules need. (The 2026-08-25
+      batches covered everything the house needs; see Stufe −1.)
 - [ ] Minting ports for extern types with observed (not just builtin)
       connector indexes, lifting the "port must exist in base" limitation.
 - [x] Preserve trailing comments and comments inside block bodies (D10).

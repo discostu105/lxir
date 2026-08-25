@@ -413,8 +413,13 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
     assert!(lock.externals.contains_key("summe"));
     let out = compile(&existing, &module, &mut lock.clone(), &opts()).unwrap();
     assert!(lxir::diff::diff(&existing, &out).is_empty());
+}
 
-    // The GUI's per-connector input inversion has no IR representation yet.
+#[test]
+fn adopt_carries_gui_owned_inv_connectors_verbatim() {
+    // An `Inv=`-carrying connector is GUI-owned (D20): the block still
+    // adopts, the connector's wire stays out of the source, and the
+    // rebuild re-emits the whole <Co> verbatim — flag and wire included.
     let mut existing = adopted_config();
     let path = existing
         .objects()
@@ -430,28 +435,57 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
         .find(|c| c.name == "Co")
         .unwrap()
         .set_attr("Inv", "true");
-    let (module, lock, report) = adopt(&existing).unwrap();
-    let refused: Vec<&String> = report
-        .refused
-        .iter()
-        .filter(|r| !r.contains("AutoJalousie"))
-        .collect();
-    assert_eq!(refused.len(), 1, "{:?}", report.refused);
-    assert!(refused[0].contains("`Inv`"), "{}", refused[0]);
-    assert!(
-        refused[0].contains("Not block"),
-        "hints at the workaround: {}",
-        refused[0]
-    );
-    assert!(lock.objects.contains_key("summe"), "Formula still adopts");
-    // The refused block's incoming wire from adopted logic must appear as
-    // a `<-` statement — per-instance exclusion, not per-type (a type-based
-    // filter once made such wires vanish from the view entirely).
-    assert!(
-        module.to_text().contains("heiss.Input1 <- summe.AQ"),
-        "{}",
-        module.to_text()
-    );
+    let (module, mut lock, report) = adopt(&existing).unwrap();
+    // Only the fixture's standing partial-AutoJalousie refusal remains.
+    assert_eq!(report.refused.len(), 1, "{:?}", report.refused);
+    assert!(report.refused[0].contains("AutoJalousie"));
+    assert!(lock.objects.contains_key("heiss"), "the block still adopts");
+    // The inverted Input1 and its wire are GUI content now — absent from
+    // the source (restating the wire would silently invert its meaning);
+    // the untouched Input2 parameter is still lifted.
+    let text = module.to_text();
+    assert!(!text.contains("Input1: summe.AQ"), "{text}");
+    assert!(text.contains("Input2: 50"), "{text}");
+    // The rebuild is still a semantic no-op: the carried <Co> brings the
+    // flag and the wire back verbatim.
+    let out = compile(&existing, &module, &mut lock, &opts()).unwrap();
+    assert!(lxir::diff::diff(&existing, &out).is_empty());
+    let heiss = out
+        .objects()
+        .into_iter()
+        .find(|o| o.block_type == "GreaterEqual")
+        .unwrap();
+    let co = out
+        .element_at(&heiss.path)
+        .unwrap()
+        .child_elements()
+        .find(|c| c.name == "Co")
+        .unwrap();
+    assert_eq!(co.attr("Inv"), Some("true"));
+    assert_eq!(co.attr("Nc"), Some("1"), "the GUI wire survives");
+
+    // Touching a GUI-owned connector from source is refused, both as a
+    // wire sink and as a parameter binding.
+    let wire_src = "\
+extern sonne = VirtualIn(iname: \"VI3\")
+extern heiss = GreaterEqual(title: \"heiss\")
+heiss.Input1 <- sonne.Q
+";
+    let m = Module::parse(wire_src).unwrap();
+    let err = compile(&existing, &m, &mut Lockfile::new(), &opts())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Inv"), "{err}");
+    assert!(err.contains("GUI-owned"), "{err}");
+    let (module, mut lock, _) = adopt(&existing).unwrap();
+    let mut text = module.to_text();
+    text = text.replace("\tInput2: 50,", "\tInput1: 5,\n\tInput2: 50,");
+    let m = Module::parse(&text).unwrap();
+    let err = compile(&existing, &m, &mut lock, &opts())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Inv"), "{err}");
+    assert!(err.contains("cannot be set"), "{err}");
 }
 
 #[test]

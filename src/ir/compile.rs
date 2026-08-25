@@ -68,6 +68,13 @@ struct Residue {
     attrs: Vec<(String, String)>,
     /// [`GUI_OWNED_CHILDREN`] subtrees in element order.
     children: Vec<Element>,
+    /// GUI-owned connectors (design decision D20): the whole `<Co>` of
+    /// every `Inv=`-carrying connector, keyed by `K`, re-emitted verbatim
+    /// at its spec position — inversion flag, `Def=`, and wires included.
+    /// The IR is refused from wiring or setting these (see [`add_wire`] /
+    /// [`apply_def`] and the param guard in the build loop), so carrying
+    /// them can never contradict what the source expresses.
+    gui_ports: BTreeMap<String, Element>,
     /// `FLG=` wire flags, keyed by (sink port UUID, source port UUID).
     /// Miniserver/app-created wire metadata: the oracle probe (2026-08-25)
     /// showed Loxone Config round-trips the flag verbatim, never
@@ -107,6 +114,11 @@ fn harvest_residue(el: &Element) -> Residue {
                         ))
                     })
             })
+            .collect(),
+        gui_ports: el
+            .child_elements()
+            .filter(|c| c.name == "Co" && c.attr("Inv").is_some())
+            .filter_map(|co| Some((co.attr_decoded("K")?.into_owned(), co.clone())))
             .collect(),
     }
 }
@@ -370,6 +382,21 @@ pub fn compile(
             }
         }
         for key in &plan.keys {
+            // A GUI-owned (`Inv=`) connector is re-emitted verbatim at its
+            // spec position (D20); a parameter binding on it would be
+            // silently overridden, so it is refused instead.
+            if let Some(carried) = res.and_then(|r| r.gui_ports.get(key)) {
+                if managed_defs.contains_key(&(block.slug.clone(), key.clone())) {
+                    return Err(Error::Compile(format!(
+                        "block `{}`: connector `{key}` carries the GUI's input \
+                         inversion (`Inv=`) and is GUI-owned — its value cannot \
+                         be set from source; change it in Loxone Config instead",
+                        block.slug
+                    )));
+                }
+                el.push_child(carried.clone());
+                continue;
+            }
             let mut co = Element::new("Co");
             co.set_attr("K", key);
             if let Some(def) = managed_defs.get(&(block.slug.clone(), key.clone())) {
@@ -684,10 +711,28 @@ fn add_wire(
         .child_elements_mut()
         .find(|c| c.name == "Co" && c.attr("U") == Some(to_port))
         .ok_or_else(|| Error::Compile(format!("wire sink port `{to_port}` not found")))?;
-    let duplicate = co
-        .child_elements()
-        .any(|i| i.name == "In" && i.attr("Input") == Some(from_port));
-    if !duplicate {
+    if co.attr("Inv").is_some() {
+        return Err(Error::Compile(format!(
+            "wire sink connector `{}` carries the GUI's input inversion \
+             (`Inv=`) and is GUI-owned — a declared wire into it would be \
+             silently inverted; remove the inversion in Loxone Config first",
+            co.attr_decoded("K").unwrap_or_default()
+        )));
+    }
+    // A declared wire always ends up as the LAST <In> of its sink: an
+    // already-present duplicate (first compile after adopt — the wire
+    // exists in the base) is moved there instead of re-created, keeping
+    // its attributes and making the first compile byte-identical to every
+    // later one (which tears the wire down and re-appends it). `<In>`
+    // order is semantically unordered — the GUI rewrites it on save.
+    let existing = co.children.iter().position(|n| {
+        matches!(n, crate::xml::Node::Element(e)
+            if e.name == "In" && e.attr("Input") == Some(from_port))
+    });
+    if let Some(pos) = existing {
+        let node = co.children.remove(pos);
+        co.children.push(node);
+    } else {
         let mut input = Element::new("In");
         input.set_attr("Input", from_port);
         if let Some(v) = flg {
@@ -739,6 +784,14 @@ fn apply_def(
         .child_elements_mut()
         .find(|c| c.name == "Co" && c.attr("U") == Some(port_uuid))
         .ok_or_else(|| Error::Compile(format!("set target port `{port_uuid}` not found")))?;
+    if co.attr("Inv").is_some() {
+        return Err(Error::Compile(format!(
+            "set target connector `{}` carries the GUI's input inversion \
+             (`Inv=`) and is GUI-owned — its value cannot be set from \
+             source; change it in Loxone Config instead",
+            co.attr_decoded("K").unwrap_or_default()
+        )));
+    }
     let original = co.attr_decoded("Def").map(|v| v.into_owned());
     set_attr_ordered(co, "Def", value, &["U"]);
     Ok(original)

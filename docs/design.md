@@ -320,11 +320,12 @@ Anything unverified is an error, not a heuristic:
     on others). Absent-in-base now stays absent in the rebuild.
   - The **allowlist is the boundary of faithfulness**: content is carried
     only if re-emitting it verbatim cannot contradict what the source
-    expresses. `Inv=` (input inversion on a `<Co>`) fails that test — it
-    silently inverts a wire the source declares un-inverted — so it
-    still refuses adoption. Unknown attributes/children likewise still
-    refuse (refuse, never guess); growing the allowlist takes evidence,
-    not pattern-matching.
+    expresses. `Inv=` (input inversion on a `<Co>`) fails that test *as
+    plain residue* — it silently inverts a wire the source declares
+    un-inverted — and originally refused adoption; D20 later carried it
+    by making the whole connector GUI-owned. Unknown attributes/children
+    still refuse (refuse, never guess); growing the allowlist takes
+    evidence, not pattern-matching.
   - **`FLG=` on `<In>` wires joined the carried set** (2026-08-25, same
     day): Miniserver/app-created wire metadata (113 of the house's 880
     wires, mostly API-connector and central-alarm distributions). The
@@ -336,3 +337,29 @@ Anything unverified is an error, not a heuristic:
     contradicts one); it is keyed by (sink port, source port), so a wire
     whose source changes in the module is emitted plain — exactly the
     state the probe validated. Evidence: [oracle-wine.md](oracle-wine.md).
+- **D20 — An `Inv=`-carrying connector is wholly GUI-owned**
+  (2026-08-25). The GUI's input-inversion flag looked like D19's
+  permanent boundary: carrying it as plain residue could contradict the
+  source (a declared wire into an inverted connector silently means its
+  negation). But the house evidence reframed it — **every one of the 23
+  LightController2 instances** carries `Inv="true"` on its *unwired*
+  `Remanence`, i.e. the GUI encodes an enabled Remanenz checkbox by
+  inverting the unwired (constant-0) input so the block reads 1;
+  dropping the flag on rebuild would silently disable state retention
+  across reboots. Decision: a connector carrying
+  `Inv=` becomes GUI-owned as a whole. The rebuild re-emits its entire
+  `<Co>` element verbatim — flag, `Def=`, and `<In>` wires included —
+  and the contradiction is eliminated by construction: the compiler
+  **hard-errors** when the source tries to wire or set such a connector
+  (both managed and extern sinks), and decompile/adopt keep its `Def=`
+  and wires out of the lifted source. The faithfulness rule is
+  unchanged; what changed is the granularity of ownership — like an
+  `AutopilotRule` the GUI owns whole, an inverted connector is a unit
+  the IR references around, never through. This removed the last 31
+  refusals in the house config (23 LightController2, 5 PushButton, both
+  DayTimers, one PulseGen): **all 100 managed-type blocks adopt**.
+  - Rejected alternative — model inversion in the language (`!source.Q`
+    or `inv:` markers): it would make lxir a *second writer* of a flag
+    the GUI edits via checkbox, exactly the ownership conflict externs
+    exist to avoid, for a feature better expressed by an explicit `Not`
+    block when the logic is lxir-authored.

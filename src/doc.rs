@@ -36,6 +36,14 @@ pub struct PortView {
     pub def: Option<String>,
     /// Source port UUIDs of incoming wires (`<In Input=…/>` children).
     pub inputs: Vec<String>,
+    /// The connector carries the GUI's `Inv=` input-inversion flag and is
+    /// therefore **GUI-owned** (design decision D20): the rebuild carries
+    /// the whole `<Co>` verbatim — flag, `Def=`, wires — and the IR is
+    /// refused from wiring or setting it. Unwired, the idiom means
+    /// "constant 1" (how the GUI encodes e.g. an enabled `Remanence`
+    /// checkbox); wired, the wire's meaning is inverted and must not be
+    /// restated in source.
+    pub inv: bool,
 }
 
 /// A resolved wire: source and sink port UUIDs.
@@ -85,6 +93,46 @@ pub const GUI_OWNED_ATTRS: &[&str] = &[
     "Off",
     "UserModes",
     "Desc",
+    // The 2026-08-25 admission batch (LightController2, Switch2Button,
+    // CentralShade/CentralLight, Code16). Corpus survey: each name below
+    // appears on exactly one managed type — no cross-type collisions.
+    // LightController2 per-circuit GUI state: `NameAI<n>=`/`CapAI<n>=`
+    // circuit names and capability flags, `PresM<n>=` presence-mode
+    // membership, `COName=` combined-output name, `T5P=` T5 pairing,
+    // `uuidSeqencing=`/`uuidSeqenceIx=` scene-sequencing state. Only the
+    // observed indexes are listed (0–4 / 0–2 / 0–4) — a sixth lighting
+    // circuit would surface `NameAI5` as a refusal and gets added on that
+    // evidence.
+    "NameAI0",
+    "NameAI1",
+    "NameAI2",
+    "NameAI3",
+    "NameAI4",
+    "CapAI0",
+    "CapAI1",
+    "CapAI2",
+    "PresM0",
+    "PresM1",
+    "PresM2",
+    "PresM3",
+    "PresM4",
+    "COName",
+    "T5P",
+    "uuidSeqencing",
+    "uuidSeqenceIx",
+    // CentralShade/CentralLight `rec=`: the UUID list of the blocks the
+    // central controls, edited in the GUI's central dialog. Same class as
+    // `Modes=`/`SpStates=` — a UUID-list the IR cannot express, gating
+    // *which blocks* the GUI addresses, never what a declared wire or
+    // param means.
+    "rec",
+    // Code16 (the PicoC program block): `Code=` is the program source,
+    // `Task=` its scheduling mode. GUI-authored logic exactly like the
+    // DayTimer `<Entry>` schedule — carried verbatim, never authored.
+    // Promoting `Code` to an attribute parameter (the `Formula=`
+    // precedent) is future work.
+    "Code",
+    "Task",
 ];
 
 /// GUI-owned child elements of block elements (D19), same contract as
@@ -94,8 +142,26 @@ pub const GUI_OWNED_ATTRS: &[&str] = &[
 /// settings, `<COHist>` AutoJalousie history settings, `<Entry>` the
 /// DayTimer schedule entries (authored in the GUI's schedule editor —
 /// real logic the IR cannot express, owned by the GUI like a room
-/// binding).
-pub const GUI_OWNED_CHILDREN: &[&str] = &["IoData", "Display", "PSD", "COHist", "Entry"];
+/// binding). The four LightController2 subtrees are the complete child
+/// inventory of all 45 corpus instances beyond `IoData`/`PSD`/`COHist`,
+/// all GUI-authored — the DayTimer-`<Entry>` precedent exactly:
+/// `<LightscenesC>` holds the lighting-scene definitions (`<LightsceneC>`
+/// moods with per-circuit Q values, authored in the GUI's/app's scene
+/// editor), `<LSConfig>` the scene-behavior settings (`OpM=`/`ScMv=`
+/// reference the scenes' SIDs), `<HCL>` the human-centric-lighting
+/// color-temperature curve, and `<SeqConf>` RGB color sequences (nested
+/// `<seq0>`/`<Sequence>`/`<Col>`, carried wholesale).
+pub const GUI_OWNED_CHILDREN: &[&str] = &[
+    "IoData",
+    "Display",
+    "PSD",
+    "COHist",
+    "Entry",
+    "LightscenesC",
+    "LSConfig",
+    "HCL",
+    "SeqConf",
+];
 
 /// Lookup tables built in one pass over the document.
 #[derive(Debug, Default)]
@@ -104,6 +170,9 @@ pub struct DocIndex {
     pub by_uuid: BTreeMap<String, Vec<usize>>,
     /// Port UUID → (owner object UUID, port key).
     pub port_owner: BTreeMap<String, (String, String)>,
+    /// Port UUIDs of GUI-owned (`Inv=`-carrying) connectors — see
+    /// [`PortView::inv`]. Wires into them are GUI content, never lifted.
+    pub inv_ports: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +270,9 @@ impl LoxoneDoc {
         for obj in self.objects() {
             let el = self.element_at(&obj.path).expect("path from objects()");
             for port in ports(el) {
+                if port.inv {
+                    idx.inv_ports.insert(port.uuid.clone());
+                }
                 idx.port_owner
                     .insert(port.uuid.clone(), (obj.uuid.clone(), port.key.clone()));
             }
@@ -282,6 +354,7 @@ pub fn ports(el: &Element) -> Vec<PortView> {
                     .filter(|i| i.name == "In")
                     .filter_map(|i| i.attr("Input").map(str::to_string))
                     .collect(),
+                inv: co.attr("Inv").is_some(),
             })
         })
         .collect()

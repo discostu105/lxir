@@ -249,6 +249,14 @@ impl Lift {
             {
                 continue; // not representable, stays raw
             }
+            if idx.inv_ports.contains(&w.to_port) {
+                // Wire into a GUI-owned (`Inv=`) connector: the inversion
+                // would silently negate a lifted statement, so the wire is
+                // GUI content — carried verbatim by the rebuild (managed
+                // sink) or left untouched in the base (extern sink), and
+                // its source is not pulled in as an extern.
+                continue;
+            }
             if !seen.insert((w.from_port.clone(), w.to_port.clone())) {
                 continue;
             }
@@ -337,6 +345,12 @@ impl Lift {
             for p in ports(el) {
                 if !is_ident(&p.key) {
                     continue; // not representable, stays raw
+                }
+                if p.inv {
+                    // GUI-owned connector (D20): its Def and wires are
+                    // carried verbatim by the rebuild, never restated in
+                    // source — the Inv flag would silently invert them.
+                    continue;
                 }
                 if let Some(def) = &p.def {
                     args.push(ArgItem::Binding(Binding {

@@ -200,6 +200,61 @@ With this batch the real config adopts **56 of 64** managed-type blocks;
 all 8 remaining refusals are genuine `Inv=` input inversions (five
 PushButton, one PulseGen, both DayTimers).
 
+## The second 2026-08-25 batch: LightController2, Switch2Button, CentralShade, CentralLight, Code16
+
+Analysis rerun over the 145-file corpus (web corpus + the post-push house
+download): per-instance element orders grouped into variants, directions
+from the committed evidence db plus both legacy dbs. Shared result: the
+house's Config-17 (V273) element order is uniform across every house
+instance and canonical; corpus variants are older generations whose
+divergence is pure schema migration — appended keys (`OutputAPI` on
+Switch2Button, `OutOpen`/`OutClose` on CentralShade, `OutActive` on
+CentralLight), one insertion (`I5`–`I8` into LightController2's V259
+order), one param reorder (LightController2 pre-V259, the DayTimer
+story), one swap (Switch2Button `On`/`Reset`). Every key resolved with
+**zero direction conflicts** across all five types.
+
+| Type | Keys | Basis |
+|---|---|---|
+| `LightController2` | 75 | The largest admitted type. 23 house instances, one identical order; 86 corpus occurrences. 17 corpus-sink inputs (`Sel1` ×47, `Brightness` ×19, `Move` ×15); 16 Def-on-every-instance params + 5 connector-map-agreed; `AQ1`–`AQ20`/`Scene`/`OutputReset`/`OutputResetAll` connector-map O (`AQ1` corpus-source ×131); `MoveOn` carries Def everywhere *plus* one sink wire — wire evidence precedes, Input still admits the Def; `OutputAPI` zero-evidence → inert-flag Input |
+| `Switch2Button` | 9 | 49 occurrences; `InputTrigger` sink on every instance, `Q`/`Qon`/`Qoff` corpus-source ×16/×33/×15, `Time` Def everywhere, rest inert-flag |
+| `CentralShade` | 18 | 11 occurrences; `EndUp`/`EndDown`/`AutoShade`/`Safety`/`Gesture` corpus-sink, classic inputs connector-map I, `OutputAPI` connector-map O, appended `OutOpen`/`OutClose` inert-flag Input |
+| `CentralLight` | 24 | 9 occurrences; `Reset`/`On`/`Alarm` corpus-sink, rest connector-map I, `OutputAPI` connector-map O, appended `OutActive` inert-flag Input |
+| `Code16` | 34 | The most stable shape in the corpus: ONE identical element order across V99–V273 (12 instances, 8 files, house included). `AI1`–`AI13` corpus-sink, `TQ1`/`AQ1`–`AQ13`/`TeQ` connector-map O mostly corpus-source, `Remanence` inert-flag |
+
+The batch surfaced three new **GUI-owned content** classes, all carried
+verbatim per D19/D20 (survey: each name appears on exactly one managed
+type — no cross-type collisions):
+
+- LightController2 instance attributes (`NameAI<n>`/`CapAI<n>` circuit
+  names and capabilities, `PresM<n>` presence-mode membership, `COName`,
+  `T5P`, `uuidSeqencing`/`uuidSeqenceIx`) and child subtrees
+  (`<LightscenesC>` scene definitions, `<LSConfig>` scene behavior,
+  `<HCL>` human-centric-lighting curve, `<SeqConf>` RGB sequences — the
+  complete child inventory of all 45 corpus instances).
+- `rec=` on CentralShade/CentralLight: the UUID list of controlled
+  blocks, edited in the GUI's central dialog (the `Modes=` class).
+- `Code=`/`Task=` on Code16 — it is the PicoC *program block*; the
+  program source is GUI-authored logic like the DayTimer `<Entry>`
+  schedule. Promoting `Code` to an attribute parameter (the `Formula=`
+  precedent) is future work.
+
+And one rule extension, **D20** ([design.md](design.md)): an
+`Inv=`-carrying connector is GUI-owned as a whole — its `<Co>` is
+re-emitted verbatim (flag, Def, wires) and the compiler refuses source
+wires/values on it. Every house LightController2 carries `Inv="true"` on
+unwired `Remanence` (the GUI's encoding of the enabled Remanenz
+checkbox), which had made the "genuine inversion" refusal a de-facto
+type blocker. With the batch plus D20 the house config adopts
+**100 of 100** managed-type blocks — zero refusals.
+
+Since this batch the corpus is also a mechanized counterexample hunt:
+`LXIR_CORPUS=corpus/web cargo test --release --test corpus` re-checks
+every admitted classification (no Output observed as sink, no
+Input/Param as source, no Def on Output/Api, no unlisted key
+materialized) and re-verifies that whatever adopts rebuilds as a
+semantic no-op, on every config in the corpus.
+
 ## Growing the table
 
 Add configs to the corpus (any installation helps — foreign corpora

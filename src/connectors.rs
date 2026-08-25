@@ -229,6 +229,220 @@ const DAY_TIMER: &[PortSpec] = &[
     p("OutputAPI", Input),
 ];
 
+// The 2026-08-25 admission batch (analysis rerun over the 145-file corpus
+// plus the post-push house download; per-type rationale in
+// docs/connector-db.md). Shared pattern: the house's Config-17 (V273)
+// element order is canonical and uniform across every house instance;
+// corpus variants are older generations whose divergence is explained by
+// schema migration (appended/inserted keys, one param reorder), exactly
+// the AutoJalousie/DayTimer story. Zero direction conflicts anywhere.
+
+// LightController2: the largest admitted type — 75 connectors, 23 house
+// instances with an identical element order (V259's 71-key order plus
+// I5–I8 inserted; V227–254 additionally reordered params). 86 corpus
+// occurrences. Directions: 17 corpus-sink inputs (Sel1 ×47, Brightness
+// ×19, Move ×15 …); 16 Def=-on-every-instance params plus 5 more agreed
+// P by connector-map with zero corpus contradiction; AQ1–AQ20 and
+// Scene/OutputReset/OutputResetAll connector-map O (AQ1–AQ5 also
+// corpus-source, ×131 on AQ1); `MoveOn` carries Def everywhere but has a
+// sink wire — wire evidence precedes, and Input still admits the Def.
+// `OutputAPI` has zero evidence in any direction and is absent from both
+// legacy dbs → inert-flag Input (the PButtonT precedent; one observed
+// counterexample re-classifies).
+const LIGHT_CONTROLLER2: &[PortSpec] = &[
+    p("I1", Input),
+    p("I2", Input),
+    p("I3", Input),
+    p("I4", Input),
+    p("I5", Input),
+    p("I6", Input),
+    p("I7", Input),
+    p("I8", Input),
+    p("InputTriggerUp", Input),
+    p("InputTriggerDown", Input),
+    p("Select", Input),
+    p("Reset", Input),
+    p("Sel1", Input),
+    p("Sel2", Input),
+    p("Sel3", Input),
+    p("Sel4", Input),
+    p("Sel5", Input),
+    p("Sel6", Input),
+    p("Sel7", Input),
+    p("Sel8", Input),
+    p("EnMove", Input),
+    p("Move", Input),
+    p("On", Input),
+    p("Alarm", Input),
+    p("AlarmClock", Input),
+    p("Brightness", Input),
+    p("InputDisable", Input),
+    p("Presence", Input),
+    p("RtD", Input),
+    p("MasterBr", Input),
+    p("BrightnessLimit", Param),
+    p("Remanence", Input),
+    p("MoveOn", Input),
+    p("MoveIgnore", Param),
+    p("Step", Param),
+    p("Steptime", Param),
+    p("Min", Param),
+    p("Max", Param),
+    p("Wrap", Param),
+    p("NoLast", Param),
+    p("MoveScene", Param),
+    p("MaxP", Param),
+    p("MoveTimeout", Param),
+    p("RGBalt", Param),
+    p("SceneMixTime", Param),
+    p("FadingTime", Param),
+    p("AlarmClockPeriod", Param),
+    p("DayMinTemp", Param),
+    p("DayMaxTemp", Param),
+    p("AlarmPeriod", Param),
+    p("AlarmBrightness", Param),
+    p("AQ1", Output),
+    p("AQ2", Output),
+    p("AQ3", Output),
+    p("AQ4", Output),
+    p("AQ5", Output),
+    p("AQ6", Output),
+    p("AQ7", Output),
+    p("AQ8", Output),
+    p("AQ9", Output),
+    p("AQ10", Output),
+    p("AQ11", Output),
+    p("AQ12", Output),
+    p("AQ13", Output),
+    p("AQ14", Output),
+    p("AQ15", Output),
+    p("AQ16", Output),
+    p("AQ17", Output),
+    p("AQ18", Output),
+    p("AQ19", Output),
+    p("AQ20", Output),
+    p("Scene", Output),
+    p("OutputReset", Output),
+    p("OutputResetAll", Output),
+    p("OutputAPI", Input),
+];
+
+// Switch2Button: 49 corpus occurrences; the modern (V273 house, ×5 per
+// generation) order appends OutputAPI to the V74–162 shape and swaps
+// On/Reset relative to it. InputTrigger corpus-sink on every instance;
+// Time carries Def everywhere; Q/Qon/Qoff corpus-source (×16/×33/×15);
+// On/Reset/InputDisable/OutputAPI inert-flag Inputs.
+const SWITCH2_BUTTON: &[PortSpec] = &[
+    p("InputTrigger", Input),
+    p("On", Input),
+    p("Reset", Input),
+    p("InputDisable", Input),
+    p("Time", Param),
+    p("Q", Output),
+    p("Qon", Output),
+    p("Qoff", Output),
+    p("OutputAPI", Input),
+];
+
+// CentralShade: 11 occurrences (3 modern house instances; the V254 corpus
+// pair lacks the appended OutOpen/OutClose). EndUp/EndDown/AutoShade/
+// Safety/Gesture corpus-sink; every other classic input agreed I by
+// connector-map with zero contradiction; OutputAPI connector-map O, zero
+// contradiction; OutOpen/OutClose zero-evidence → inert-flag Input.
+const CENTRAL_SHADE: &[PortSpec] = &[
+    p("InputTrigger", Input),
+    p("InputTriggerUp", Input),
+    p("InputTriggerDown", Input),
+    p("EndUp", Input),
+    p("EndDown", Input),
+    p("Shade", Input),
+    p("AutoShade", Input),
+    p("EnAutoShade", Input),
+    p("ReactAutoShade", Input),
+    p("Safety", Input),
+    p("Stop", Input),
+    p("ManualPosition", Input),
+    p("ManualLamelle", Input),
+    p("Gesture", Input),
+    p("InputDisable", Input),
+    p("OutOpen", Input),
+    p("OutClose", Input),
+    p("OutputAPI", Output),
+];
+
+// CentralLight: 9 occurrences (2 modern house instances; V254–259 corpus
+// trio lacks the appended OutActive). Reset/On/Alarm corpus-sink; the
+// rest connector-map I with zero contradiction; OutputAPI connector-map
+// O; OutActive zero-evidence → inert-flag Input.
+const CENTRAL_LIGHT: &[PortSpec] = &[
+    p("I1", Input),
+    p("I2", Input),
+    p("I3", Input),
+    p("I4", Input),
+    p("InputTriggerUp", Input),
+    p("InputTriggerDown", Input),
+    p("Select", Input),
+    p("Reset", Input),
+    p("Sel1", Input),
+    p("Sel2", Input),
+    p("Sel3", Input),
+    p("Sel4", Input),
+    p("Sel5", Input),
+    p("Sel6", Input),
+    p("Sel7", Input),
+    p("Sel8", Input),
+    p("EnMove", Input),
+    p("On", Input),
+    p("Alarm", Input),
+    p("AlarmClock", Input),
+    p("InputDisable", Input),
+    p("RtD", Input),
+    p("OutActive", Input),
+    p("OutputAPI", Output),
+];
+
+// Code16: the most stable shape in the whole corpus — ONE identical
+// 34-key element order across V99–V273 (12 instances, 8 files, house
+// included). AI1–AI13 corpus-sink; TQ1/AQ1–AQ13/TeQ connector-map O
+// (most also corpus-source); TI1–TI3 connector-map I; Remanence
+// inert-flag Input.
+const CODE16: &[PortSpec] = &[
+    p("TI1", Input),
+    p("TI2", Input),
+    p("TI3", Input),
+    p("AI1", Input),
+    p("AI2", Input),
+    p("AI3", Input),
+    p("AI4", Input),
+    p("AI5", Input),
+    p("AI6", Input),
+    p("AI7", Input),
+    p("AI8", Input),
+    p("AI9", Input),
+    p("AI10", Input),
+    p("AI11", Input),
+    p("AI12", Input),
+    p("AI13", Input),
+    p("Remanence", Input),
+    p("TQ1", Output),
+    p("TQ2", Output),
+    p("TQ3", Output),
+    p("AQ1", Output),
+    p("AQ2", Output),
+    p("AQ3", Output),
+    p("AQ4", Output),
+    p("AQ5", Output),
+    p("AQ6", Output),
+    p("AQ7", Output),
+    p("AQ8", Output),
+    p("AQ9", Output),
+    p("AQ10", Output),
+    p("AQ11", Output),
+    p("AQ12", Output),
+    p("AQ13", Output),
+    p("TeQ", Output),
+];
+
 /// Every block type `builtin` knows — the complete mintable set.
 pub const BUILTIN_TYPES: &[&str] = &[
     "And",
@@ -250,6 +464,11 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "AutoJalousie",
     "PulseAt",
     "DayTimer",
+    "LightController2",
+    "Switch2Button",
+    "CentralShade",
+    "CentralLight",
+    "Code16",
 ];
 
 /// Element-attribute parameters per block type: logic Loxone stores as an
@@ -282,6 +501,11 @@ pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
         "AutoJalousie" => Some(AUTO_JALOUSIE),
         "PulseAt" => Some(PULSE_AT),
         "DayTimer" => Some(DAY_TIMER),
+        "LightController2" => Some(LIGHT_CONTROLLER2),
+        "Switch2Button" => Some(SWITCH2_BUTTON),
+        "CentralShade" => Some(CENTRAL_SHADE),
+        "CentralLight" => Some(CENTRAL_LIGHT),
+        "Code16" => Some(CODE16),
         _ => None,
     }
 }
@@ -564,6 +788,48 @@ mod tests {
         // Zero evidence anywhere -> inert-flag Input (corrected from the
         // unsupported Output name-prior).
         assert_eq!((pbt[6].key, pbt[6].dir), ("OutputAPI", PortDir::Input));
+        // The 2026-08-25 batch (LightController2, Switch2Button,
+        // CentralShade, CentralLight, Code16): modern house-V273 element
+        // orders, directions per docs/connector-db.md.
+        let lc = builtin("LightController2").unwrap();
+        assert_eq!(lc.len(), 75);
+        assert_eq!((lc[0].key, lc[0].dir), ("I1", PortDir::Input));
+        // I5–I8 are the V273 insertion into the V259 order.
+        assert_eq!((lc[4].key, lc[4].dir), ("I5", PortDir::Input));
+        assert_eq!((lc[12].key, lc[12].dir), ("Sel1", PortDir::Input));
+        assert_eq!(
+            (lc[30].key, lc[30].dir),
+            ("BrightnessLimit", PortDir::Param)
+        );
+        // Def= on every instance but also a corpus sink wire — wire
+        // evidence precedes, Input still admits the Def.
+        assert_eq!((lc[32].key, lc[32].dir), ("MoveOn", PortDir::Input));
+        assert_eq!((lc[51].key, lc[51].dir), ("AQ1", PortDir::Output));
+        assert_eq!((lc[72].key, lc[72].dir), ("OutputReset", PortDir::Output));
+        assert_eq!((lc[74].key, lc[74].dir), ("OutputAPI", PortDir::Input));
+        let s2 = builtin("Switch2Button").unwrap();
+        assert_eq!(s2.len(), 9);
+        // Modern order: On before Reset (swapped relative to V74–162).
+        assert_eq!((s2[1].key, s2[1].dir), ("On", PortDir::Input));
+        assert_eq!((s2[2].key, s2[2].dir), ("Reset", PortDir::Input));
+        assert_eq!((s2[5].key, s2[5].dir), ("Q", PortDir::Output));
+        assert_eq!((s2[8].key, s2[8].dir), ("OutputAPI", PortDir::Input));
+        let cs = builtin("CentralShade").unwrap();
+        assert_eq!(cs.len(), 18);
+        assert_eq!((cs[3].key, cs[3].dir), ("EndUp", PortDir::Input));
+        // Zero-evidence appended keys -> inert-flag Input.
+        assert_eq!((cs[15].key, cs[15].dir), ("OutOpen", PortDir::Input));
+        assert_eq!((cs[17].key, cs[17].dir), ("OutputAPI", PortDir::Output));
+        let cl = builtin("CentralLight").unwrap();
+        assert_eq!(cl.len(), 24);
+        assert_eq!((cl[18].key, cl[18].dir), ("Alarm", PortDir::Input));
+        assert_eq!((cl[22].key, cl[22].dir), ("OutActive", PortDir::Input));
+        assert_eq!((cl[23].key, cl[23].dir), ("OutputAPI", PortDir::Output));
+        let c16 = builtin("Code16").unwrap();
+        assert_eq!(c16.len(), 34);
+        assert_eq!((c16[3].key, c16[3].dir), ("AI1", PortDir::Input));
+        assert_eq!((c16[17].key, c16[17].dir), ("TQ1", PortDir::Output));
+        assert_eq!((c16[33].key, c16[33].dir), ("TeQ", PortDir::Output));
         for t in BUILTIN_TYPES {
             assert!(builtin(t).is_some(), "BUILTIN_TYPES lists `{t}`");
         }

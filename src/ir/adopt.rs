@@ -194,16 +194,14 @@ fn verify_rebuildable(el: &Element, o: &ObjectSummary) -> std::result::Result<()
             Node::Text(_) => return Err("unexpected text content".to_string()),
         };
         let key = co.attr_decoded("K").unwrap_or_default().into_owned();
+        // An `Inv=`-carrying connector is GUI-owned (D20): the rebuild
+        // re-emits the whole `<Co>` verbatim and the lift keeps its Def
+        // and wires out of the source, so anything inside it is faithful
+        // by construction.
         for a in &co.attrs {
-            if !matches!(a.name.as_str(), "K" | "Nc" | "Def" | "U") {
-                let hint = if a.name == "Inv" {
-                    " (the GUI's input-inversion flag; invert via a Not block \
-                     in Loxone Config first)"
-                } else {
-                    ""
-                };
+            if !matches!(a.name.as_str(), "K" | "Nc" | "Def" | "U" | "Inv") {
                 return Err(format!(
-                    "connector `{key}`: attribute `{}` is not understood{hint}",
+                    "connector `{key}`: attribute `{}` is not understood",
                     a.name
                 ));
             }
