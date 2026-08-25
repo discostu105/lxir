@@ -212,6 +212,34 @@ the same way is fine. The synthetic corpus is sufficient for the XML/UUID
 layers but is **not loadable** by the real tool — it lacks required
 structure. Oracle runs must always compile onto a real base config.
 
+## The second-batch bless + mint oracle (session 8) — passed
+
+Ran 2026-08-25 against the freshest live download (post-UV-push R50,
+100 managed-type blocks after the second admission batch and D20).
+Two configs, one Loxone Config instance (isolated `wine-oracle`
+prefix on Xvfb `:5`), saved via Ctrl+S per tab:
+
+- **Bless the 100-block rebuild.** `adopt` → `compile` output (all 23
+  LightController2, Switch2Button, CentralShadeControl,
+  CentralLightControl, Code16, and every D20-carried `Inv=` connector
+  included) opened and saved with a **completely empty semantic diff**
+  — every rebuilt element survived byte-faithfully at the semantic
+  layer. `lxir drift` (D21) stayed green across the GUI save: the save
+  fingerprint (NextObj burn, Date stamps, WF churn) never touches the
+  drift baseline.
+- **Mint oracle: PulseAt, DayTimer, Switch2Button.** Three blocks
+  minted from bare declarations (`t = PulseAt("Oracle PulseAt")`, no
+  args) on page Testing. All three survived the open+save with their
+  **exact connector sets intact** (5, 13, 9 — the descriptor-law
+  check: an off-descriptor key would have been dropped silently, a
+  missing one materialized). The GUI backfilled only known D19 residue:
+  recomputed block extents (`Px2`/`Py2`), `<IoData Visu="true"/>`,
+  `<Display Unit>`, and DayTimer's ten default `<Entry To="1440"
+  V="1">` schedule rows — all invisible to the semantic layer and
+  carried verbatim by the next adopt/compile. PulseAt and DayTimer
+  were admitted from web-corpus evidence only; this closes their mint
+  validation.
+
 ## The rig
 
 - Prefix: `~/.local/share/loxone-config/wine`, exe under
