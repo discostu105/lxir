@@ -5,8 +5,8 @@
 //! nothing here has semantics of its own.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Module, adopt, adopt_pages, compile,
-    decompile, decompile_pages,
+    CompileOptions, DecompileOptions, DecompileScope, Module, adopt, adopt_one, adopt_pages,
+    compile, decompile, decompile_pages, slugify, validate_ports,
 };
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc};
@@ -61,6 +61,17 @@ USAGE:
         Blocks the rebuild could not reproduce faithfully are skipped
         with a warning and stay unmanaged. Never modifies the config;
         refuses existing outputs.
+
+  lxir adopt <cfg.Loxone> --uuid <uuid> --as <slug> --module <m.lxir | module-dir> --lock <lock.json>
+        Incremental form: adopt one existing block (e.g. freshly drawn in
+        Loxone Config) into an existing module/lock pair. Appends the
+        block's declaration — plus externs for wired neighbors the lock
+        does not already pin — to the module (in a directory, to its
+        page's fragment) and extends the lockfile. Verified before
+        writing: rebuilding with the updated pair must be a semantic
+        no-op against the config. A wire into a managed block must
+        already be declared in that block's argument list — the error
+        says exactly which line to add.
 
   lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
@@ -167,6 +178,29 @@ fn load_module(path: &str) -> Result<Module, (String, lxir::Error)> {
 
 fn read_module(path: &str) -> Result<Module, AnyError> {
     load_module(path).map_err(|(p, e)| format!("{p}: {e}").into())
+}
+
+/// [`read_module`] without whole-module name resolution: statement-local
+/// checks only. The incremental adopt needs this — the manual fix for a
+/// wire into a managed sink references the new block's slug *before* the
+/// adoption declares it, so the module only resolves after the append.
+fn read_module_lenient(path: &str) -> Result<Module, AnyError> {
+    let p = std::path::Path::new(path);
+    let mut items = Vec::new();
+    let files = if p.is_dir() {
+        module_dir_files(p).map_err(|(p, e)| format!("{p}: {e}"))?
+    } else {
+        vec![p.to_path_buf()]
+    };
+    for f in files {
+        let src = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
+        items.extend(
+            Module::parse_fragment(&src)
+                .map_err(|e| format!("{}: {e}", f.display()))?
+                .items,
+        );
+    }
+    Ok(Module { items })
 }
 
 fn read_doc(path: &str) -> Result<LoxoneDoc, AnyError> {
@@ -415,11 +449,17 @@ fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
 
 fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
     const USAGE: &str = "usage: lxir adopt <cfg.Loxone> \
-         (--out-module <m.lxir> | --out-dir <dir>) --out-lock <lock.json>";
+         (--out-module <m.lxir> | --out-dir <dir>) --out-lock <lock.json>\n\
+       lxir adopt <cfg.Loxone> --uuid <uuid> --as <slug> \
+         --module <m.lxir | module-dir> --lock <lock.json>";
     let mut path = None;
     let mut out_module: Option<PathBuf> = None;
     let mut out_dir: Option<PathBuf> = None;
     let mut out_lock: Option<PathBuf> = None;
+    let mut uuid: Option<&str> = None;
+    let mut as_slug: Option<&str> = None;
+    let mut module_path: Option<&str> = None;
+    let mut lock_path: Option<&str> = None;
     let mut it = args.iter();
     while let Some(&a) = it.next() {
         let mut value = || -> Result<&str, AnyError> {
@@ -431,12 +471,27 @@ fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
             "--out-module" => out_module = Some(PathBuf::from(value()?)),
             "--out-dir" => out_dir = Some(PathBuf::from(value()?)),
             "--out-lock" => out_lock = Some(PathBuf::from(value()?)),
+            "--uuid" => uuid = Some(value()?),
+            "--as" => as_slug = Some(value()?),
+            "--module" => module_path = Some(value()?),
+            "--lock" => lock_path = Some(value()?),
             flag if flag.starts_with("--") => {
                 return Err(format!("unknown flag `{flag}` — run `lxir help`").into());
             }
             p if path.is_none() => path = Some(p),
             _ => return Err(USAGE.into()),
         }
+    }
+    if uuid.is_some() || as_slug.is_some() || module_path.is_some() || lock_path.is_some() {
+        let (Some(path), Some(uuid), Some(slug), Some(module_path), Some(lock_path)) =
+            (path, uuid, as_slug, module_path, lock_path)
+        else {
+            return Err(USAGE.into());
+        };
+        if out_module.is_some() || out_dir.is_some() || out_lock.is_some() {
+            return Err(USAGE.into());
+        }
+        return cmd_adopt_one(path, uuid, slug, module_path, lock_path);
     }
     let (Some(path), Some(out_lock)) = (path, out_lock) else {
         return Err(USAGE.into());
@@ -500,6 +555,89 @@ fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
         out_lock.display(),
         module_arg.display(),
         out_lock.display()
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The incremental adopt: one block into an existing module/lock pair.
+/// Everything is verified in memory — the appended module and extended
+/// lock must rebuild the config as a semantic no-op — before any file is
+/// touched.
+fn cmd_adopt_one(
+    path: &str,
+    uuid: &str,
+    slug: &str,
+    module_path: &str,
+    lock_path: &str,
+) -> Result<ExitCode, AnyError> {
+    let doc = read_doc(path)?;
+    let module = read_module_lenient(module_path)?;
+    let mut lock = Lockfile::load(Path::new(lock_path))?;
+    let adopted = adopt_one(&doc, uuid, slug, &module, &mut lock)?;
+
+    let mut merged = module;
+    merged.items.extend(adopted.items.iter().cloned());
+    merged.validate()?;
+    validate_ports(&merged)?;
+    // Nothing is minted in a no-op rebuild, so serial and mint time are
+    // inert — placeholders keep the verification self-contained.
+    let vopts = CompileOptions {
+        machine: parse_serial("000000000000")?,
+        mint_time_unix: 0,
+        page_title: None,
+        allow_removals: false,
+        accept_version: None,
+    };
+    let out = compile(&doc, &merged, &mut lock.clone(), &vopts)?;
+    let d = lxir::diff::diff(&doc, &out);
+    if !d.is_empty() {
+        return Err(format!(
+            "adoption verification failed — rebuilding with the updated module/lock \
+             is not a semantic no-op (nothing was written):\n{d:#?}"
+        )
+        .into());
+    }
+
+    let target = if Path::new(module_path).is_dir() {
+        Path::new(module_path).join(format!("{}.lxir", slugify(&adopted.page_title)))
+    } else {
+        PathBuf::from(module_path)
+    };
+    let mut text = std::fs::read_to_string(&target).unwrap_or_default();
+    if text.is_empty() {
+        text = format!("# page: {}\n", adopted.page_title);
+    }
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push('\n');
+    text.push_str(
+        &Module {
+            items: adopted.items.clone(),
+        }
+        .to_text(),
+    );
+    std::fs::write(&target, text)?;
+    lock.save(Path::new(lock_path))?;
+
+    println!(
+        "adopted uuid {uuid} as `{slug}` on page \"{}\"{}",
+        adopted.page_title,
+        if adopted.new_externs.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({} pinned: {})",
+                adopted.new_externs.len(),
+                adopted.new_externs.join(", ")
+            )
+        }
+    );
+    println!(
+        "appended {} statement(s) to {} and updated {lock_path}\n\
+         verified: rebuilding with the updated pair is a semantic no-op",
+        adopted.items.len(),
+        target.display()
     );
     Ok(ExitCode::SUCCESS)
 }

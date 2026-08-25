@@ -200,9 +200,21 @@ haus/
       are genuine `Inv=` inversions); the rebuild is a semantic no-op
       with **zero** changed lines (position-only diff), oracle-blessed
       by a Loxone Config open+save.
-- [ ] `adopt` (incremental form): `lxir adopt <uuid> --as
-      beschattung.vorhandener_block` — adopting a single block into an
-      *existing* module/lock pair.
+- [x] `adopt` (incremental form) 2026-08-25: `lxir adopt <cfg> --uuid
+      <uuid> --as <slug> --module <m> --lock <l>` adopts one existing
+      block (e.g. freshly drawn in Loxone Config) into an existing
+      module/lock pair. Appends the declaration to the module (in a
+      directory, to its page's fragment), pins externs for wired
+      neighbors the lock does not already know, references
+      already-pinned objects by their existing slugs, and re-baselines
+      the drift fingerprint. Verified in memory before writing: the
+      updated pair must rebuild the config as a semantic no-op. A wire
+      into a *managed* sink is refused unless the sink's declaration
+      already states it (the compiler would tear it down otherwise) —
+      the error names the exact argument-list line to add, and the
+      module loads leniently so that line may reference the new slug
+      before it is declared. Promoting an existing extern to a managed
+      block stays unsupported for now.
 - [x] Drift fingerprint 2026-08-25 (D21): `semantic_fingerprint` hashes
       exactly the projection the semantic diff compares (locale-suspect
       titles excluded), recorded in the lock at adopt/compile; `lxir

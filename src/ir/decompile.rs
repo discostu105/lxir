@@ -142,12 +142,12 @@ pub(super) struct Lift {
     /// Prebuilt declarations, keyed by object index. `match_specs` also
     /// covers managed objects, for foreign-extern declarations in the
     /// per-page view.
-    extern_decls: BTreeMap<usize, ExternDecl>,
-    block_decls: BTreeMap<usize, BlockDecl>,
+    pub(super) extern_decls: BTreeMap<usize, ExternDecl>,
+    pub(super) block_decls: BTreeMap<usize, BlockDecl>,
     pub(super) match_specs: BTreeMap<usize, MatchSpec>,
     /// `<-` statements with the sink and source object indexes,
     /// deduplicated, document order.
-    wires: Vec<(WireDecl, usize, usize)>,
+    pub(super) wires: Vec<(WireDecl, usize, usize)>,
 }
 
 /// One page's (or the periphery's) share of the lifted items, as indexes
@@ -445,6 +445,10 @@ impl Lift {
         self.page_of.get(&self.objects[obj].uuid).copied()
     }
 
+    pub(super) fn page_title(&self, page: usize) -> &str {
+        &self.page_titles[page]
+    }
+
     /// Lifted items grouped by page, in document order; `None` (objects on
     /// no page — the periphery) sorts first. Only non-empty groups. A wire
     /// belongs to its sink's page, falling back to its source's.
@@ -636,7 +640,7 @@ fn is_ident(s: &str) -> bool {
 /// Statement-initial keywords (v1, plus reserved v0 words). A slug
 /// colliding with one would change the meaning of the line it starts, so
 /// [`SlugTable`] never hands them out.
-const RESERVED: &[&str] = &["let", "extern", "removed", "moved", "block", "wire", "set"];
+pub(super) const RESERVED: &[&str] = &["let", "extern", "removed", "moved", "block", "wire", "set"];
 
 /// Slug generation with umlaut transliteration and `_2`-style
 /// deduplication; statement keywords are pre-claimed.

@@ -3,8 +3,8 @@
 //! decompile view of compiled output.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Item, Module, adopt, adopt_pages, compile,
-    decompile, decompile_pages,
+    ArgItem, Binding, BindingKind, CompileOptions, DecompileOptions, DecompileScope, Item, Module,
+    PortRef, adopt, adopt_one, adopt_pages, compile, decompile, decompile_pages,
 };
 use lxir::uuid::parse_serial;
 use lxir::xml::{Attr, Element};
@@ -333,6 +333,184 @@ fn config_version_pin_refuses_an_unqualified_release() {
     compile(&bumped, &module, &mut lock, &accept).unwrap();
     assert_eq!(lock.target.config_version.as_deref(), Some("17020101"));
     compile(&bumped, &module, &mut lock, &opts()).unwrap();
+}
+
+/// Synthetic config for the incremental-adopt tests: two VirtualIns, a
+/// managed And wired from the first — and slots for a GUI-drawn Or block
+/// plus its wire into the And's I2.
+fn incr_base(or_block: &str, and_i2: &str) -> LoxoneDoc {
+    LoxoneDoc::parse(
+        format!(
+            "<ControlList Version=\"1\" NextObj=\"50\">\r\n\
+             \t<C Type=\"Document\" U=\"00000001-0000-0000-ffff000000000001\" ConfigVersion=\"17010727\">\r\n\
+             \t\t<C Type=\"VirtualInCaption\" U=\"00000002-0000-0000-ffff000000000001\">\r\n\
+             \t\t\t<C Type=\"VirtualIn\" U=\"00000010-0000-0000-ffff000000000001\" Title=\"Sensor A\">\r\n\
+             \t\t\t\t<Co K=\"Q\" U=\"00000010-0000-0001-01ff000000000001\"/>\r\n\
+             \t\t\t</C>\r\n\
+             \t\t\t<C Type=\"VirtualIn\" U=\"00000011-0000-0000-ffff000000000001\" Title=\"Sensor B\">\r\n\
+             \t\t\t\t<Co K=\"Q\" U=\"00000011-0000-0001-01ff000000000001\"/>\r\n\
+             \t\t\t</C>\r\n\
+             \t\t</C>\r\n\
+             \t\t<C Type=\"Page\" U=\"00000005-0000-0000-ffff000000000001\" Title=\"Regeln\">\r\n\
+             \t\t\t<C Type=\"And\" V=\"175\" U=\"00000020-0000-0000-ffff000000000001\" Title=\"Beide\" \
+             Px=\"100\" Py=\"100\" Px2=\"154\" Py2=\"136\" Nio=\"3\">\r\n\
+             \t\t\t\t<Co K=\"I1\" U=\"00000020-0000-0001-01ff000000000001\" Nc=\"1\">\r\n\
+             \t\t\t\t\t<In Input=\"00000010-0000-0001-01ff000000000001\"/>\r\n\
+             \t\t\t\t</Co>\r\n\
+             \t\t\t\t{and_i2}\r\n\
+             \t\t\t\t<Co K=\"Q\" U=\"00000020-0000-0003-01ff000000000001\" Nc=\"0\"/>\r\n\
+             \t\t\t</C>\r\n\
+             {or_block}\
+             \t\t</C>\r\n\
+             \t</C>\r\n\
+             </ControlList>\r\n"
+        )
+        .as_bytes(),
+    )
+    .unwrap()
+}
+
+const OR_UUID: &str = "00000030-0000-0000-ffff000000000001";
+const INCR_I2_UNWIRED: &str = "<Co K=\"I2\" U=\"00000020-0000-0002-01ff000000000001\" Nc=\"0\"/>";
+const INCR_I2_WIRED: &str = "<Co K=\"I2\" U=\"00000020-0000-0002-01ff000000000001\" Nc=\"1\">\
+     <In Input=\"00000030-0000-0003-01ff000000000001\"/></Co>";
+const INCR_OR_BLOCK: &str = "\t\t\t<C Type=\"Or\" V=\"175\" \
+     U=\"00000030-0000-0000-ffff000000000001\" Title=\"Nachtlicht\" \
+     Px=\"200\" Py=\"200\" Px2=\"254\" Py2=\"236\" Nio=\"3\">\
+     <Co K=\"I1\" U=\"00000030-0000-0001-01ff000000000001\" Nc=\"1\">\
+     <In Input=\"00000010-0000-0001-01ff000000000001\"/></Co>\
+     <Co K=\"I2\" U=\"00000030-0000-0002-01ff000000000001\" Nc=\"1\">\
+     <In Input=\"00000011-0000-0001-01ff000000000001\"/></Co>\
+     <Co K=\"Q\" U=\"00000030-0000-0003-01ff000000000001\" Nc=\"0\"/></C>\r\n";
+
+#[test]
+fn incremental_adopt_claims_a_gui_drawn_block() {
+    // Whole-adopt the starting state: one managed And, one extern.
+    let base1 = incr_base("", INCR_I2_UNWIRED);
+    let (mut module, lock0, report) = adopt(&base1).unwrap();
+    assert_eq!(report.blocks, 1);
+    assert!(lock0.objects.contains_key("beide"));
+    assert!(lock0.externals.contains_key("sensor_a"));
+
+    // Then someone draws an Or in Loxone Config: fed by both sensors,
+    // feeding the managed And's I2.
+    let base2 = incr_base(INCR_OR_BLOCK, INCR_I2_WIRED);
+
+    // The wire into the managed sink is not in source yet: refused, and
+    // the error names the exact line to add.
+    let err = adopt_one(&base2, OR_UUID, "nachtlicht", &module, &mut lock0.clone()).unwrap_err();
+    assert!(err.to_string().contains("I2: nachtlicht.Q"), "{err}");
+    assert!(err.to_string().contains("`beide`"), "{err}");
+
+    // The manual fix: declare the wire in the And's argument list.
+    for item in &mut module.items {
+        if let Item::Block(b) = item
+            && b.slug == "beide"
+        {
+            b.args.push(ArgItem::Binding(Binding {
+                port: "I2".into(),
+                kind: BindingKind::Wire(PortRef {
+                    slug: "nachtlicht".into(),
+                    port: "Q".into(),
+                }),
+                comment: None,
+            }));
+        }
+    }
+
+    let mut lock = lock0.clone();
+    let adopted = adopt_one(&base2, OR_UUID, "nachtlicht", &module, &mut lock).unwrap();
+    assert_eq!(adopted.page_title, "Regeln");
+    assert_eq!(adopted.new_externs, vec!["sensor_b".to_string()]);
+
+    // Two items: the new extern and the block. Sensor A is referenced by
+    // its existing slug, not re-declared; the outgoing wire lives in the
+    // And's declaration, so no `<-` statement.
+    let text = Module {
+        items: adopted.items.clone(),
+    }
+    .to_text();
+    assert_eq!(adopted.items.len(), 2, "{text}");
+    assert!(
+        text.contains("extern sensor_b = VirtualIn(title: \"Sensor B\")"),
+        "{text}"
+    );
+    assert!(text.contains("I1: sensor_a.Q"), "{text}");
+    assert!(text.contains("I2: sensor_b.Q"), "{text}");
+
+    // The lock pins the block's existing identity and the new extern, and
+    // the adopted-from config is the new drift baseline.
+    assert_eq!(lock.objects["nachtlicht"].uuid, OR_UUID);
+    assert_eq!(lock.objects["nachtlicht"].ports.len(), 3);
+    assert!(lock.objects["nachtlicht"].layout.is_some());
+    assert!(lock.externals.contains_key("sensor_b"));
+    assert_eq!(
+        lock.target.semantic_fingerprint.as_deref(),
+        Some(&*lxir::diff::semantic_fingerprint(&base2))
+    );
+
+    // Appending the items yields a module whose rebuild is a semantic
+    // no-op against the config — and stays deterministic.
+    let mut merged = module.clone();
+    merged.items.extend(adopted.items.clone());
+    merged.validate().unwrap();
+    let noop_opts = CompileOptions {
+        page_title: None,
+        ..opts()
+    };
+    let out = compile(&base2, &merged, &mut lock, &noop_opts).unwrap();
+    let d = lxir::diff::diff(&base2, &out);
+    assert!(d.is_empty(), "{d:#?}");
+    let out2 = compile(&base2, &merged, &mut lock, &noop_opts).unwrap();
+    assert_eq!(out.to_bytes(), out2.to_bytes());
+
+    // Slug hygiene on the same scenario.
+    let taken = adopt_one(&base2, OR_UUID, "beide", &module, &mut lock0.clone()).unwrap_err();
+    assert!(taken.to_string().contains("already taken"), "{taken}");
+    let bad = adopt_one(&base2, OR_UUID, "Nacht", &module, &mut lock0.clone()).unwrap_err();
+    assert!(bad.to_string().contains("not a valid slug"), "{bad}");
+
+    // An unqualified release pin refuses before anything else mutates.
+    let mut pinned = lock0.clone();
+    pinned.target.config_version = Some("17999999".into());
+    let err = adopt_one(&base2, OR_UUID, "nachtlicht", &module, &mut pinned).unwrap_err();
+    assert!(err.to_string().contains("--accept-version"), "{err}");
+}
+
+#[test]
+fn incremental_adopt_refuses_claimed_or_unverified_identities() {
+    let module = module();
+    let mut lock = Lockfile::new();
+    // The compiled output holds both the managed blocks and the externs.
+    let base = compile(&base(), &module, &mut lock, &opts()).unwrap();
+
+    let err = adopt_one(
+        &base,
+        "12345678-0000-0000-ffff000000000001",
+        "x",
+        &module,
+        &mut lock.clone(),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("no object"), "{err}");
+
+    let managed_uuid = lock.objects["beschatten"].uuid.clone();
+    let err = adopt_one(&base, &managed_uuid, "x", &module, &mut lock.clone()).unwrap_err();
+    assert!(err.to_string().contains("already managed"), "{err}");
+
+    let extern_uuid = lock.externals["jal_sued"].uuid.clone();
+    let err = adopt_one(&base, &extern_uuid, "x", &module, &mut lock.clone()).unwrap_err();
+    assert!(err.to_string().contains("extern `jal_sued`"), "{err}");
+
+    let vi = base
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "VirtualIn")
+        .unwrap()
+        .uuid
+        .clone();
+    let err = adopt_one(&base, &vi, "x", &module, &mut lock.clone()).unwrap_err();
+    assert!(err.to_string().contains("builtin table"), "{err}");
 }
 
 #[test]

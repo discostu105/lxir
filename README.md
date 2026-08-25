@@ -93,6 +93,8 @@ lxir decompile current.Loxone        # full IR view, grouped by page
 lxir decompile --out-dir view/ current.Loxone  # one module per page
 lxir adopt current.Loxone --out-module modules/haus.lxir \
      --out-lock modules/haus.lock.json  # take over existing blocks in place
+lxir adopt current.Loxone --uuid <uuid> --as <slug> --module modules/ \
+     --lock modules/haus.lock.json  # adopt one freshly drawn block
 lxir observe current.Loxone          # port-direction evidence (JSON)
 lxir roundtrip current.Loxone        # byte-fidelity self-check
 ```
@@ -113,6 +115,7 @@ let out = compile(&base, &module, &mut lock, &CompileOptions {
     mint_time_unix: 1_767_225_600,            // caller-provided → reproducible
     page_title: Some("Beschattung".into()),
     allow_removals: false,
+    accept_version: None,                     // ConfigVersion pin (D22)
 })?;
 std::fs::write("out.Loxone", out.to_bytes())?;
 lock.save(std::path::Path::new("beschattung.lock.json"))?;
@@ -122,6 +125,12 @@ Runnable examples (`cargo run --example …`): `compile`, `decompile`,
 `diff`, `observe`, `roundtrip_check`. The committed `examples/out/` files
 are the output of the `compile` example; running it again reproduces them
 byte-for-byte.
+
+For a complete end-to-end module, see `examples/ir/pool.lxir` against
+`examples/configs/pool.Loxone`: named constants, externs matched by iname
+and by composite `title` + `room:`, a two-input gate cascade, and a wire
+onto an extern port — the sketch's pool idea, kept compiling by the test
+suite.
 
 ## Scope
 

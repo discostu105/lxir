@@ -27,13 +27,13 @@
 
 use crate::connectors::{attr_params, builtin};
 use crate::doc::{GUI_OWNED_ATTRS, GUI_OWNED_CHILDREN, LoxoneDoc, ObjectSummary, ports};
-use crate::error::Result;
-use crate::ir::ast::{MatchSpec, Module};
-use crate::ir::decompile::{DecompileOptions, DecompileScope, Lift};
+use crate::error::{Error, Result};
+use crate::ir::ast::{ArgItem, BindingKind, Item, MatchSpec, Module, PortRef, WireDecl};
+use crate::ir::decompile::{DecompileOptions, DecompileScope, Lift, RESERVED};
 use crate::ir::validate::validate_ports;
 use crate::lock::{Layout, LockedExternal, LockedObject, Lockfile, sha256_hex};
 use crate::xml::{Element, Node};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AdoptReport {
@@ -79,6 +79,270 @@ pub fn adopt_pages(doc: &LoxoneDoc) -> Result<(PageFragments, Lockfile, AdoptRep
     let fragments = lift.fragment_modules();
     let (lock, report) = adopt_lock(doc, &lift, refused);
     Ok((fragments, lock, report))
+}
+
+/// One block adopted into an existing module/lock pair by [`adopt_one`]:
+/// the items to append to the module source. The lock has already been
+/// extended when this is returned.
+#[derive(Debug)]
+pub struct AdoptedBlock {
+    /// Ready to append, in order: newly pinned externs, the block
+    /// declaration, then `<-` wires onto extern ports. Objects the lock
+    /// already pins (managed or extern) are referenced by their existing
+    /// slugs, never re-declared.
+    pub items: Vec<Item>,
+    /// Display title of the logic page the block lives on (where a
+    /// per-page module directory would file it).
+    pub page_title: String,
+    /// Slugs of the externs newly pinned in the lock.
+    pub new_externs: Vec<String>,
+}
+
+/// Adopt the single existing object `uuid` as managed block `slug` into an
+/// existing `module`/`lock` pair (the incremental form of [`adopt`]): the
+/// lock gains the block's identity (and pins for any newly referenced
+/// externs), and the returned items are what the module source needs
+/// appended. Wired neighbors already pinned in the lock are referenced by
+/// their existing slugs.
+///
+/// Refused with a hard error — nothing mutated — when the rebuild would
+/// not be faithful, the identity is already claimed, or the config wires
+/// the block into a managed sink that the module source does not declare
+/// (the fix is one argument-list line; the error spells it out).
+pub fn adopt_one(
+    doc: &LoxoneDoc,
+    uuid: &str,
+    slug: &str,
+    module: &Module,
+    lock: &mut Lockfile,
+) -> Result<AdoptedBlock> {
+    let fail = |m: String| Error::Compile(m);
+    let objects = doc.objects();
+    let Some(o) = objects.iter().find(|o| o.uuid == uuid) else {
+        return Err(fail(format!("no object with uuid `{uuid}` in the config")));
+    };
+    let ident = format!(
+        "{} \"{}\" (uuid {uuid})",
+        o.block_type,
+        o.title.as_deref().unwrap_or("")
+    );
+    if builtin(&o.block_type).is_none() {
+        return Err(fail(format!(
+            "cannot adopt {ident}: `{}` is not in the verified builtin table — only \
+             evidence-verified types can be managed (docs/connector-db.md)",
+            o.block_type
+        )));
+    }
+    if let Some((s, _)) = lock.objects.iter().find(|(_, lo)| lo.uuid == uuid) {
+        return Err(fail(format!(
+            "{ident} is already managed as `{s}` — nothing to adopt"
+        )));
+    }
+    if let Some((s, _)) = lock.externals.iter().find(|(_, le)| le.uuid == uuid) {
+        return Err(fail(format!(
+            "{ident} is already referenced as extern `{s}` — promoting an extern to a \
+             managed block is not supported yet; keep it unmanaged or re-adopt the \
+             whole config"
+        )));
+    }
+    if let Some(pin) = &lock.target.config_version
+        && doc.config_version().as_deref() != Some(pin)
+    {
+        return Err(fail(format!(
+            "the config's ConfigVersion {} differs from the lock's pin {pin} — qualify \
+             the release first (docs/design.md D22): one oracle open+save, then \
+             `lxir compile --accept-version`",
+            doc.config_version().as_deref().unwrap_or("(none)")
+        )));
+    }
+    let el = doc.element_at(&o.path).expect("path from objects()");
+    verify_rebuildable(el, o).map_err(|why| fail(format!("cannot adopt {ident}: {why}")))?;
+
+    let valid = matches!(slug.as_bytes().first(), Some(b) if b.is_ascii_lowercase())
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        && !RESERVED.contains(&slug);
+    if !valid {
+        return Err(fail(format!(
+            "`{slug}` is not a valid slug ([a-z][a-z0-9_]*, no statement keyword)"
+        )));
+    }
+    let mut taken: BTreeSet<String> = module
+        .externs()
+        .map(|e| e.slug.clone())
+        .chain(module.blocks().map(|b| b.slug.clone()))
+        .chain(module.lets().map(|l| l.name.clone()))
+        .chain(lock.objects.keys().cloned())
+        .chain(lock.externals.keys().cloned())
+        .collect();
+    if taken.contains(slug) {
+        return Err(fail(format!(
+            "slug `{slug}` is already taken in this module/lock — pick another"
+        )));
+    }
+    taken.insert(slug.to_string());
+
+    // Lift exactly this block: every other managed-type object is excluded,
+    // so wired neighbors — managed blocks included — surface as externs.
+    let mut opts = DecompileOptions {
+        scope: DecompileScope::ManagedOnly,
+        ..DecompileOptions::default()
+    };
+    for other in &objects {
+        if other.uuid != uuid && opts.managed_types.contains(&other.block_type) {
+            opts.exclude.insert(other.uuid.clone());
+        }
+    }
+    let lift = Lift::build(doc, &opts);
+    let [ti] = lift.managed[..] else {
+        return Err(fail(format!(
+            "cannot adopt {ident}: lift did not isolate it"
+        )));
+    };
+    let Some(page) = lift.page_of(ti) else {
+        return Err(fail(format!(
+            "cannot adopt {ident}: it is not placed on a logic page"
+        )));
+    };
+
+    // Final slugs: the block gets the requested one; a lifted extern whose
+    // object the lock already pins keeps its existing slug (and is not
+    // re-declared); the rest are fresh, deduplicated against everything.
+    let lift_slug = |i: usize| lift.slug_of[&lift.objects[i].uuid].clone();
+    let mut rename: BTreeMap<String, String> = BTreeMap::new();
+    rename.insert(lift_slug(ti), slug.to_string());
+    let mut new_externs: Vec<(usize, String)> = Vec::new();
+    for &i in &lift.externs {
+        let u = &lift.objects[i].uuid;
+        let ls = lift_slug(i);
+        let existing = lock
+            .objects
+            .iter()
+            .find(|(_, lo)| &lo.uuid == u)
+            .map(|(s, _)| s.clone())
+            .or_else(|| {
+                lock.externals
+                    .iter()
+                    .find(|(_, le)| &le.uuid == u)
+                    .map(|(s, _)| s.clone())
+            });
+        let fin = existing.unwrap_or_else(|| {
+            let mut candidate = ls.clone();
+            let mut n = 1;
+            while !taken.insert(candidate.clone()) {
+                n += 1;
+                candidate = format!("{ls}_{n}");
+            }
+            new_externs.push((i, candidate.clone()));
+            candidate
+        });
+        rename.insert(ls, fin);
+    }
+
+    // Wires out of the block (every lifted wire has it as the source; wires
+    // into it became argument bindings). A wire onto a plain extern becomes
+    // a `<-` statement; one into a managed sink is only sound if the sink's
+    // declaration already states it — the compiler rebuilds managed blocks
+    // from source, so an undeclared wire would be torn down on the next
+    // compile. Refuse with the exact line to add.
+    let mut wire_items = Vec::new();
+    for (w, _ti, _fi) in &lift.wires {
+        let to_slug = rename[&w.to.slug].clone();
+        if lock.objects.contains_key(&to_slug) {
+            let declared = module
+                .blocks()
+                .find(|b| b.slug == to_slug)
+                .is_some_and(|b| {
+                    b.input_wires().any(|(port, src)| {
+                        port == w.to.port && src.slug == slug && src.port == w.from.port
+                    })
+                });
+            if !declared {
+                return Err(fail(format!(
+                    "the config wires {slug}.{fk} into managed block `{to_slug}` port \
+                     {tk}, which `{to_slug}`'s declaration does not state — the next \
+                     compile would tear that wire down. Add `{tk}: {slug}.{fk},` to the \
+                     argument list of `{to_slug}` and rerun the adoption (the reference \
+                     to `{slug}` is fine before it is declared: fragments validate as a \
+                     whole after the append)",
+                    fk = w.from.port,
+                    tk = w.to.port,
+                )));
+            }
+        } else {
+            wire_items.push(Item::Wire(WireDecl {
+                to: PortRef {
+                    slug: to_slug,
+                    port: w.to.port.clone(),
+                },
+                from: PortRef {
+                    slug: slug.to_string(),
+                    port: w.from.port.clone(),
+                },
+                comment: None,
+            }));
+        }
+    }
+
+    // All checks passed — build the items and extend the lock.
+    let mut items = Vec::new();
+    let mut new_slugs = Vec::new();
+    for (i, fin) in &new_externs {
+        let mut e = lift.extern_decls[i].clone();
+        e.slug = fin.clone();
+        items.push(Item::Extern(e));
+        let obj = &lift.objects[*i];
+        lock.externals.insert(
+            fin.clone(),
+            LockedExternal {
+                uuid: obj.uuid.clone(),
+                matched_by: match &lift.match_specs[i] {
+                    MatchSpec::Uuid(_) => "uuid",
+                    MatchSpec::IName(_) => "iname",
+                    MatchSpec::Title(_) => "title",
+                }
+                .to_string(),
+                title_at_match: obj.title.clone(),
+                iname_at_match: obj.iname.clone(),
+            },
+        );
+        new_slugs.push(fin.clone());
+    }
+    let mut block = lift.block_decls[&ti].clone();
+    block.slug = slug.to_string();
+    block.title = o.title.clone().filter(|t| t != slug);
+    for arg in &mut block.args {
+        if let ArgItem::Binding(x) = arg
+            && let BindingKind::Wire(r) = &mut x.kind
+        {
+            r.slug = rename[&r.slug].clone();
+        }
+    }
+    items.push(Item::Block(block));
+    items.extend(wire_items);
+
+    lock.objects.insert(
+        slug.to_string(),
+        LockedObject {
+            uuid: uuid.to_string(),
+            block_type: o.block_type.clone(),
+            ports: ports(el).into_iter().map(|p| (p.key, p.uuid)).collect(),
+            layout: Some(layout_of(el).expect("verified numeric")),
+            page_uuid: Some(lift.page_uuids[page].clone()),
+        },
+    );
+    // The adopted-from config is the new drift baseline: nothing changed
+    // semantically, the lock merely claims more of it.
+    lock.target.config_version = doc.config_version();
+    lock.target.source_config_sha256 = Some(sha256_hex(&doc.to_bytes()));
+    lock.target.semantic_fingerprint = Some(crate::diff::semantic_fingerprint(doc));
+
+    Ok(AdoptedBlock {
+        items,
+        page_title: lift.page_title(page).to_string(),
+        new_externs: new_slugs,
+    })
 }
 
 fn adopt_lift(doc: &LoxoneDoc) -> (Lift, Vec<String>) {
