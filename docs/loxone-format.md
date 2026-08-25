@@ -136,8 +136,24 @@ resolved):
   `mirrors:` matcher resolves through `Ref=` (D32).
 - `LinkRefType` — a small integer alongside `Ref=` (observed: 71, 172,
   173, 174), plausibly encoding the mirrored object's kind/direction;
-  `Analog="true"` marks analog refs. Both are GUI-owned display state:
-  carried verbatim, never synthesized — lxir does not mint refs.
+  `Analog="true"` marks analog refs. Since D33 lxir mints refs itself,
+  emitting these from the corpus-learned type table
+  (`connectors::ref_link_type`); on unmanaged refs they stay carried
+  verbatim.
+- **`InputRef` mirrors of one target share their output-port uuids**
+  (r50, 2026-08-25: 19/19 multi-mirror InputRef targets share `AQ`/`Q`
+  connector uuids verbatim; the `AI`/`I` connectors and their feed
+  wires stay per-ref). Several visual tags, one signal port — a
+  consumer wire cannot even express *which* tag it reads from.
+  `OutputRef` mirrors are the opposite: each carries its own `AQ`
+  (27/27 diverge) and draws its own distribution wire into the actor.
+  Open oracle question: what the GUI does to a *minted* second mirror
+  of an already-mirrored target (D33 mints fresh output uuids).
+- **API distribution wires are recorded in reverse**: for
+  `AutoJalousie.OutputAPI → ApiActor`-style links the `<In>` entry sits
+  on the *block's output* connector and names the `OutputRef.AI` (or
+  `ApiActor.I`) as its `Input` — source and sink swap roles relative to
+  every ordinary wire.
 
 ## Rooms and categories: `<IoData Cr=… Pr=…>`
 

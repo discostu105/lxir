@@ -259,6 +259,16 @@ pub fn compile(
         .map(|o| (o.uuid.clone(), (o.block_type.clone(), o.title.clone())))
         .collect();
 
+    // Every wire the base carried, pre-teardown: the D34 routing pin.
+    // It remembers which mirror a consumer wire went through — the lock's
+    // extern_wires can't, since wires into managed sinks vanish with their
+    // block and are never recorded there.
+    let base_wires: BTreeSet<(String, String)> = doc
+        .wires()
+        .iter()
+        .map(|w| (w.from_port.clone(), w.to_port.clone()))
+        .collect();
+
     // --- Tear down our previous output: managed objects, extern wires,
     //     extern sets. What remains is exactly the Loxone-Config-owned state.
     //     Each removed element hands back its GUI-owned residue (D19) so
@@ -826,6 +836,15 @@ pub fn compile(
             [] => Ok(None),
             [one] => Ok(Some((*one).clone())),
             many => {
+                // InputRef mirrors of one target share their output-port
+                // uuids (corpus-universal): several visual tags, one signal
+                // port — no ambiguity in the emitted bytes.
+                let mut ports: Vec<&str> = many.iter().map(|c| c.port.as_str()).collect();
+                ports.sort_unstable();
+                ports.dedup();
+                if ports.len() == 1 {
+                    return Ok(Some((*many[0]).clone()));
+                }
                 let hits: Vec<&&MirrorRoute> = many.iter().filter(|c| pinned(c)).collect();
                 match hits.as_slice() {
                     [one] => Ok(Some((**one).clone())),
@@ -882,11 +901,8 @@ pub fn compile(
             };
             if let Some(cands) = in_routes.get(&from.port_uuid) {
                 let sink_page = page_of_endpoint(&to_ref.slug, &to.owner_uuid);
-                let pin = |c: &MirrorRoute| {
-                    old_wires
-                        .iter()
-                        .any(|w| w.to == to.port_uuid && w.from == c.port)
-                };
+                let pin =
+                    |c: &MirrorRoute| base_wires.contains(&(c.port.clone(), to.port_uuid.clone()));
                 match pick_route(cands, sink_page.as_ref(), &pin) {
                     Ok(Some(r)) => {
                         from.owner_uuid = r.ref_uuid;
@@ -901,9 +917,7 @@ pub fn compile(
             if let Some(cands) = out_routes.get(&to.port_uuid) {
                 let from_page = page_of_endpoint(&from_ref.slug, &from.owner_uuid);
                 let pin = |c: &MirrorRoute| {
-                    old_wires
-                        .iter()
-                        .any(|w| w.from == from.port_uuid && w.to == c.port)
+                    base_wires.contains(&(from.port_uuid.clone(), c.port.clone()))
                 };
                 match pick_route(cands, from_page.as_ref(), &pin) {
                     Ok(Some(r)) => {
@@ -914,6 +928,25 @@ pub fn compile(
                     Ok(None) => {}
                     Err(refs) => {
                         return Err(route_err("sink", to_ref.to_string(), refs));
+                    }
+                }
+            }
+            // Reverse-recorded distributions (API connectors): there the
+            // extern input is the wire's *from* and the managed output its
+            // *to* — the OutputRef redirect applies to the source side,
+            // still on the writer's page.
+            if let Some(cands) = out_routes.get(&from.port_uuid) {
+                let writer_page = page_of_endpoint(&to_ref.slug, &to.owner_uuid);
+                let pin =
+                    |c: &MirrorRoute| base_wires.contains(&(c.port.clone(), to.port_uuid.clone()));
+                match pick_route(cands, writer_page.as_ref(), &pin) {
+                    Ok(Some(r)) => {
+                        from.owner_uuid = r.ref_uuid;
+                        from.port_uuid = r.port;
+                    }
+                    Ok(None) => {}
+                    Err(refs) => {
+                        return Err(route_err("source", from_ref.to_string(), refs));
                     }
                 }
             }

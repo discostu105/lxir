@@ -689,14 +689,23 @@ Anything unverified is an error, not a heuristic:
   (writer's page — the corpus wires all 154 `OutputRef.AQ`
   distributions explicitly, so that leg stays source-side for actors
   but the *write into* the mirror is routed). Several same-page
-  candidates: the previously locked wire pins the choice
-  (`extern_wires` from the old lock); no pin → refuse, naming the
-  candidates and the explicit-extern escape hatch. Ref-*typed*
-  endpoints are exempt — a wire naming a ref (D32 extern or D33 minted
-  block) is drawn literally, which also protects feed wires from
-  re-routing. No same-page fed ref → direct wire. Verified: the r50
-  live config has zero direct wires shadowed by a same-page fed mirror,
-  so enabling routing is byte-stable on the deployed bytes (ci gate),
-  and e2e tests cover reuse through `AQ`/`Q`, the `OutputRef.AI`
-  redirect, cross-page staying direct, and literal explicit-ref
-  wiring.
+  candidates: the previously drawn wire pins the choice — read from the
+  *base pre-teardown* (the lock's `extern_wires` can't pin input-side
+  wires: a wire into a managed sink vanishes with its block and is
+  never recorded there); no pin → refuse, naming the candidates and the
+  explicit-extern escape hatch. Ref-*typed* endpoints are exempt — a
+  wire naming a ref (D32 extern or D33 minted block) is drawn
+  literally, which also protects feed wires from re-routing. No
+  same-page fed ref → direct wire. The r50 migration surfaced two
+  format facts that shaped the mechanism
+  ([loxone-format.md](loxone-format.md)): InputRef mirrors of one
+  target *share* their output-port uuids — several same-page candidates
+  usually collapse to one signal port, no ambiguity in the bytes — and
+  API distribution wires are recorded in reverse (`<In>` on the block's
+  output naming the extern input), so the OutputRef redirect also
+  applies to a wire's *source* side. Gate: folding all 162 foldable ref
+  externs out of the r50 sources (153 target externs; 12 refs stay —
+  cross-page consumers and source-fed export mirrors) recompiles
+  byte-identical to the deployed config. e2e: reuse through `AQ`/`Q`,
+  the `OutputRef.AI` redirect, shared-output twins, cross-page staying
+  direct, literal explicit-ref wiring.

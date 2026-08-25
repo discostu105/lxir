@@ -189,6 +189,66 @@ fn wires_route_through_same_page_mirrors() {
 }
 
 #[test]
+fn shared_output_mirrors_are_one_signal_port() {
+    // Corpus-universal: InputRef mirrors of one target share their
+    // AQ/Q connector uuids — several visual tags, one signal port. A
+    // second mirror must not make routing refuse as ambiguous.
+    let base = base_with_mirrors("routing-base-shared");
+    let xml = std::fs::read_to_string(&base).unwrap();
+    let at = xml.find("<C Type=\"InputRef\"").unwrap();
+    let end = at + xml[at..].find("</C>").unwrap() + 4;
+    let el = xml[at..end].to_string();
+    let u = el.find(" U=\"").unwrap() + 4;
+    let obj_uuid = &el[u..u + el[u..].find('"').unwrap()];
+    let clone = el
+        .replace(obj_uuid, "3000000a-0000-00a0-ffff504f94112233")
+        .replace(
+            &port_of(&el, "<C Type=\"InputRef\"", "AI"),
+            "3000000a-0000-00a1-ffff504f94112233",
+        )
+        .replace(
+            &port_of(&el, "<C Type=\"InputRef\"", "I"),
+            "3000000a-0000-00a2-ffff504f94112233",
+        );
+    let twinned = format!("{}{}{}", &xml[..end], clone, &xml[end..]);
+    let base2 = base.parent().unwrap().join("haus-twinned.Loxone");
+    std::fs::write(&base2, twinned).unwrap();
+
+    let dir = make_project(
+        "routing-shared",
+        "Beschattung",
+        "extern quelle = VirtualIn(iname: \"VI1\")\n\
+         extern aktor = VirtualIn(iname: \"VI3\")\n\
+         \n\
+         anzeige = And(\n\
+         \tI1: quelle.Q,\n\
+         \tI2: quelle.Qm,\n\
+         )\n\
+         \n\
+         aktor.Qm <- anzeige.Q\n",
+        Some(&base2),
+    );
+    let out = lxir(&dir, &["compile"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out_xml = std::fs::read_to_string(dir.join("out.Loxone")).unwrap();
+    // Both mirrors carry the same output ports; the consumer lands there.
+    let spiegel_aq = port_of(&out_xml, "<C Type=\"InputRef\"", "AQ");
+    let spiegel_q = port_of(&out_xml, "<C Type=\"InputRef\"", "Q");
+    assert_eq!(
+        inputs_of(&out_xml, "Title=\"anzeige\"", "I1"),
+        vec![spiegel_aq]
+    );
+    assert_eq!(
+        inputs_of(&out_xml, "Title=\"anzeige\"", "I2"),
+        vec![spiegel_q]
+    );
+}
+
+#[test]
 fn cross_page_consumers_stay_direct() {
     let base = base_with_mirrors("routing-base-crosspage");
     let dir = make_project(
