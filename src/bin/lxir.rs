@@ -4,7 +4,9 @@
 //! Every subcommand is a thin wrapper over one public library entry point;
 //! nothing here has semantics of its own.
 
-use lxir::ir::{CompileOptions, DecompileOptions, Module, compile, decompile};
+use lxir::ir::{
+    CompileOptions, DecompileOptions, DecompileScope, Module, compile, decompile, decompile_pages,
+};
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc};
 use std::path::{Path, PathBuf};
@@ -33,8 +35,13 @@ USAGE:
         lockfile pins everything minted before);
         --page defaults to the document's first page.
 
-  lxir decompile <cfg.Loxone>
-        Print the IR view of a config (report on stderr).
+  lxir decompile [--managed-only] [--out-dir <dir>] <cfg.Loxone>
+        Print the IR view of a config, grouped into `# page:` sections
+        (report on stderr). The default full view shows every page block
+        and wire — it is for reading, not compiling. --managed-only
+        restricts it to managed-type blocks and what they touch (the
+        adoption subset). --out-dir writes one module per logic page
+        instead of printing.
 
   lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
@@ -73,7 +80,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["check", rest @ ..] => cmd_check(rest),
         ["fmt", rest @ ..] => cmd_fmt(rest),
         ["compile", rest @ ..] => cmd_compile(rest),
-        ["decompile", path] => cmd_decompile(path),
+        ["decompile", rest @ ..] => cmd_decompile(rest),
         ["diff", rest @ ..] => cmd_diff(rest),
         ["observe", rest @ ..] => cmd_observe(rest),
         ["roundtrip", path] => cmd_roundtrip(path),
@@ -243,13 +250,62 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_decompile(path: &str) -> Result<ExitCode, AnyError> {
+fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
+    let mut path = None;
+    let mut out_dir: Option<PathBuf> = None;
+    let mut scope = DecompileScope::Full;
+    let mut it = args.iter();
+    while let Some(&a) = it.next() {
+        match a {
+            "--managed-only" => scope = DecompileScope::ManagedOnly,
+            "--out-dir" => {
+                out_dir = Some(PathBuf::from(
+                    it.next().copied().ok_or("--out-dir needs a value")?,
+                ));
+            }
+            flag if flag.starts_with("--") => {
+                return Err(format!("unknown flag `{flag}` — run `lxir help`").into());
+            }
+            p if path.is_none() => path = Some(p),
+            _ => {
+                return Err("usage: lxir decompile [--managed-only] [--out-dir <dir>] \
+                            <cfg.Loxone>"
+                    .into());
+            }
+        }
+    }
+    let Some(path) = path else {
+        return Err("usage: lxir decompile [--managed-only] [--out-dir <dir>] <cfg.Loxone>".into());
+    };
     let doc = read_doc(path)?;
-    let (module, report) = decompile(&doc, &DecompileOptions::default())?;
-    print!("{}", module.to_text());
+    let opts = DecompileOptions {
+        scope,
+        ..Default::default()
+    };
+
+    let report = if let Some(dir) = out_dir {
+        let (pages, report) = decompile_pages(&doc, &opts)?;
+        std::fs::create_dir_all(&dir)?;
+        for p in &pages {
+            let file = dir.join(format!("{}.lxir", p.slug));
+            std::fs::write(&file, p.module.to_text())?;
+            println!(
+                "wrote {} ({} externs, {} blocks, {} wires)",
+                file.display(),
+                p.module.externs().count(),
+                p.module.blocks().count(),
+                p.module.wire_pairs().len()
+            );
+        }
+        report
+    } else {
+        let (module, report) = decompile(&doc, &opts)?;
+        print!("{}", module.to_text());
+        report
+    };
     eprintln!(
-        "# {path}: {} managed, {} externs, {} raw objects untouched",
-        report.managed, report.externs, report.raw_objects
+        "# {path}: {} managed, {} externs across {} pages, {} raw objects untouched",
+        report.managed, report.externs, report.pages, report.raw_objects
     );
     Ok(ExitCode::SUCCESS)
 }

@@ -138,7 +138,9 @@ Anything unverified is an error, not a heuristic:
 - **D7 — `decompile` lifts only wires that touch a managed block.** A wire
   between two externs — even one the compiler itself created — belongs to
   the config, not the IR view. `decompile(compile(m))` is therefore a
-  faithful *subset* of `m`, not an inverse.
+  faithful *subset* of `m`, not an inverse. (Since D17 this describes the
+  `ManagedOnly` scope; the default full view also shows wires between
+  lifted extern page objects.)
 - **D8 — Gate inputs are fixed: `And`/`Or` have exactly `I1`, `I2`, `Q`,
   and wiring `I3`+ is a compile error.** The original assumption (grown
   inputs take indexes after the builtin ports) was **refuted by the Wine
@@ -227,3 +229,25 @@ Anything unverified is an error, not a heuristic:
   hand-drawn config can decompile into. Names stay mandatory, so the
   lockfile, `moved`/`removed`, and the compile strategy are untouched; the
   v1 example compiles byte-identically to its v0 counterpart.
+- **D17 — Decompile is a view, grouped by page** (2026-08-25). The first
+  decompile of a real 19-page house config exposed the gap: only
+  builtin-type blocks and their direct neighbors were lifted (23 of ~1900
+  objects), in one flat module, with the "1840 raw objects untouched"
+  report easy to miss on stderr. `lxir decompile` now defaults to a *full
+  view*: every page object with connectors is lifted (managed types as
+  block declarations, everything else as `extern`s), every wire between
+  lifted objects is shown, and output is grouped by logic page —
+  `# page:` sections in the single module, or one module per page via
+  `--out-dir`, where objects a page references but does not contain
+  become externs annotated with their origin. The view is for reading,
+  not compiling: compiling it against the same base would mint duplicates
+  of the managed blocks and claim ownership of every wire, so the
+  compilable-shaped adoption subset remains available as `--managed-only`
+  (`DecompileScope::ManagedOnly`, the D7 behavior). Honest limits, all
+  counted in the report: extern `Def=` parameters are never lifted (a
+  `target.Port = value` line would claim ownership of the value),
+  periphery-to-periphery wiring stays raw (the view covers page logic,
+  not the device tree), and objects whose type or port keys are not
+  language identifiers (Loxone's numeric type ids) stay raw. Slugs form
+  one namespace across the whole document — identical in the single and
+  per-page views — and statement keywords are never handed out as slugs.

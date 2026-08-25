@@ -15,8 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (module, report) = decompile(&doc, &DecompileOptions::default())?;
     print!("{}", module.to_text());
     eprintln!(
-        "\n# {path}: {} managed, {} externs, {} raw objects untouched",
-        report.managed, report.externs, report.raw_objects
+        "\n# {path}: {} managed, {} externs across {} pages, {} raw objects untouched",
+        report.managed, report.externs, report.pages, report.raw_objects
     );
     Ok(())
 }

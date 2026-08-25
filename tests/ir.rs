@@ -2,7 +2,10 @@
 //! determinism, lockfile identity, teardown/restore semantics, and the
 //! decompile view of compiled output.
 
-use lxir::ir::{CompileOptions, DecompileOptions, Module, compile, decompile};
+use lxir::ir::{
+    CompileOptions, DecompileOptions, DecompileScope, Item, Module, compile, decompile,
+    decompile_pages,
+};
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc};
 
@@ -207,18 +210,82 @@ fn grown_gate_inputs_are_refused() {
 fn decompile_of_compiled_output_reflects_the_module() {
     let mut lock = Lockfile::new();
     let out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
-    let (m, report) = decompile(&out, &DecompileOptions::default()).unwrap();
+    let managed_only = DecompileOptions {
+        scope: DecompileScope::ManagedOnly,
+        ..Default::default()
+    };
+    let (m, report) = decompile(&out, &managed_only).unwrap();
     assert_eq!(report.managed, 2);
-    // wind_alarm only touches the extern→extern wire (Safety), which
-    // decompile deliberately does not lift — 3 externs, 4 of the 5 wires.
+    // wind_alarm only touches the extern→extern wire (Safety), which the
+    // managed-only view deliberately does not lift — 3 externs, 4 of the
+    // 5 wires.
     assert_eq!(report.externs, 3);
     assert_eq!(m.blocks().count(), 2);
     // 3 wires land in block argument lists, 1 (AutoShade) as a `<-`.
     assert_eq!(m.wire_pairs().len(), 4);
     assert_eq!(m.extern_wires().count(), 1);
+    // Everything the compiler owns sits on the one page it compiled onto.
+    assert_eq!(report.pages, 1);
     // The IR text parses back to the same module (canonical fixpoint).
     let text = m.to_text();
     assert_eq!(Module::parse(&text).unwrap(), m);
+}
+
+#[test]
+fn full_view_decompile_shows_every_page_block_and_wire() {
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
+    let (m, report) = decompile(&out, &DecompileOptions::default()).unwrap();
+    assert_eq!(report.managed, 2);
+    // All three VirtualIns (periphery) and the AutoJalousie (page object).
+    assert_eq!(report.externs, 4);
+    // Only the VirtualInCaption container stays raw.
+    assert_eq!(report.raw_objects, 1);
+    assert_eq!(report.pages, 1);
+    // The extern→extern Safety wire is visible in the full view.
+    assert_eq!(m.extern_wires().count(), 2);
+    assert_eq!(m.wire_pairs().len(), 5);
+    // Output is grouped into page sections.
+    assert!(
+        m.items
+            .iter()
+            .any(|i| matches!(i, Item::Comment(c) if c.contains("page: Beschattung")))
+    );
+    assert!(
+        m.items
+            .iter()
+            .any(|i| matches!(i, Item::Comment(c) if c.contains("periphery")))
+    );
+    // The view is still canonical, parseable language text.
+    let text = m.to_text();
+    assert_eq!(Module::parse(&text).unwrap(), m);
+}
+
+#[test]
+fn per_page_decompile_produces_self_contained_modules() {
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
+    let (pages, report) = decompile_pages(&out, &DecompileOptions::default()).unwrap();
+    assert_eq!(report.pages, 1);
+    assert_eq!(pages.len(), 1);
+    let p = &pages[0];
+    assert_eq!(p.title, "Beschattung");
+    assert_eq!(p.slug, "beschattung");
+    // Self-contained: the periphery VirtualIns the page references are
+    // declared as foreign externs with an origin note.
+    let m = &p.module;
+    assert_eq!(m.blocks().count(), 2);
+    assert_eq!(m.externs().count(), 4);
+    assert_eq!(
+        m.externs()
+            .filter(|e| e.comment.as_deref() == Some(" periphery"))
+            .count(),
+        3
+    );
+    assert_eq!(m.extern_wires().count(), 2);
+    // Each page module is canonical, parseable language text.
+    let text = m.to_text();
+    assert_eq!(&Module::parse(&text).unwrap(), m);
 }
 
 #[test]

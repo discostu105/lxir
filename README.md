@@ -89,7 +89,8 @@ lxir compile --base current.Loxone --module modules/beschattung.lxir \
              --lock modules/beschattung.lock.json --out out.Loxone \
              --serial 504F94112233
 lxir diff current.Loxone out.Loxone  # semantic diff, locale noise flagged
-lxir decompile current.Loxone        # IR view of an existing config
+lxir decompile current.Loxone        # full IR view, grouped by page
+lxir decompile --out-dir view/ current.Loxone  # one module per page
 lxir observe current.Loxone          # port-direction evidence (JSON)
 lxir roundtrip current.Loxone        # byte-fidelity self-check
 ```

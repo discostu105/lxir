@@ -34,7 +34,8 @@ Loxone logic through this toolchain. The IR exists so you never have to edit
 
 ```sh
 # 0. Orientation: what does the config contain, what is already managed?
-lxir decompile current.Loxone            # IR view + report (stderr)
+lxir decompile current.Loxone            # full IR view, `# page:` sections
+lxir decompile --out-dir view/ current.Loxone   # one module per page
 lxir observe current.Loxone              # port evidence per block type
 
 # 1. Edit the module (.lxir). Whole-line # comments are preserved.
@@ -63,6 +64,12 @@ lxir roundtrip out.Loxone
 Present step 4's output when proposing a change: it shows added blocks,
 wires, and parameter changes in reviewable form, and flags locale-rename
 noise (`[locale?]`) so it isn't mistaken for a real edit.
+
+The decompile view is for **reading, not compiling**: compiling it against
+the same base would mint duplicates of every managed block and claim
+ownership of every shown wire. When adopting existing logic, start from
+`lxir decompile --managed-only` (managed-type blocks and what they touch)
+and build the module up from there.
 
 ## The language in 30 seconds
 

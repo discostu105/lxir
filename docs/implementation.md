@@ -17,7 +17,7 @@ observe output), `sha2` (slug entities, config hashes), `thiserror`.
 | `src/ir/ast.rs` | `Module`, `Item` (incl. `Comment`), decls, argument `Binding`s (param vs. wire), typed `Value`; `validate()`; canonical `to_text()` | `parse(to_text(m)) == m`; `to_text` is a fixpoint |
 | `src/ir/validate.rs` | static builtin-table checks (`validate_ports`): types, port names, wire directions; "did you mean" suggestions | needs no base config — shared by `lxir check` and `compile` |
 | `src/ir/compile.rs` | the compiler (strategy: [design.md](design.md)) | tear-down/rebuild convergence; determinism |
-| `src/ir/decompile.rs` | config → IR view, `slugify`, `DecompileReport` | lifts only managed-touching wires (D7) |
+| `src/ir/decompile.rs` | config → IR view (`decompile` with `# page:` sections, `decompile_pages` per page), `slugify`, `DecompileReport` | full view by default (D17); `ManagedOnly` lifts only managed-touching wires (D7) |
 | `src/diff.rs` | UUID-keyed semantic diff, `locale_suspect` heuristic | `diff(a, a).is_empty()` |
 | `src/bin/lxir.rs` | CLI; thin wrappers over the public API only | no semantics of its own |
 
@@ -32,7 +32,8 @@ Three layers, all run by `cargo test`:
    lock pinning across mint times, recompile-own-output fixpoint, counter
    monotonicity, set-restore and wire-teardown, the removal trichotomy,
    refusal paths (unknown type/port, grown gate inputs, no-match,
-   direction misuse), decompile subset.
+   direction misuse), decompile views (managed-only subset, full view,
+   per-page split).
 3. **`tests/roundtrip.rs`** — byte fidelity on the committed example
    configs, plus an opt-in corpus:
 

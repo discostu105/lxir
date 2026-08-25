@@ -68,6 +68,12 @@ types) contradict each other. Results and methodology:
       reserved with migration errors; the v1 example compiles
       byte-identically to the v0 output ([ir-spec.md](ir-spec.md),
       design decision D16).
+- [x] Full-view decompile, grouped per page 2026-08-25 (D17):
+      `lxir decompile` lifts every page block as an `extern` and every
+      wire between lifted objects into the view (`--managed-only` for the
+      adoption subset); `--out-dir` writes one self-contained module per
+      logic page, foreign references annotated with their origin page.
+      Groundwork for the Stufe-4 `externals.lxir` / multi-module layout.
 - [ ] Composite extern matching (e.g. `title: "Jalousie", room: "Büro"`)
       for real houses where titles repeat per room. **Blocked on format
       verification**: how objects reference rooms/categories is not yet a

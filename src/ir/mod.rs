@@ -34,5 +34,8 @@ pub use ast::{
     MovedDecl, PortRef, RemovedDecl, SetDecl, Value, WireDecl,
 };
 pub use compile::{CompileOptions, compile};
-pub use decompile::{DecompileOptions, DecompileReport, decompile, slugify};
+pub use decompile::{
+    DecompileOptions, DecompileReport, DecompileScope, PageModule, decompile, decompile_pages,
+    slugify,
+};
 pub use validate::validate_ports;
