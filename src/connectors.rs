@@ -92,8 +92,8 @@ const THRESHOLD: &[PortSpec] = &[
 // instance of each surviving a Loxone Config open+save. These blocks
 // carry visualization children (`<IoData>`; PushButton also `<PSD>`,
 // Memory also `<Display>` and `Tp=`) that the GUI adds on save — the
-// compiler does not emit them, and adoption of GUI-authored instances
-// refuses until they are modeled.
+// compiler never authors them, but carries them forward verbatim on
+// rebuilds and adoption accepts them (GUI-owned residue, D19).
 const MEMORY: &[PortSpec] = &[p("Input", Input), p("AQ", Output), p("Q", Output)];
 const PUSH_BUTTON: &[PortSpec] = &[
     p("InputTrigger", Input),

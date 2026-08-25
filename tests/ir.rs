@@ -7,6 +7,7 @@ use lxir::ir::{
     decompile_pages,
 };
 use lxir::uuid::parse_serial;
+use lxir::xml::{Attr, Element};
 use lxir::{Lockfile, LoxoneDoc};
 
 const MINT_TIME: i64 = 1_767_225_600; // 2026-01-01T00:00:00Z
@@ -382,14 +383,11 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
         .unwrap()
         .path
         .clone();
-    existing
-        .element_at_mut(&path)
-        .unwrap()
-        .set_attr("SpStates", "1;2");
+    existing.element_at_mut(&path).unwrap().set_attr("M", "3");
     let (module, lock, report) = adopt(&existing).unwrap();
     assert_eq!(report.refused.len(), 1);
     assert!(
-        report.refused[0].contains("SpStates"),
+        report.refused[0].contains("attribute `M="),
         "{}",
         report.refused[0]
     );
@@ -436,6 +434,73 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
         module.to_text().contains("heiss.Input1 <- summe.AQ"),
         "{}",
         module.to_text()
+    );
+}
+
+#[test]
+fn adopt_carries_gui_owned_residue_verbatim() {
+    // Dress the compiled Formula up like a real GUI-authored block:
+    // custom color, LtE, a display attribute, and visualization children
+    // — including the GUI's NON-self-closing <IoData></IoData> form,
+    // which must survive as-is.
+    let mut existing = adopted_config();
+    let path = existing
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "Formula")
+        .unwrap()
+        .path
+        .clone();
+    let el = existing.element_at_mut(&path).unwrap();
+    el.set_attr("Cl", "238,238,238");
+    let wf = el.attrs.iter().position(|a| a.name == "WF").unwrap();
+    el.attrs.insert(
+        wf,
+        Attr {
+            name: "LtE".into(),
+            value: "495646462".into(),
+        },
+    );
+    el.set_attr("Tp", "2"); // display attrs trail the element
+    let mut io = Element::new("IoData");
+    io.set_attr("Pr", "room-uuid");
+    io.self_closing = false;
+    el.push_child(io);
+    let mut display = Element::new("Display");
+    display.set_attr("Unit", "<v.1>");
+    el.push_child(display);
+
+    // Adoption accepts the residue, and the rebuild reproduces the config
+    // byte for byte — values, order, escaping, self-closing form.
+    let (module, lock, report) = adopt(&existing).unwrap();
+    assert!(report.refused.is_empty(), "{:?}", report.refused);
+    let out = compile(&existing, &module, &mut lock.clone(), &opts()).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.to_bytes()),
+        String::from_utf8_lossy(&existing.to_bytes())
+    );
+
+    // Carried forward, not snapshotted: a later GUI edit to the residue
+    // survives the next compile instead of being reverted.
+    let mut edited = out;
+    let path = edited
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "Formula")
+        .unwrap()
+        .path
+        .clone();
+    edited
+        .element_at_mut(&path)
+        .unwrap()
+        .child_elements_mut()
+        .find(|c| c.name == "Display")
+        .unwrap()
+        .set_attr("Unit", "°C");
+    let out2 = compile(&edited, &module, &mut lock.clone(), &opts()).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out2.to_bytes()),
+        String::from_utf8_lossy(&edited.to_bytes())
     );
 }
 

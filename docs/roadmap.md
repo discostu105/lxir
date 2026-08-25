@@ -29,7 +29,8 @@ types) contradict each other. Results and methodology:
 - [ ] Grow the corpus beyond one installation (foreign corpora exercise
       types this house doesn't) and admit the next batch — currently
       blocked types: `PulseAt`, `DayTimer`, `AutoJalousie` (sized:
-      Nio=49; needs `COHist`/`SpStates` modeling).
+      Nio=49; its `COHist`/`SpStates` residue is covered by D19, so
+      admission only needs the 49-connector table resolved).
 
 ## Stufe 0 — Hardening the v0 pipeline
 
@@ -157,6 +158,14 @@ haus/
       semantically empty diff, recompile byte-identical. Brought page
       pinning (`page_uuid` in the lock) and attribute parameters
       (`Formula:`) with it.
+- [x] GUI-owned residue carried forward (D19, 2026-08-25): rebuilds
+      re-emit display attributes (`Cl`/`LtE`/`WF`, `Tp=`, `Sun=`,
+      `SpStates=`, `NDOC=`, `Stats*=`) and visualization children
+      (`IoData`/`Display`/`PSD`/`COHist`) verbatim from the base, and
+      adoption accepts them. Real-config coverage went from 22 to 37 of
+      43 managed-type blocks (the rest are genuine `Inv=` inversions);
+      the rebuild is a semantic no-op with **zero** changed lines
+      (position-only diff).
 - [ ] `adopt` (incremental form): `lxir adopt <uuid> --as
       beschattung.vorhandener_block` — adopting a single block into an
       *existing* module/lock pair.

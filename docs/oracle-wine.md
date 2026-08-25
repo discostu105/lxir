@@ -120,11 +120,12 @@ not emit:
 - `WF` was **dropped entirely** on these types (not rewritten to 16384).
 - Geometry corrected as usual (cosmetic).
 
-Consequence: because compile is teardown/rebuild, every compile deletes
-these GUI-added children and the next GUI save re-adds them — byte churn,
-semantically inert. Documented behavior until the visualization children
-are modeled. Adoption of GUI-created instances of these types still
-**refuses** (they carry `Tp=`/`IoData` the rebuild would not reproduce).
+Consequence at the time of the run: because compile is teardown/rebuild,
+every compile deleted these GUI-added children and the next GUI save
+re-added them, and adoption of GUI-created instances refused. Both were
+resolved the same day by design decision D19 (GUI-owned residue is
+carried forward verbatim from the base on every rebuild) — the churn
+converges after the first GUI save, and the instances adopt cleanly.
 
 The last blocker was `Memory.Q` — never wired anywhere in the corpus,
 absent from both legacy dbs. Direction probe: compile a wire **sourced**

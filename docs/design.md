@@ -293,3 +293,35 @@ Anything unverified is an error, not a heuristic:
   Adopt never modifies the config and refuses to overwrite existing
   outputs. The per-object incremental form (`lxir adopt <uuid> --as
   <slug>`) remains future work.
+- **D19 — GUI-owned residue is carried forward from the base, not
+  refused and not snapshotted** (2026-08-25). Real GUI-created blocks
+  carry content the compiler does not model: display/visualization
+  attributes (`Tp=`, `Sun=`, `SpStates=`) and child elements
+  (`<IoData>` — which holds the room/category binding `Pr=`/`Cr=` —
+  `<Display>`, `<PSD>`, `<COHist>`). Under D18's strict whitelist this
+  content blocked adoption of 20 of the house's 43 managed-type blocks
+  and caused compile/save churn on freshly minted types (the GUI
+  schema-heals the missing children on every save; the next compile
+  deleted them again). Decision: when the compiler rebuilds a block that
+  already exists in the base config, it **harvests an allowlisted set of
+  attributes and child elements from the base element and re-emits them
+  verbatim** — same values, same order, same self-closing form. Freshly
+  minted blocks get the defaults; after their first GUI save the healed
+  content is simply carried forward, so the churn converges to zero.
+  - **Carry-forward, not lockfile snapshot** (rejected alternative):
+    storing the residue in the lock would silently revert later GUI
+    edits to it (stale copy wins). The GUI owns this content, and owner
+    state is read from the config — the same principle externs follow.
+  - `Cl=`/`LtE=`/`WF=` join the carried set: the fixed defaults the
+    compiler previously wrote would have repainted adopted non-green
+    blocks (Memory is grey, AutoJalousie blue in the real config — the
+    first 22 adopted blocks were all default green, hiding the bug) and
+    fought the GUI over `WF` (dropped entirely on some types, rewritten
+    on others). Absent-in-base now stays absent in the rebuild.
+  - The **allowlist is the boundary of faithfulness**: content is carried
+    only if re-emitting it verbatim cannot contradict what the source
+    expresses. `Inv=` (input inversion on a `<Co>`) fails that test — it
+    silently inverts a wire the source declares un-inverted — so it
+    still refuses adoption. Unknown attributes/children likewise still
+    refuse (refuse, never guess); growing the allowlist takes evidence,
+    not pattern-matching.

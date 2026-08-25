@@ -45,6 +45,27 @@ pub struct WireView {
     pub to_port: String,
 }
 
+/// GUI-owned display attributes on block elements (design decision D19):
+/// carried forward verbatim through a rebuild, allowed by adoption. They
+/// follow `WF=` in element order. Evidence per entry (real config +
+/// 2026-08-25 oracle runs): `Tp=` Memory subtype, `Sun=` AutoJalousie,
+/// `SpStates=` visualization-state UUID lists (PushButton, AutoJalousie).
+/// `NDOC=` block documentation text and the `StatsType=`/`StatsAutoDel=`
+/// statistics settings (PushButton "WW-Boost" / two Memory blocks in the
+/// real config). Growing this list takes evidence — an attribute is only
+/// added here if re-emitting it verbatim cannot contradict what the
+/// source expresses (which is why `Inv=`, input inversion, must never
+/// appear here).
+pub const GUI_OWNED_ATTRS: &[&str] =
+    &["Tp", "Sun", "SpStates", "NDOC", "StatsType", "StatsAutoDel"];
+
+/// GUI-owned child elements of block elements (D19), same contract as
+/// [`GUI_OWNED_ATTRS`]; they follow the `<Co>` children in element order.
+/// `<IoData>` carries the visualization/room/category binding (`Visu=`,
+/// `Pr=` place, `Cr=` category), `<Display>`/`<PSD>` visualization
+/// settings, `<COHist>` AutoJalousie history settings.
+pub const GUI_OWNED_CHILDREN: &[&str] = &["IoData", "Display", "PSD", "COHist"];
+
 /// Lookup tables built in one pass over the document.
 #[derive(Debug, Default)]
 pub struct DocIndex {

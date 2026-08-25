@@ -104,15 +104,19 @@ compiled wire sourced from it surviving the save.
 | `PushButton` | InputTrigger, On, Reset, InputDisable, Remanence, Q, Qon, Qoff, OutputAPI | 5 instances; whole shape oracle-survived, `OutputAPI` resolved by the inert-flag rule for this type |
 | `PButtonT` | InputTrigger, Reset, InputDisable, Remanence, Time(P), Q, OutputAPI | 8 instances; same basis as PushButton |
 
-Caveat recorded with the entries: the GUI heals these types with
-visualization children (`IoData`, `Display`, `PSD`, `SpStates`) the
-compiler does not emit — semantically inert save-churn, and adoption of
-GUI-created instances still refuses until those children are modeled.
+The GUI heals these types with visualization children (`IoData`,
+`Display`, `PSD`) and display attributes (`Tp=`, `SpStates=`) the
+compiler never authors. Since design decision D19 that content is
+**GUI-owned residue**: rebuilds carry it forward verbatim from the base
+and adoption accepts it, so GUI-created instances adopt cleanly (the
+only remaining refusals in the real config are genuine `Inv=` input
+inversions).
 
 Still kept out: `PulseAt` and `DayTimer` (no oracle run yet; DayTimer
 additionally has `RtD`/`AQm`/`AQmt` unresolved), and `AutoJalousie`
-(16 instances, uniform Nio=49 — sized, but its `COHist`/`SpStates`
-children need modeling first).
+(16 instances, uniform Nio=49 — sized; its `COHist`/`SpStates` residue
+is covered by D19, so admission now only needs its 49-connector table
+resolved).
 
 ## Growing the table
 

@@ -28,7 +28,7 @@
 //!   connectors (and their wires) on save, so minting them would lose logic.
 
 use crate::connectors::{PortDir, attr_params, builtin};
-use crate::doc::{Counters, LoxoneDoc, ports};
+use crate::doc::{Counters, GUI_OWNED_ATTRS, GUI_OWNED_CHILDREN, LoxoneDoc, ports};
 use crate::error::{Error, Result};
 use crate::ir::ast::{MatchSpec, Module, Value};
 use crate::ir::validate::{suggest, validate_ports};
@@ -57,6 +57,36 @@ pub struct CompileOptions {
     /// [`Lockfile::remove_object`], *forgets* the block, leaving its XML
     /// in the config as an unmanaged orphan.
     pub allow_removals: bool,
+}
+
+/// GUI-owned residue of an existing managed block (D19), harvested at
+/// teardown and re-emitted verbatim by the rebuild: the GUI owns this
+/// content, so it is read from the base on every compile — never stored —
+/// and later GUI edits to it are carried, not reverted.
+struct Residue {
+    /// `Cl`/`LtE`/`WF` and [`GUI_OWNED_ATTRS`], raw values in element order.
+    attrs: Vec<(String, String)>,
+    /// [`GUI_OWNED_CHILDREN`] subtrees in element order.
+    children: Vec<Element>,
+}
+
+fn harvest_residue(el: &Element) -> Residue {
+    Residue {
+        attrs: el
+            .attrs
+            .iter()
+            .filter(|a| {
+                matches!(a.name.as_str(), "Cl" | "LtE" | "WF")
+                    || GUI_OWNED_ATTRS.contains(&a.name.as_str())
+            })
+            .map(|a| (a.name.clone(), a.value.clone()))
+            .collect(),
+        children: el
+            .child_elements()
+            .filter(|c| GUI_OWNED_CHILDREN.contains(&c.name.as_str()))
+            .cloned()
+            .collect(),
+    }
 }
 
 /// Managed-block geometry, matching what Loxone Config draws:
@@ -132,8 +162,13 @@ pub fn compile(
 
     // --- Tear down our previous output: managed objects, extern wires,
     //     extern sets. What remains is exactly the Loxone-Config-owned state.
+    //     Each removed element hands back its GUI-owned residue (D19) so
+    //     the rebuild carries it forward verbatim.
+    let mut residue: BTreeMap<String, Residue> = BTreeMap::new();
     for obj in lock.objects.values() {
-        doc.remove_by_uuid(&obj.uuid);
+        if let Some(el) = doc.remove_by_uuid(&obj.uuid) {
+            residue.insert(obj.uuid.clone(), harvest_residue(&el));
+        }
     }
     // Vanished slugs (authorized via `removed` or allow_removals) are now
     // deleted from the config; drop their identity too.
@@ -271,9 +306,28 @@ pub fn compile(
         el.set_attr("Py", &plan.layout.py.to_string());
         el.set_attr("Px2", &plan.layout.px2.to_string());
         el.set_attr("Py2", &plan.layout.py2.to_string());
-        el.set_attr("Cl", "141,255,112");
+        // D19: a block that existed in the base re-emits its GUI-owned
+        // display state verbatim — including *absence* (some types lose
+        // `WF` on a GUI save). Only a fresh mint writes the defaults.
+        let res = residue.get(&plan.uuid);
+        let carried = |name: &str| {
+            res.and_then(|r| r.attrs.iter().find(|(n, _)| n == name))
+                .map(|(_, v)| v.as_str())
+        };
+        match (res, carried("Cl")) {
+            (Some(_), Some(v)) => el.set_attr_raw("Cl", v),
+            (Some(_), None) => {}
+            (None, _) => el.set_attr("Cl", "141,255,112"),
+        }
         el.set_attr("Nio", &plan.keys.len().to_string());
-        el.set_attr("WF", "147456");
+        if let Some(v) = carried("LtE") {
+            el.set_attr_raw("LtE", v);
+        }
+        match (res, carried("WF")) {
+            (Some(_), Some(v)) => el.set_attr_raw("WF", v),
+            (Some(_), None) => {}
+            (None, _) => el.set_attr("WF", "147456"),
+        }
         for name in attr_params(&block.block_type) {
             if let Some(v) = managed_attrs.get(&(block.slug.clone(), (*name).to_string())) {
                 el.set_attr(name, v);
@@ -286,6 +340,13 @@ pub fn compile(
         {
             el.set_attr("Valid", "false");
         }
+        if let Some(r) = res {
+            for (n, v) in &r.attrs {
+                if !matches!(n.as_str(), "Cl" | "LtE" | "WF") {
+                    el.set_attr_raw(n, v);
+                }
+            }
+        }
         for key in &plan.keys {
             let mut co = Element::new("Co");
             co.set_attr("K", key);
@@ -294,6 +355,11 @@ pub fn compile(
             }
             co.set_attr("U", &plan.ports[key]);
             el.push_child(co);
+        }
+        if let Some(r) = res {
+            for c in &r.children {
+                el.push_child(c.clone());
+            }
         }
         let page_path = page_index.by_uuid.get(&plan.page_uuid).ok_or_else(|| {
             Error::Compile(format!(

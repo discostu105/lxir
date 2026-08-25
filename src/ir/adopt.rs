@@ -16,16 +16,17 @@
 //! rebuilds managed blocks from scratch, so anything on the original
 //! element that the rebuild does not reproduce would be silently lost on
 //! the first compile. [`verify_rebuildable`] whitelists exactly what the
-//! rebuild emits (plus known-harmless normalizations: `WF=` is rewritten to
-//! the value Loxone Config itself normalizes to on save, `LtE=` and the
-//! block color are display state). A block that fails verification is
-//! *skipped, not translated*: it stays unmanaged (appearing as a pinned
-//! extern where adopted logic wires to it) and the reason lands in
+//! rebuild emits — which since D19 includes the GUI-owned residue
+//! (`Cl`/`LtE`/`WF`, [`crate::doc::GUI_OWNED_ATTRS`], and
+//! [`crate::doc::GUI_OWNED_CHILDREN`]) carried forward verbatim from the
+//! base on every compile. A block that fails verification is *skipped, not
+//! translated*: it stays unmanaged (appearing as a pinned extern where
+//! adopted logic wires to it) and the reason lands in
 //! [`AdoptReport::refused`] — one bespoke GUI flag never blocks adopting
 //! the rest of the house.
 
 use crate::connectors::{attr_params, builtin};
-use crate::doc::{LoxoneDoc, ObjectSummary, ports};
+use crate::doc::{GUI_OWNED_ATTRS, GUI_OWNED_CHILDREN, LoxoneDoc, ObjectSummary, ports};
 use crate::error::Result;
 use crate::ir::ast::{MatchSpec, Module};
 use crate::ir::decompile::{DecompileOptions, DecompileScope, Lift};
@@ -141,9 +142,9 @@ pub fn adopt(doc: &LoxoneDoc) -> Result<(Module, Lockfile, AdoptReport)> {
     ))
 }
 
-/// Element attributes the compiler's rebuild emits (or knowingly
-/// normalizes: `WF` is rewritten to the save-normalized value, `LtE` and
-/// `Cl` are display state).
+/// Element attributes the compiler's rebuild emits. `Cl`/`LtE`/`WF` are
+/// carried forward verbatim from the base element (D19), as are the
+/// [`GUI_OWNED_ATTRS`] checked alongside this list.
 const KNOWN_ATTRS: &[&str] = &[
     "Type", "V", "U", "Title", "Px", "Py", "Px2", "Py2", "Cl", "Nio", "WF", "LtE",
 ];
@@ -155,6 +156,7 @@ fn verify_rebuildable(el: &Element, o: &ObjectSummary) -> std::result::Result<()
     let attrs = attr_params(&o.block_type);
     for a in &el.attrs {
         let known = KNOWN_ATTRS.contains(&a.name.as_str())
+            || GUI_OWNED_ATTRS.contains(&a.name.as_str())
             || attrs.contains(&a.name.as_str())
             // Validity state travels with attribute parameters (observed:
             // Valid="false" on every Formula=); the rebuild re-emits it.
@@ -179,6 +181,9 @@ fn verify_rebuildable(el: &Element, o: &ObjectSummary) -> std::result::Result<()
     for child in &el.children {
         let co = match child {
             Node::Element(c) if c.name == "Co" => c,
+            // GUI-owned subtrees are carried forward wholesale (D19) —
+            // their content needs no inspection.
+            Node::Element(c) if GUI_OWNED_CHILDREN.contains(&c.name.as_str()) => continue,
             Node::Element(c) => {
                 return Err(format!(
                     "child element <{}> is not understood by the rebuild",
