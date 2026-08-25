@@ -294,6 +294,14 @@ impl Module {
         Ok(module)
     }
 
+    /// Parse one file of a multi-file module. Syntax and statement-local
+    /// checks run; name resolution does not — a fragment may reference
+    /// slugs declared in a sibling file. Concatenate the fragments'
+    /// `items` in file order and run [`Module::validate`] on the whole.
+    pub fn parse_fragment(src: &str) -> Result<Module> {
+        super::parser::parse(src)
+    }
+
     pub fn externs(&self) -> impl Iterator<Item = &ExternDecl> {
         self.items.iter().filter_map(|i| match i {
             Item::Extern(e) => Some(e),

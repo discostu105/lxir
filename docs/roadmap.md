@@ -158,6 +158,13 @@ haus/
 
 - [ ] `import` between modules; the compiler merges all modules into the
       one `.Loxone` document (the file split is source ergonomics only).
+      First step shipped 2026-08-25: **module directories** — `check`,
+      `fmt`, and `compile --module` accept a directory of `*.lxir`
+      fragments, merged in file-name order; fragments parse individually
+      (errors name the file) and may reference sibling-file slugs, with
+      name resolution running once on the whole. One file per page is
+      the convention (the house repo's `pages/` layout). No `import`
+      statement yet.
 - [x] `adopt` (whole-config form) 2026-08-25 (D18): `lxir adopt <cfg>`
       moves every managed-type block under source control — the
       managed-only module plus a lockfile pinning existing object/port

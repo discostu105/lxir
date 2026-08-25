@@ -17,17 +17,17 @@ const USAGE: &str = "\
 lxir — Loxone config-as-code toolchain
 
 USAGE:
-  lxir check [--json] <module.lxir>
+  lxir check [--json] <module.lxir | module-dir>
         Parse and validate an IR module: syntax, references, and managed
         block types/ports/directions against the builtin table (no base
         config needed; parse errors carry line numbers). --json prints a
         machine-readable result on stdout and still exits 1 on errors.
 
-  lxir fmt [--write | --check] <module.lxir>
-        Print the canonical form. --write rewrites the file in place;
-        --check exits 1 if the file is not already canonical.
+  lxir fmt [--write | --check] <module.lxir | module-dir>
+        Print the canonical form. --write rewrites the file(s) in place;
+        --check exits 1 if a file is not already canonical.
 
-  lxir compile --base <cfg.Loxone> --module <m.lxir> --lock <lock.json> --out <out.Loxone>
+  lxir compile --base <cfg.Loxone> --module <m.lxir | module-dir> --lock <lock.json> --out <out.Loxone>
               [--serial <12-hex>] [--time <unix-seconds>] [--page <title>]
               [--allow-removals]
         Compile IR against a base config, updating the lockfile.
@@ -35,6 +35,9 @@ USAGE:
         --time defaults to now (only affects newly minted UUIDs — the
         lockfile pins everything minted before);
         --page defaults to the document's first page.
+        A module directory stands for a multi-file module: all *.lxir
+        files inside, merged in file-name order (one file per page is
+        the convention; a fragment may reference sibling-file slugs).
 
   lxir decompile [--managed-only] [--out-dir <dir>] <cfg.Loxone>
         Print the IR view of a config, grouped into `# page:` sections
@@ -102,9 +105,53 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
     }
 }
 
+/// The `*.lxir` files of a module directory, sorted by name (the merge
+/// order — semantics don't depend on it, but determinism does).
+fn module_dir_files(dir: &std::path::Path) -> Result<Vec<PathBuf>, (String, lxir::Error)> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| (dir.display().to_string(), lxir::Error::Io(e)))?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "lxir"))
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        return Err((
+            dir.display().to_string(),
+            lxir::Error::Compile("no .lxir files in directory".into()),
+        ));
+    }
+    Ok(files)
+}
+
+/// Load a module from one file or a directory of `*.lxir` fragments.
+/// Directory fragments parse individually (errors name the file);
+/// name resolution runs once on the merged module.
+fn load_module(path: &str) -> Result<Module, (String, lxir::Error)> {
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        let mut items = Vec::new();
+        for f in module_dir_files(p)? {
+            let name = f.display().to_string();
+            let src =
+                std::fs::read_to_string(&f).map_err(|e| (name.clone(), lxir::Error::Io(e)))?;
+            items.extend(
+                Module::parse_fragment(&src)
+                    .map_err(|e| (name.clone(), e))?
+                    .items,
+            );
+        }
+        let module = Module { items };
+        module.validate().map_err(|e| (path.to_string(), e))?;
+        Ok(module)
+    } else {
+        let src =
+            std::fs::read_to_string(path).map_err(|e| (path.to_string(), lxir::Error::Io(e)))?;
+        Module::parse(&src).map_err(|e| (path.to_string(), e))
+    }
+}
+
 fn read_module(path: &str) -> Result<Module, AnyError> {
-    let src = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    Ok(Module::parse(&src).map_err(|e| format!("{path}: {e}"))?)
+    load_module(path).map_err(|(p, e)| format!("{p}: {e}").into())
 }
 
 fn read_doc(path: &str) -> Result<LoxoneDoc, AnyError> {
@@ -118,10 +165,13 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["--json", path] | [path, "--json"] => (true, *path),
         _ => return Err("usage: lxir check [--json] <module.lxir>".into()),
     };
-    let src = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     // Full static validation: parse (syntax + references), then types,
     // ports, and wire directions against the builtin table.
-    let checked = Module::parse(&src).and_then(|m| lxir::ir::validate_ports(&m).map(|()| m));
+    let checked = load_module(path).and_then(|m| {
+        lxir::ir::validate_ports(&m)
+            .map(|()| m)
+            .map_err(|e| (path.to_string(), e))
+    });
     match checked {
         Ok(m) => {
             if json {
@@ -149,23 +199,24 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Err(e) if json => {
+        Err((epath, e)) if json => {
             // Structured diagnostics: parse errors carry a 1-based line,
             // semantic errors none. The parser is fail-fast, so there is
-            // at most one error per run.
+            // at most one error per run. `path` names the file the error
+            // is in — for a module directory that is the fragment file.
             let line = match &e {
                 lxir::Error::IrParse { line, .. } => Some(*line),
                 _ => None,
             };
             println!(
                 "{}",
-                serde_json::json!({ "ok": false, "path": path, "errors": [
+                serde_json::json!({ "ok": false, "path": epath, "errors": [
                     { "line": line, "message": e.to_string() },
                 ]})
             );
             Ok(ExitCode::FAILURE)
         }
-        Err(e) => Err(format!("{path}: {e}").into()),
+        Err((epath, e)) => Err(format!("{epath}: {e}").into()),
     }
 }
 
@@ -174,22 +225,45 @@ fn cmd_fmt(args: &[&str]) -> Result<ExitCode, AnyError> {
         [path] => ("print", *path),
         ["--write", path] => ("write", *path),
         ["--check", path] => ("check", *path),
-        _ => return Err("usage: lxir fmt [--write | --check] <module.lxir>".into()),
+        _ => return Err("usage: lxir fmt [--write | --check] <module.lxir | module-dir>".into()),
     };
-    let src = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let canonical = Module::parse(&src)
-        .map_err(|e| format!("{path}: {e}"))?
-        .to_text();
-    match mode {
-        "print" => print!("{canonical}"),
-        "write" => std::fs::write(path, &canonical)?,
-        _check => {
-            if src != canonical {
-                eprintln!("{path}: not canonical (run `lxir fmt --write {path}`)");
-                return Ok(ExitCode::FAILURE);
-            }
-            println!("{path}: canonical");
+    // Formatting is per file and needs no name resolution (a fragment of
+    // a module directory may reference slugs from sibling files), so
+    // every target parses as a fragment.
+    let targets: Vec<PathBuf> = if std::path::Path::new(path).is_dir() {
+        if mode == "print" {
+            return Err("fmt on a module directory requires --write or --check".into());
         }
+        module_dir_files(std::path::Path::new(path)).map_err(|(p, e)| format!("{p}: {e}"))?
+    } else {
+        vec![PathBuf::from(path)]
+    };
+    let mut dirty = false;
+    for f in &targets {
+        let name = f.display();
+        let src = std::fs::read_to_string(f).map_err(|e| format!("{name}: {e}"))?;
+        let canonical = Module::parse_fragment(&src)
+            .map_err(|e| format!("{name}: {e}"))?
+            .to_text();
+        match mode {
+            "print" => print!("{canonical}"),
+            "write" => {
+                if src != canonical {
+                    std::fs::write(f, &canonical)?;
+                }
+            }
+            _check => {
+                if src != canonical {
+                    eprintln!("{name}: not canonical (run `lxir fmt --write {name}`)");
+                    dirty = true;
+                } else {
+                    println!("{name}: canonical");
+                }
+            }
+        }
+    }
+    if dirty {
+        return Ok(ExitCode::FAILURE);
     }
     Ok(ExitCode::SUCCESS)
 }

@@ -699,3 +699,31 @@ fn extern_port_errors_suggest_close_names() {
         "{err}"
     );
 }
+
+#[test]
+fn module_fragments_merge_and_cross_reference() {
+    // One file per page: the block in fragment B wires from an extern
+    // declared in fragment A. Each fragment parses alone (no name
+    // resolution), the merged module validates.
+    let frag_a = "# page: A\nextern sonne = InputRef(title: \"Sonne\")\n";
+    let frag_b = "# page: B\ngate = Not(\"Gate\", I: sonne.AQ)\n";
+    assert!(
+        Module::parse(frag_b).is_err(),
+        "a lone fragment with a cross-file reference must not pass full parse"
+    );
+    let mut items = Module::parse_fragment(frag_a).unwrap().items;
+    items.extend(Module::parse_fragment(frag_b).unwrap().items);
+    let merged = Module { items };
+    merged.validate().unwrap();
+    assert_eq!(merged.externs().count(), 1);
+    assert_eq!(merged.blocks().count(), 1);
+}
+
+#[test]
+fn module_fragments_duplicate_slug_is_rejected() {
+    let frag = "x = Not(\"X\", I: x.Q)\n";
+    let mut items = Module::parse_fragment(frag).unwrap().items;
+    items.extend(Module::parse_fragment(frag).unwrap().items);
+    let err = Module { items }.validate().unwrap_err();
+    assert!(err.to_string().contains("duplicate name `x`"), "{err}");
+}
