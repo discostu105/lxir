@@ -381,7 +381,10 @@ pub struct ExprWireDecl {
 }
 
 /// A boolean expression on the RHS of `<-`. Precedence, loosest to
-/// tightest: `or` < `and` < `not` < comparison. Comparisons do not chain.
+/// tightest: `or` < `and` < `not` < comparison < `+ -` < `* /`.
+/// Comparisons do not chain. Arithmetic stands alone (a whole `<-` RHS or
+/// a whole argument binding) — mixing it under gates or comparisons is
+/// deferred, with parse-time errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Or(Box<Expr>, Box<Expr>),
@@ -391,6 +394,14 @@ pub enum Expr {
         op: CmpOp,
         lhs: Operand,
         rhs: Operand,
+    },
+    /// Arithmetic (D24 formula backend). Children are always `Atom` or
+    /// `Arith` (the parser rejects boolean subtrees); each maximal tree
+    /// desugars to ONE `Formula` block.
+    Arith {
+        op: ArithOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     /// A bare operand in gate position — a boolean source port. Constants
     /// here are rejected at desugar time (they cannot drive a gate input).
@@ -417,6 +428,26 @@ impl CmpOp {
             CmpOp::Lt => "<",
             CmpOp::Eq => "==",
             CmpOp::Ne => "!=",
+        }
+    }
+}
+
+/// Arithmetic operator; all four land in the same `Formula` block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+impl ArithOp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            ArithOp::Add => "+",
+            ArithOp::Sub => "-",
+            ArithOp::Mul => "*",
+            ArithOp::Div => "/",
         }
     }
 }
@@ -457,18 +488,27 @@ impl Expr {
                 out.push(lhs);
                 out.push(rhs);
             }
+            Expr::Arith { lhs, rhs, .. } => {
+                lhs.collect_operands(out);
+                rhs.collect_operands(out);
+            }
             Expr::Atom(o) => out.push(o),
         }
     }
 
     /// Binding strength for canonical (minimal-paren) emission.
-    fn prec(&self) -> u8 {
+    pub(crate) fn prec(&self) -> u8 {
         match self {
             Expr::Or(..) => 1,
             Expr::And(..) => 2,
             Expr::Not(..) => 3,
             Expr::Cmp { .. } => 4,
-            Expr::Atom(_) => 5,
+            Expr::Arith {
+                op: ArithOp::Add | ArithOp::Sub,
+                ..
+            } => 5,
+            Expr::Arith { .. } => 6,
+            Expr::Atom(_) => 7,
         }
     }
 
@@ -510,6 +550,13 @@ impl fmt::Display for Expr {
                 self.fmt_child(x, !matches!(**x, Expr::Atom(_) | Expr::Not(_)), f)
             }
             Expr::Cmp { op, lhs, rhs } => write!(f, "{lhs} {} {rhs}", op.symbol()),
+            // Left-associative like `and`/`or`; `+ -` and `* /` are two
+            // precedence levels, so `(a + b) * c` keeps its parens.
+            Expr::Arith { op, lhs, rhs } => {
+                self.fmt_child(lhs, lhs.prec() < self.prec(), f)?;
+                write!(f, " {} ", op.symbol())?;
+                self.fmt_child(rhs, rhs.prec() <= self.prec(), f)
+            }
             Expr::Atom(o) => o.fmt(f),
         }
     }

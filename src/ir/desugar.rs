@@ -9,6 +9,12 @@
 //! (lhs → `Input1`, rhs → `Input2`); constant operands become `Def=`
 //! parameters, port operands become wires.
 //!
+//! Arithmetic (`+ - * /`) is the exception to one-block-per-operator: a
+//! maximal arithmetic tree becomes ONE `Formula` block — distinct port
+//! operands map to `Input1..Input4` in first-appearance order (a repeated
+//! port reuses its input), constants are inlined into the compact formula
+//! text (`I1/1000`), and the result is the block's `AQ`.
+//!
 //! Synthetic slugs are `<sink>_<port>__<op><n>` (post-order, per-operator
 //! counter), so an expression's identity is stable while its text is
 //! unchanged; editing the expression re-derives the slugs and the compiler
@@ -57,6 +63,10 @@ impl Module {
             })
             .collect();
 
+        // `let` constants, for inlining into formula text.
+        let lets: BTreeMap<&str, &Value> =
+            self.lets().map(|l| (l.name.as_str(), &l.value)).collect();
+
         let mut items = Vec::with_capacity(self.items.len());
         let mut minted: Vec<String> = Vec::new();
         // Counters persist across expressions sharing one sink prefix, so
@@ -73,6 +83,7 @@ impl Module {
                         out: &mut items,
                         minted: &mut minted,
                         taken: &taken,
+                        lets: &lets,
                     };
                     let root = ctx.node(&w.expr)?;
                     items.push(Item::Wire(WireDecl {
@@ -107,6 +118,7 @@ impl Module {
                             out: &mut items,
                             minted: &mut minted,
                             taken: &taken,
+                            lets: &lets,
                         };
                         let root = ctx.node(e)?;
                         args.push(ArgItem::Binding(Binding {
@@ -134,6 +146,9 @@ struct Desugar<'a> {
     out: &'a mut Vec<Item>,
     minted: &'a mut Vec<String>,
     taken: &'a BTreeSet<&'a str>,
+    /// Module `let` constants — arithmetic inlines them into the formula
+    /// text, so they must resolve to plain numbers here.
+    lets: &'a BTreeMap<&'a str, &'a Value>,
 }
 
 impl Desugar<'_> {
@@ -149,11 +164,11 @@ impl Desugar<'_> {
                 };
                 let i1 = self.node(a)?;
                 let i2 = self.node(b)?;
-                self.emit(op, ty, e, vec![wire("I1", i1), wire("I2", i2)])
+                self.emit(op, ty, e, vec![wire("I1", i1), wire("I2", i2)], "Q")
             }
             Expr::Not(x) => {
                 let i = self.node(x)?;
-                self.emit("not", "Not", e, vec![wire("I", i)])
+                self.emit("not", "Not", e, vec![wire("I", i)], "Q")
             }
             Expr::Cmp { op, lhs, rhs } => {
                 if !matches!(lhs, Operand::Port(_)) && !matches!(rhs, Operand::Port(_)) {
@@ -177,12 +192,133 @@ impl Desugar<'_> {
                     ty,
                     e,
                     vec![operand("Input1", lhs), operand("Input2", rhs)],
+                    "Q",
                 )
             }
+            Expr::Arith { .. } => self.formula(e),
             Expr::Atom(Operand::Port(p)) => Ok(p.clone()),
             Expr::Atom(Operand::Value(v)) => Err(Error::Compile(format!(
                 "`{v}` in the expression on `{}` cannot drive a gate input — gates \
                  take boolean ports; write a comparison like `x.AQ >= {v}`",
+                self.sink,
+            ))),
+        }
+    }
+
+    /// One `Formula` block for a maximal arithmetic tree.
+    fn formula(&mut self, e: &Expr) -> Result<PortRef> {
+        let mut inputs: Vec<PortRef> = Vec::new();
+        for o in e.operands() {
+            if let Operand::Port(p) = o
+                && !inputs.contains(p)
+            {
+                inputs.push(p.clone());
+            }
+        }
+        if inputs.is_empty() {
+            return Err(Error::Compile(format!(
+                "`{e}` in the expression on `{}` computes on constants only — \
+                 fold it by hand",
+                self.sink,
+            )));
+        }
+        if inputs.len() > 4 {
+            return Err(Error::Compile(format!(
+                "`{e}` on `{}` reads {} distinct ports — a `Formula` block takes \
+                 at most 4 inputs; split the expression or declare the block by \
+                 hand",
+                self.sink,
+                inputs.len(),
+            )));
+        }
+        let text = self.render(e, &inputs)?;
+        let mut args = vec![ArgItem::Binding(Binding {
+            port: "Formula".to_string(),
+            kind: BindingKind::Param(Value::Str(text)),
+            comment: None,
+        })];
+        for (i, p) in inputs.iter().enumerate() {
+            args.push(wire(&format!("Input{}", i + 1), p.clone()));
+        }
+        self.emit("f", "Formula", e, args, "AQ")
+    }
+
+    /// The Loxone formula text: compact (no spaces), port operands as
+    /// `I<n>`, constants inlined, parens only where precedence needs them.
+    fn render(&self, e: &Expr, inputs: &[PortRef]) -> Result<String> {
+        Ok(match e {
+            Expr::Arith { op, lhs, rhs } => {
+                let l = self.render_child(lhs, e, false, inputs)?;
+                let r = self.render_child(rhs, e, true, inputs)?;
+                format!("{l}{}{r}", op.symbol())
+            }
+            Expr::Atom(Operand::Port(p)) => {
+                let i = inputs.iter().position(|x| x == p).expect("collected above") + 1;
+                format!("I{i}")
+            }
+            Expr::Atom(Operand::Value(v)) => {
+                let n = self.constant(v)?;
+                // `I1*(-5)` — a bare `-` mid-formula would read as binary.
+                if n.starts_with('-') {
+                    format!("({n})")
+                } else {
+                    n
+                }
+            }
+            other => {
+                return Err(Error::Compile(format!(
+                    "`{other}` mixes boolean logic into the arithmetic on `{}` — \
+                     deferred (v1)",
+                    self.sink,
+                )));
+            }
+        })
+    }
+
+    fn render_child(
+        &self,
+        child: &Expr,
+        parent: &Expr,
+        right: bool,
+        inputs: &[PortRef],
+    ) -> Result<String> {
+        let s = self.render(child, inputs)?;
+        // Same minimal-paren rule as the canonical text form: equal
+        // precedence needs parens on the right only (left-associative).
+        let needs = if right {
+            child.prec() <= parent.prec()
+        } else {
+            child.prec() < parent.prec()
+        };
+        Ok(if needs { format!("({s})") } else { s })
+    }
+
+    /// A constant operand as formula text — plain numbers only; `let`
+    /// references are inlined (their values are always literals).
+    fn constant(&self, v: &Value) -> Result<String> {
+        match v {
+            Value::Number(n) => Ok(n.clone()),
+            Value::Ref(name) => match self.lets.get(name.as_str()) {
+                Some(Value::Number(n)) => Ok(n.clone()),
+                Some(other) => Err(Error::Compile(format!(
+                    "`{name}` in the arithmetic on `{}` is `{other}` — formulas \
+                     compute on plain numbers",
+                    self.sink,
+                ))),
+                None => Err(Error::Compile(format!(
+                    "unknown constant `{name}` in the arithmetic on `{}`",
+                    self.sink,
+                ))),
+            },
+            Value::Unit { .. } => Err(Error::Compile(format!(
+                "`{v}` in the arithmetic on `{}` carries a unit — formulas \
+                 compute on plain numbers; write the value in the port's base \
+                 unit instead",
+                self.sink,
+            ))),
+            Value::Str(s) => Err(Error::Compile(format!(
+                "`\"{s}\"` in the arithmetic on `{}` is a string — formulas \
+                 compute on plain numbers",
                 self.sink,
             ))),
         }
@@ -194,6 +330,7 @@ impl Desugar<'_> {
         ty: &str,
         node: &Expr,
         args: Vec<ArgItem>,
+        out_port: &str,
     ) -> Result<PortRef> {
         let n = self.counters.entry((self.prefix.clone(), op)).or_insert(0);
         *n += 1;
@@ -218,7 +355,7 @@ impl Desugar<'_> {
         self.minted.push(slug.clone());
         Ok(PortRef {
             slug,
-            port: "Q".to_string(),
+            port: out_port.to_string(),
         })
     }
 }

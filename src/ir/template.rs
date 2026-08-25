@@ -42,6 +42,11 @@ fn map_expr(
             lhs: operand(lhs)?,
             rhs: operand(rhs)?,
         },
+        Expr::Arith { op, lhs, rhs } => Expr::Arith {
+            op: *op,
+            lhs: Box::new(map_expr(lhs, map_ref, map_value)?),
+            rhs: Box::new(map_expr(rhs, map_ref, map_value)?),
+        },
         Expr::Atom(o) => Expr::Atom(operand(o)?),
     })
 }

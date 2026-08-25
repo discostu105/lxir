@@ -2,7 +2,8 @@
 # Wassertemperatur, Abdeckungs-Interlock und PV-Überschuss-Freigabe
 # für die Wärmepumpe. Kompiliert gegen examples/configs/pool.Loxone
 # und führt die Sprache vor: page, let, extern (iname / title+room),
-# Templates, Ausdrücke als Argument und am Draht, Einheiten-Werte.
+# Templates, Ausdrücke als Argument und am Draht, Einheiten-Werte,
+# Arithmetik als Formula-Block.
 # (Die Lebenszyklus-Statements `removed` und `moved` sind transient
 # und stehen deshalb in keinem Dauer-Beispiel — siehe ir-spec.md.)
 
@@ -49,3 +50,14 @@ nachlauf = Monoflop(
 # Teilausdruck wird ein Gatter-Block mit deterministischem Slug.
 
 wp_freigabe.On <- wassertemp.Q < wunschtemp and pv_ueberschuss.Q >= pv_schwelle and not abdeckung_offen.Q
+
+# Arithmetik (D35): der ganze Rechenbaum wird EIN Formula-Block
+# (`pv_kw_input__f1`, Formel "I1/1000"), gespeist wird der Schwellwert-
+# Trigger aus dessen AQ. Boolesche Logik bleibt beim diskreten Backend.
+
+pv_kw = AnalogThresholdTrigger(
+	"PV-Überschuss über 1.5 kW",
+	Input: pv_ueberschuss.Q / 1000,
+	On: 1.5,
+	Off: 1.2,
+)

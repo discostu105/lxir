@@ -188,11 +188,17 @@ types) contradict each other. Results and methodology:
       minted in a later compile session can never collide with an
       earlier one at an identical mint time. Spec:
       [ir-spec.md](ir-spec.md), rationale: design.md D24.
-- [ ] `formula` backend, selectable per expression: one `Formula` block
-      (compact — a 14-block rule becomes 2) instead of discrete gates;
-      capped at 4 inputs, opaque in the canvas. With it, the question
-      how far the semantics go — boolean/comparison only, or the full
-      Formula grammar (`IF`, arithmetic).
+- [x] `formula` backend — shipped as the *arithmetic* backend
+      (2026-08-25): `+ - * /` in an expression desugar to ONE `Formula`
+      block per maximal arithmetic tree (`verbrauch.AQ / 1000` →
+      `Formula: "I1/1000"`), inputs `I1..I4` in first-appearance order
+      with repeated ports deduplicated, constants (numbers, numeric
+      `let` refs) inlined, slug operator `f`, result `AQ`. Standalone
+      only — under gates/comparisons arithmetic errors at parse time
+      (unverified analog-into-gate wiring), and boolean logic keeps the
+      discrete backend (readable on the canvas); a per-expression
+      backend switch is rejected. The full Formula grammar (`IF`,
+      functions) stays on the explicit block. Rationale: design.md D35.
 
 ## Stufe 3 — Verification loop
 

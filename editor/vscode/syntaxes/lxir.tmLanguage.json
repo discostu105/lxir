@@ -52,6 +52,10 @@
         {
           "name": "keyword.operator.comparison.lxir",
           "match": ">=|<=|==|!=|<(?!-)|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.lxir",
+          "match": "[+*/]|(?<=[\\w)])\\s*-(?![0-9>])"
         }
       ]
     },

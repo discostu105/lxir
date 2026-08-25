@@ -47,9 +47,13 @@ set        = slug "." port "=" value [ comment ] ;            (* extern target *
 expr       = and-expr { "or" and-expr } ;
 and-expr   = unary { "and" unary } ;
 unary      = "not" unary | primary ;
-primary    = comparison | operand | "(" expr ")" ;
+primary    = comparison | arith | "(" expr ")" ;
 comparison = operand cmp-op operand ;              (* no chaining *)
 cmp-op     = ">=" | ">" | "<=" | "<" | "==" | "!=" ;
+arith      = term { ("+" | "-") term } ;           (* standalone only (D35):
+                                                      a whole RHS or binding *)
+term       = factor { ("*" | "/") factor } ;
+factor     = operand | "(" arith ")" ;
 operand    = slug "." port | number [ unit ] | const-ref ;
 removed    = "removed" slug [ comment ] ;
 moved      = "moved" slug "->" slug [ comment ] ;
@@ -445,12 +449,33 @@ Config canvas. A bare `slug.Port` stays a plain wire, a bare value a
 plain parameter — parenthesizing one changes nothing (one canonical
 spelling per fact).
 
-Precedence, loosest to tightest: `or` < `and` < `not` < comparison;
-parentheses group. Comparisons take plain operands (a port, a number,
-or a constant — at least one side a port) and do not chain — write
-`a.AQ >= 5 and a.AQ < 10`, not `5 <= a.AQ < 10`. A constant cannot
-drive a gate input directly; compare it. Gates take boolean ports or
-sub-expressions.
+Precedence, loosest to tightest: `or` < `and` < `not` < comparison <
+`+ -` < `* /`; parentheses group. Comparisons take plain operands (a
+port, a number, or a constant — at least one side a port) and do not
+chain — write `a.AQ >= 5 and a.AQ < 10`, not `5 <= a.AQ < 10`. A
+constant cannot drive a gate input directly; compare it. Gates take
+boolean ports or sub-expressions.
+
+**Arithmetic — one `Formula` block** (D35). `+ - * /` may form the
+whole RHS of `<-` or a whole argument binding:
+
+```text
+verbrauch_kw.AI <- verbrauch.AQ / 1000
+```
+
+A maximal arithmetic tree desugars into ONE `Formula` block — here
+`verbrauch_kw_ai__f1` with `Formula: "I1/1000"` and `Input1` wired from
+`verbrauch.AQ`, the sink fed from the block's `AQ`. Distinct port
+operands become `Input1`…`Input4` in first-appearance order (a repeated
+port reuses its input; more than 4 distinct ports is an error — split
+the expression). Numbers and numeric `let` references are inlined into
+the compact formula text (negative constants parenthesized: `I1*(-2)`);
+unit values (`40s`) and strings are rejected — formulas compute on
+plain numbers. The block's label is the expression text, as with every
+synthetic block, and identity works exactly like the discrete backend
+(slug operator `f`, expression-owned lock entry). Arithmetic *under*
+gates or comparisons (`a.Q and x.AQ + 1`, `x.AQ + 1 >= 5`) is deferred:
+declare an explicit `Formula` block and use its `AQ`.
 
 **Identity.** The generated blocks get synthetic slugs
 `<sink>_<port>__<op><n>` (post-order walk, one counter per operator;

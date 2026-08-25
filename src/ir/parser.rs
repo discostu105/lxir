@@ -23,6 +23,13 @@ enum Tok {
     RBrace,
     /// Comparison operators (expression sugar, D24).
     Cmp(CmpOp),
+    /// Arithmetic operators (formula backend, D24). `-` is only lexed as
+    /// binary minus after a token that can end an operand — everywhere
+    /// else it starts a negative number.
+    Plus,
+    Minus,
+    Star,
+    Slash,
 }
 
 fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
@@ -79,6 +86,18 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
                     return Err(err("unexpected `!` (not-equal is `!=`)".into()));
                 }
             }
+            '+' => {
+                chars.next();
+                toks.push(Tok::Plus);
+            }
+            '*' => {
+                chars.next();
+                toks.push(Tok::Star);
+            }
+            '/' => {
+                chars.next();
+                toks.push(Tok::Slash);
+            }
             '(' => {
                 chars.next();
                 toks.push(Tok::LParen);
@@ -116,6 +135,15 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
                 if chars.peek() == Some(&'>') {
                     chars.next();
                     toks.push(Tok::Arrow);
+                } else if matches!(
+                    toks.last(),
+                    Some(Tok::Ident(_) | Tok::Num(_) | Tok::UnitNum(..) | Tok::RParen)
+                ) {
+                    // Binary minus: only after something that can end an
+                    // operand (`a.AQ - 5`, `(x + 1) - y.AQ`). After `:`,
+                    // `=`, a comparison etc. `-` keeps starting a negative
+                    // number (`SSoff: -30`, `x < -5`).
+                    toks.push(Tok::Minus);
                 } else {
                     // negative number
                     let mut s = String::from('-');
@@ -923,8 +951,10 @@ fn check_slug(s: &str, lineno: usize) -> Result<String> {
 }
 
 /// Parse the RHS of `<-` as an expression (D24). Precedence, loosest to
-/// tightest: `or` < `and` < `not` < comparison; parens group; comparisons
-/// take plain operands and do not chain. Must consume every token.
+/// tightest: `or` < `and` < `not` < comparison < `+ -` < `* /`; parens
+/// group; comparisons take plain operands and do not chain. Arithmetic
+/// stands alone — under a gate or a comparison it is deferred (v1) with a
+/// parse error. Must consume every token.
 fn parse_expr(toks: &[Tok], lineno: usize) -> Result<Expr> {
     let mut p = ExprParser {
         toks,
@@ -960,11 +990,60 @@ impl ExprParser<'_> {
         matches!(self.peek(), Some(Tok::Ident(s)) if s == kw)
     }
 
+    /// Arithmetic mixed under `or`/`and`/`not` is deferred: the analog
+    /// `AQ` of a `Formula` feeding a boolean gate input is behavior we have
+    /// not verified against the Miniserver.
+    fn no_arith(&self, e: &Expr, kw: &str) -> Result<()> {
+        if matches!(e, Expr::Arith { .. }) {
+            return Err(self.err(format!(
+                "arithmetic under `{kw}` is deferred (v1) — declare an explicit \
+                 `Formula` block and use its `AQ`"
+            )));
+        }
+        Ok(())
+    }
+
+    /// A parenthesized group taking part in arithmetic must itself be
+    /// arithmetic — gates and comparisons produce on/off, not numbers.
+    fn ensure_arith(&self, e: &Expr) -> Result<()> {
+        if !matches!(e, Expr::Atom(_) | Expr::Arith { .. }) {
+            return Err(self.err(
+                "a boolean group cannot take part in arithmetic — gates and \
+                 comparisons produce on/off, not numbers (v1)"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn add_op(&self) -> Option<ArithOp> {
+        match self.peek() {
+            Some(Tok::Plus) => Some(ArithOp::Add),
+            Some(Tok::Minus) => Some(ArithOp::Sub),
+            _ => None,
+        }
+    }
+
+    fn mul_op(&self) -> Option<ArithOp> {
+        match self.peek() {
+            Some(Tok::Star) => Some(ArithOp::Mul),
+            Some(Tok::Slash) => Some(ArithOp::Div),
+            _ => None,
+        }
+    }
+
+    fn arith_op(&self) -> Option<ArithOp> {
+        self.add_op().or_else(|| self.mul_op())
+    }
+
     fn or_level(&mut self) -> Result<Expr> {
         let mut e = self.and_level()?;
         while self.keyword("or") {
+            self.no_arith(&e, "or")?;
             self.pos += 1;
-            e = Expr::Or(Box::new(e), Box::new(self.and_level()?));
+            let rhs = self.and_level()?;
+            self.no_arith(&rhs, "or")?;
+            e = Expr::Or(Box::new(e), Box::new(rhs));
         }
         Ok(e)
     }
@@ -972,8 +1051,11 @@ impl ExprParser<'_> {
     fn and_level(&mut self) -> Result<Expr> {
         let mut e = self.unary()?;
         while self.keyword("and") {
+            self.no_arith(&e, "and")?;
             self.pos += 1;
-            e = Expr::And(Box::new(e), Box::new(self.unary()?));
+            let rhs = self.unary()?;
+            self.no_arith(&rhs, "and")?;
+            e = Expr::And(Box::new(e), Box::new(rhs));
         }
         Ok(e)
     }
@@ -981,13 +1063,15 @@ impl ExprParser<'_> {
     fn unary(&mut self) -> Result<Expr> {
         if self.keyword("not") {
             self.pos += 1;
-            return Ok(Expr::Not(Box::new(self.unary()?)));
+            let x = self.unary()?;
+            self.no_arith(&x, "not")?;
+            return Ok(Expr::Not(Box::new(x)));
         }
         self.primary()
     }
 
     fn primary(&mut self) -> Result<Expr> {
-        if matches!(self.peek(), Some(Tok::LParen)) {
+        let e = if matches!(self.peek(), Some(Tok::LParen)) {
             self.pos += 1;
             let e = self.or_level()?;
             if !matches!(self.peek(), Some(Tok::RParen)) {
@@ -1001,13 +1085,34 @@ impl ExprParser<'_> {
                     op.symbol()
                 )));
             }
-            return Ok(e);
-        }
-        let lhs = self.operand()?;
+            if self.arith_op().is_none() {
+                return Ok(e);
+            }
+            // `(…) * x` — the group is the first factor of an arithmetic
+            // expression.
+            self.ensure_arith(&e)?;
+            self.sum_from(e)?
+        } else {
+            self.sum()?
+        };
         if let Some(Tok::Cmp(op)) = self.peek() {
             let op = *op;
+            let Expr::Atom(lhs) = e else {
+                return Err(self.err(format!(
+                    "arithmetic under `{}` is deferred (v1) — declare an explicit \
+                     `Formula` block and compare its `AQ`",
+                    op.symbol()
+                )));
+            };
             self.pos += 1;
             let rhs = self.operand()?;
+            if self.arith_op().is_some() {
+                return Err(self.err(format!(
+                    "arithmetic under `{}` is deferred (v1) — declare an explicit \
+                     `Formula` block and compare its `AQ`",
+                    op.symbol()
+                )));
+            }
             if matches!(self.peek(), Some(Tok::Cmp(_))) {
                 return Err(self.err(
                     "comparisons do not chain (`a < b < c`) — split into two \
@@ -1017,7 +1122,62 @@ impl ExprParser<'_> {
             }
             return Ok(Expr::Cmp { op, lhs, rhs });
         }
-        Ok(Expr::Atom(lhs))
+        Ok(e)
+    }
+
+    /// `+`/`-` level; `*`/`/` bind tighter. A single operand comes back as
+    /// a plain `Atom`, so non-arithmetic callers are unaffected.
+    fn sum(&mut self) -> Result<Expr> {
+        let first = self.factor()?;
+        self.sum_from(first)
+    }
+
+    /// Continue a sum whose first factor is already parsed (also the entry
+    /// point after a parenthesized group at primary level).
+    fn sum_from(&mut self, first: Expr) -> Result<Expr> {
+        let mut e = self.mul_rest(first)?;
+        while let Some(op) = self.add_op() {
+            self.pos += 1;
+            let rhs = self.mul()?;
+            e = Expr::Arith {
+                op,
+                lhs: Box::new(e),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(e)
+    }
+
+    fn mul(&mut self) -> Result<Expr> {
+        let first = self.factor()?;
+        self.mul_rest(first)
+    }
+
+    fn mul_rest(&mut self, mut e: Expr) -> Result<Expr> {
+        while let Some(op) = self.mul_op() {
+            self.pos += 1;
+            let rhs = self.factor()?;
+            e = Expr::Arith {
+                op,
+                lhs: Box::new(e),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(e)
+    }
+
+    fn factor(&mut self) -> Result<Expr> {
+        if matches!(self.peek(), Some(Tok::LParen)) {
+            self.pos += 1;
+            let e = self.or_level()?;
+            if !matches!(self.peek(), Some(Tok::RParen)) {
+                return Err(self.err("missing `)` in the expression".into()));
+            }
+            self.pos += 1;
+            self.ensure_arith(&e)?;
+            return Ok(e);
+        }
+        Ok(Expr::Atom(self.operand()?))
     }
 
     fn operand(&mut self) -> Result<Operand> {

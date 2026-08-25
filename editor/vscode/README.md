@@ -5,7 +5,7 @@ Declarative VS Code extension for `.lxir` modules: syntax highlighting
 statement form — `page`, `let`, `extern`, blocks, `template`/`end` and
 instances, wires (plain and expression), `set`, `removed`/`moved` — plus
 unit-suffixed values (`30min`, `2700K`) and the expression operators
-(`and`/`or`/`not`, comparisons).
+(`and`/`or`/`not`, comparisons, arithmetic).
 
 No build step and no extension host code — install by copying or linking the
 folder into your extensions directory:

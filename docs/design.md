@@ -740,3 +740,42 @@ Anything unverified is an error, not a heuristic:
   appears only while some unfoldable wire still names it, the way its
   plumbing wires have always folded (D29). On the live r50 config the
   full view drops from 174 ref externs to 12.
+- **D35 — arithmetic is the `Formula` backend, standalone-only**
+  (2026-08-25). `+ - * /` join the expression grammar (tighter than
+  comparison; `* /` tighter than `+ -`; parens group), but unlike the
+  boolean operators they do NOT map to one block per operator — there
+  are no discrete arithmetic gates worth cascading. A maximal
+  arithmetic tree becomes ONE `Formula` block: distinct port operands
+  bind `Input1`…`Input4` in first-appearance order (a repeated port
+  reuses its input — `(a.AQ + b.AQ) * a.AQ` is `(I1+I2)*I1` with two
+  inputs), numbers and numeric `let` references are inlined into the
+  compact formula text, negative constants parenthesized (`I1*(-2)`),
+  the result is `AQ`, the slug operator `f`. The 4-input cap is the
+  block's own; exceeding it is an error suggesting a split. Identity,
+  labels, and lock ownership are exactly D24's.
+  Standalone only: arithmetic may be a whole `<-` RHS or a whole
+  argument binding, and nothing else. Under a gate or comparison
+  (`a.Q and x.AQ + 1`, `x.AQ + 1 >= 5`) it errors at parse time with a
+  pointer at the explicit-`Formula` escape hatch — a `Formula`'s
+  analog `AQ` feeding a boolean input is behavior we have not verified
+  against the Miniserver, and comparison operands staying plain keeps
+  the v1 grammar decision intact. Both compositions are deferred, not
+  rejected: the desugarer already composes (a gate operand may be any
+  node), so allowing them later is deleting two parse checks after a
+  sim/live verification, not building machinery.
+  Lexing: `-` after a token that can end an operand (identifier,
+  number, `)`) is binary minus; everywhere else it starts a negative
+  number, so `SSoff: -30` and `x < -5` read as before — no existing
+  program changes meaning.
+  - Rejected alternatives: a per-expression backend *switch*
+    (`formula(...)` wrapper or pragma choosing Formula vs discrete for
+    boolean logic too, as the roadmap once sketched) — arithmetic has
+    exactly one sensible backend and boolean logic already has one;
+    a switch would be two spellings per rule with nothing choosing
+    between them. Folding r50's ten hand-written PV `Formula` blocks
+    into expressions — their titles and lock identities are
+    established; a migration would re-mint for zero byte-level gain
+    (the language now covers new cases; it does not force rewrites).
+    The full Formula grammar (`IF`, functions, comparisons *inside*
+    the formula string) stays out of the expression language — the
+    string parameter remains available verbatim on an explicit block.

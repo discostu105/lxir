@@ -4,7 +4,7 @@
 
 use lxir::ir::{
     ArgItem, Binding, BindingKind, CompileOptions, DecompileOptions, DecompileScope, Item, Module,
-    PortRef, adopt, adopt_one, adopt_pages, compile, decompile, decompile_pages,
+    PortRef, Value, adopt, adopt_one, adopt_pages, compile, decompile, decompile_pages,
 };
 use lxir::uuid::parse_serial;
 use lxir::xml::{Attr, Element};
@@ -213,13 +213,15 @@ fn pool_showcase_compiles_end_to_end() {
         lock.externals["wp_freigabe"].uuid,
         "30000006-0000-0060-ffff504f94112233"
     );
-    // Two declared blocks (the template's `frost_alarm`, the Monoflop)
-    // plus six desugared gates: one from the argument expression, five
-    // from the three-way wire expression.
-    assert_eq!(lock.objects.len(), 8);
+    // Three declared blocks (the template's `frost_alarm`, the
+    // Monoflop, the threshold trigger) plus seven desugared: one gate
+    // from the argument expression, five from the three-way wire
+    // expression, one Formula from the arithmetic binding (D35).
+    assert_eq!(lock.objects.len(), 10);
     assert!(lock.objects.contains_key("frost_alarm"));
     assert!(lock.objects["nachlauf_inputtrigger__ge1"].expr_owned);
     assert!(lock.objects["wp_freigabe_on__and2"].expr_owned);
+    assert!(lock.objects["pv_kw_input__f1"].expr_owned);
     // `Time: 30min` compiled exactly to seconds.
     let nachlauf = out
         .objects()
@@ -2116,6 +2118,17 @@ fn expression_canonical_form_uses_minimal_parens() {
     assert_eq!(canon("not not a.Q"), "not not a.Q");
     assert_eq!(canon("not (a.Q and b.Q)"), "not (a.Q and b.Q)");
     assert_eq!(canon("a.Q < -5"), "a.Q < -5");
+    // Arithmetic: `* /` bind tighter than `+ -`; both are left-
+    // associative, grouping against precedence keeps its parens.
+    assert_eq!(canon("a.Q + b.Q * c.Q"), "a.Q + b.Q * c.Q");
+    assert_eq!(canon("(a.Q + b.Q) * c.Q"), "(a.Q + b.Q) * c.Q");
+    assert_eq!(canon("a.Q * (b.Q + c.Q)"), "a.Q * (b.Q + c.Q)");
+    assert_eq!(canon("a.Q - b.Q + c.Q"), "a.Q - b.Q + c.Q");
+    assert_eq!(canon("a.Q - (b.Q + c.Q)"), "a.Q - (b.Q + c.Q)");
+    assert_eq!(canon("a.Q / (b.Q * c.Q)"), "a.Q / (b.Q * c.Q)");
+    assert_eq!(canon("(a.Q) + 1"), "a.Q + 1");
+    assert_eq!(canon("a.Q * -2"), "a.Q * -2");
+    assert_eq!(canon("a.Q-1"), "a.Q - 1");
 }
 
 #[test]
@@ -2372,5 +2385,189 @@ fn expression_binding_misuse_is_reported() {
     assert!(
         err.to_string().contains("not a port or expression"),
         "{err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Arithmetic → one Formula block (D24 formula backend)
+
+#[test]
+fn arithmetic_desugars_to_one_formula_block() {
+    let base = base();
+    let src = "extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+               extern sonne = VirtualIn(iname: \"VI3\")\n\
+               extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+               \n\
+               jal_sued.AutoShade <- (aussentemp.Q + sonne.Q) * aussentemp.Q / 1000\n";
+    let module = Module::parse(src).unwrap();
+
+    // Canonical text keeps the necessary parens and is a fixpoint.
+    let text = module.to_text();
+    assert!(
+        text.contains("jal_sued.AutoShade <- (aussentemp.Q + sonne.Q) * aussentemp.Q / 1000"),
+        "{text}"
+    );
+    assert_eq!(
+        Module::parse(&text).unwrap(),
+        module,
+        "parse ∘ to_text = id"
+    );
+
+    // ONE Formula block for the whole tree: distinct ports become
+    // Input1/Input2 in first-appearance order, the repeated port reuses
+    // its input, the constant is inlined into the compact formula text.
+    let (plain, info) = module.expand().unwrap().desugar().unwrap();
+    assert_eq!(info.expressions, 1);
+    assert_eq!(
+        info.synthetic.iter().collect::<Vec<_>>(),
+        ["jal_sued_autoshade__f1"]
+    );
+    let f = plain
+        .blocks()
+        .find(|b| b.slug == "jal_sued_autoshade__f1")
+        .unwrap();
+    assert_eq!(f.block_type, "Formula");
+    assert_eq!(
+        f.title.as_deref(),
+        Some("(aussentemp.Q + sonne.Q) * aussentemp.Q / 1000")
+    );
+    assert!(
+        f.params()
+            .any(|(p, v)| p == "Formula" && *v == Value::Str("(I1+I2)*I1/1000".into())),
+        "formula text: {:?}",
+        f.params().collect::<Vec<_>>()
+    );
+    let inputs: Vec<(String, String)> = f
+        .input_wires()
+        .map(|(port, src)| (port.to_string(), src.to_string()))
+        .collect();
+    assert_eq!(
+        inputs,
+        [
+            ("Input1".to_string(), "aussentemp.Q".to_string()),
+            ("Input2".to_string(), "sonne.Q".to_string()),
+        ]
+    );
+    assert!(
+        plain
+            .wire_pairs()
+            .iter()
+            .any(|(src, sink)| src.to_string() == "jal_sued_autoshade__f1.AQ"
+                && sink.to_string() == "jal_sued.AutoShade"),
+        "the sink is fed from the Formula's AQ"
+    );
+
+    // Compile: locked and expression-owned like every synthetic block.
+    let mut lock = Lockfile::new();
+    let out = compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.objects.keys().collect::<Vec<_>>(),
+        ["jal_sued_autoshade__f1"]
+    );
+    assert!(lock.objects.values().all(|o| o.expr_owned));
+    let out2 = compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        out.to_bytes(),
+        out2.to_bytes(),
+        "recompile is byte-identical"
+    );
+}
+
+#[test]
+fn arithmetic_inlines_let_constants_and_works_in_bindings() {
+    let head = "extern a = VirtualIn(iname: \"VI1\")\n\
+                extern b = VirtualIn(iname: \"VI2\")\n\
+                extern jal = AutoJalousie(title: \"J\")\n\
+                let faktor = 3\n";
+
+    // A `let` number is inlined into the formula text; the title keeps
+    // the name as written.
+    let m = Module::parse(&format!("{head}jal.AutoShade <- (a.Q - b.Q) * faktor\n")).unwrap();
+    let (plain, _) = m.expand().unwrap().desugar().unwrap();
+    let f = plain
+        .blocks()
+        .find(|x| x.slug == "jal_autoshade__f1")
+        .unwrap();
+    assert_eq!(f.title.as_deref(), Some("(a.Q - b.Q) * faktor"));
+    assert!(
+        f.params()
+            .any(|(p, v)| p == "Formula" && *v == Value::Str("(I1-I2)*3".into())),
+        "{:?}",
+        f.params().collect::<Vec<_>>()
+    );
+
+    // A negative constant is parenthesized in the formula text so the
+    // `-` cannot read as binary.
+    let m = Module::parse(&format!("{head}jal.AutoShade <- a.Q * -2\n")).unwrap();
+    let (plain, _) = m.expand().unwrap().desugar().unwrap();
+    let f = plain
+        .blocks()
+        .find(|x| x.slug == "jal_autoshade__f1")
+        .unwrap();
+    assert!(
+        f.params()
+            .any(|(p, v)| p == "Formula" && *v == Value::Str("I1*(-2)".into())),
+        "{:?}",
+        f.params().collect::<Vec<_>>()
+    );
+
+    // A whole argument binding may be arithmetic (D26): the Formula's AQ
+    // is wired onto the bound input.
+    let m = Module::parse(&format!("{head}gate = And(I1: a.Q - b.Q, I2: b.Q)\n")).unwrap();
+    let (plain, info) = m.expand().unwrap().desugar().unwrap();
+    assert_eq!(info.synthetic.iter().collect::<Vec<_>>(), ["gate_i1__f1"]);
+    let gate = plain.blocks().find(|x| x.slug == "gate").unwrap();
+    assert!(
+        gate.input_wires()
+            .any(|(port, src)| port == "I1" && src.to_string() == "gate_i1__f1.AQ"),
+        "binding becomes a wire from the Formula's AQ"
+    );
+}
+
+#[test]
+fn arithmetic_misuse_is_reported() {
+    let head = "extern a = VirtualIn(iname: \"VI1\")\n\
+                extern b = VirtualIn(iname: \"VI2\")\n\
+                extern jal = AutoJalousie(title: \"J\")\n";
+    let fails = |line: &str, needle: &str| {
+        let err = Module::parse(&format!("{head}{line}\n"))
+            .and_then(|m| m.expand())
+            .and_then(|m| m.desugar().map(|_| ()))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(needle),
+            "`{line}`: expected {needle:?} in: {err}"
+        );
+    };
+
+    // Arithmetic stands alone (v1) — under gates and comparisons it is
+    // deferred, with parse-time errors.
+    fails("jal.AutoShade <- a.Q and b.Q + 1", "arithmetic under `and`");
+    fails("jal.AutoShade <- b.Q + 1 or a.Q", "arithmetic under `or`");
+    fails("jal.AutoShade <- not a.Q + 1", "arithmetic under `not`");
+    fails("jal.AutoShade <- a.Q + 1 >= 5", "arithmetic under `>=`");
+    fails("jal.AutoShade <- a.Q >= b.Q + 1", "arithmetic under `>=`");
+    fails(
+        "jal.AutoShade <- (a.Q and b.Q) + 1",
+        "cannot take part in arithmetic",
+    );
+    fails(
+        "jal.AutoShade <- a.Q * (b.Q >= 5)",
+        "cannot take part in arithmetic",
+    );
+
+    // Operand shape errors.
+    fails("jal.AutoShade <- 1 + 2", "computes on constants only");
+    fails("jal.AutoShade <- a.Q + 40s", "carries a unit");
+    fails("jal.AutoShade <- a.Q + \"x\"", "strings have no place");
+    fails(
+        "let s = \"x\"\njal.AutoShade <- a.Q * s",
+        "formulas compute on plain numbers",
+    );
+
+    // A Formula block takes at most 4 inputs.
+    fails(
+        "jal.AutoShade <- a.Q + a.AQ + b.Q + b.AQ + jal.Q",
+        "at most 4 inputs",
     );
 }

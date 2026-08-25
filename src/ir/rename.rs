@@ -185,6 +185,10 @@ fn rename_expr(e: &mut Expr, old: &str, new: &str) {
             rename_operand(lhs, old, new);
             rename_operand(rhs, old, new);
         }
+        Expr::Arith { lhs, rhs, .. } => {
+            rename_expr(lhs, old, new);
+            rename_expr(rhs, old, new);
+        }
         Expr::Atom(o) => rename_operand(o, old, new),
     }
 }
