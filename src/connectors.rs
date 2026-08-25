@@ -103,6 +103,19 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "AnalogThresholdTrigger",
 ];
 
+/// Element-attribute parameters per block type: logic Loxone stores as an
+/// attribute on the `<C>` element rather than as `Def=` on a connector. In
+/// the IR they bind like any parameter (`Formula: "I1+I2"` in the argument
+/// list). Every observed `Formula=` attribute is accompanied by
+/// `Valid="false"` (the GUI revalidates on load); the compiler emits that
+/// pair together.
+pub fn attr_params(block_type: &str) -> &'static [&'static str] {
+    match block_type {
+        "Formula" => &["Formula"],
+        _ => &[],
+    }
+}
+
 /// Verified port tables for the block types the compiler may create.
 /// Order = connector-index order.
 pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {

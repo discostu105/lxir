@@ -41,7 +41,12 @@ otherwise — a wrong port UUID silently breaks wire identity.
       "layout": {                   // drawing rectangle; kept stable so
         "px": 7392, "py": 1080,     // recompiles don't shuffle the page
         "px2": 8736, "py2": 1776
-      }
+      },
+      "page_uuid": "…"              // <C Type="Page"> the block lives on;
+                                    // pinned on first compile (options'
+                                    // page) or by adopt (original page).
+                                    // Absent in pre-page-pinning locks —
+                                    // the next compile fills it.
     }
   },
 

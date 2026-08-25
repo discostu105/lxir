@@ -134,6 +134,18 @@ value decides the meaning:
 - An optional leading string is the display **label** (the XML `Title`);
   it defaults to the slug.
 
+Some block types carry **attribute parameters** — block logic stored as an
+element attribute rather than a connector. They bind exactly like
+parameters but can never take a wire:
+
+```text
+summe = Formula("Summe", Formula: "I1+I2", Input1: a.Q, Input2: b.Q)
+```
+
+`Formula:` on `Formula` blocks is the only one so far (declared per type
+in `connectors::attr_params`); it compiles to `Formula="I1+I2"` on the
+`<C>` element, together with the observed `Valid="false"` companion.
+
 Rules:
 
 - At most one parameter binding per port; multiple wire bindings on the

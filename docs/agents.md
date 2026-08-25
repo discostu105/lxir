@@ -67,9 +67,21 @@ noise (`[locale?]`) so it isn't mistaken for a real edit.
 
 The decompile view is for **reading, not compiling**: compiling it against
 the same base would mint duplicates of every managed block and claim
-ownership of every shown wire. When adopting existing logic, start from
-`lxir decompile --managed-only` (managed-type blocks and what they touch)
-and build the module up from there.
+ownership of every shown wire. To take over existing logic, use `adopt` —
+it produces the compilable pair:
+
+```sh
+# One-time takeover of existing managed-type blocks (never modifies the
+# config; refuses to overwrite existing outputs):
+lxir adopt current.Loxone --out-module modules/haus.lxir \
+                          --out-lock modules/haus.lock.json
+# Blocks whose rebuild would not be faithful are SKIPPED with a warning
+# (they stay unmanaged and appear as pinned externs) — read the warnings.
+# Then verify the takeover is a semantic no-op before editing anything:
+lxir compile --base current.Loxone --module modules/haus.lxir \
+             --lock modules/haus.lock.json --serial <serial> --out out.Loxone
+lxir diff --exit-code current.Loxone out.Loxone   # must be empty
+```
 
 ## The language in 30 seconds
 
@@ -133,6 +145,9 @@ it only when it matches what you intended.
 | `duplicate parameter` / `duplicate wire` | same argument twice in one argument list | delete one (fan-in with *different* sources is allowed) |
 | `undeclared constant` | bare identifier in value position | declare `let <name> = …`, or quote the value if a string was intended |
 | `neither slug is in the lockfile` (from `moved`) | rename references unknown identity | check both spellings against the lock; a first compile needs no `moved` |
+| `is an attribute parameter, not a connector` | wire aimed at e.g. `Formula:` | pass a value instead: `Formula: "I1+I2"` |
+| `warning: cannot adopt` (from `adopt`) | that block's rebuild would lose something (e.g. GUI input inversion `Inv=`) | leave it unmanaged, or remove the offending state in Loxone Config and re-adopt |
+| `recorded for block … no longer exists` | the pinned page was deleted from the base | re-pin: edit the lock entry's `page_uuid`, or `remove_object` the block to place it afresh |
 
 After any failed `compile`, the lockfile on disk is untouched (the CLI saves
 only on success) — just fix and re-run.

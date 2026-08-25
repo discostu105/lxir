@@ -27,7 +27,7 @@
 //!   Wine oracle showed Loxone Config 17 silently deletes off-descriptor
 //!   connectors (and their wires) on save, so minting them would lose logic.
 
-use crate::connectors::{PortDir, builtin};
+use crate::connectors::{PortDir, attr_params, builtin};
 use crate::doc::{Counters, LoxoneDoc, ports};
 use crate::error::{Error, Result};
 use crate::ir::ast::{MatchSpec, Module, Value};
@@ -148,7 +148,16 @@ pub fn compile(
     }
 
     // --- Plan managed blocks: the builtin port list is the full port list
-    //     and pinned identity for every one of them.
+    //     and pinned identity for every one of them. Each block is pinned
+    //     to a page: adopted blocks to the page they were drawn on, new
+    //     blocks to the options' page (resolved lazily so a block-free
+    //     module compiles against a page-less config).
+    let default_page_uuid: Option<String> =
+        doc.page_path(opts.page_title.as_deref()).and_then(|p| {
+            doc.element_at(&p)
+                .and_then(|el| el.attr("U"))
+                .map(String::from)
+        });
     let mut minter = Minter::new(opts.machine, opts.mint_time_unix);
     let mut managed: BTreeMap<String, PlannedBlock> = BTreeMap::new();
     let mut py_cursor = next_free_py(lock);
@@ -169,6 +178,7 @@ pub fn compile(
                 block_type: block.block_type.clone(),
                 ports: BTreeMap::new(),
                 layout: None,
+                page_uuid: None,
             });
         if entry.uuid.is_empty() {
             entry.block_type = block.block_type.clone();
@@ -189,6 +199,20 @@ pub fn compile(
             entry.uuid = minter.mint_object().to_string();
             lock.counters.next_obj += 1;
         }
+        let page_uuid = match &entry.page_uuid {
+            Some(u) => u.clone(),
+            None => {
+                let u = default_page_uuid.clone().ok_or_else(|| {
+                    Error::Compile(match &opts.page_title {
+                        Some(t) => format!("no <C Type=\"Page\"> titled `{t}` in the base config"),
+                        None => "the base config has no <C Type=\"Page\"> to place blocks on"
+                            .to_string(),
+                    })
+                })?;
+                entry.page_uuid = Some(u.clone());
+                u
+            }
+        };
         let height = BLOCK_H_BASE + PORT_H * (keys.len() as i64 - 2).max(0);
         let layout = *entry.layout.get_or_insert_with(|| {
             let l = Layout {
@@ -208,6 +232,7 @@ pub fn compile(
                 keys,
                 ports: entry.ports.clone(),
                 layout,
+                page_uuid,
             },
         );
     }
@@ -218,22 +243,23 @@ pub fn compile(
     //     here.
     let resolve = |v: &Value| -> Result<String> { Ok(module.resolve_value(v)?.to_string()) };
     let mut managed_defs: BTreeMap<(String, String), String> = BTreeMap::new();
+    let mut managed_attrs: BTreeMap<(String, String), String> = BTreeMap::new();
     for block in module.blocks() {
+        let attrs = attr_params(&block.block_type);
         for (k, v) in block.params() {
-            managed_defs.insert((block.slug.clone(), k.to_string()), resolve(v)?);
+            let target = if attrs.contains(&k) {
+                &mut managed_attrs // element attribute, not a connector Def
+            } else {
+                &mut managed_defs
+            };
+            target.insert((block.slug.clone(), k.to_string()), resolve(v)?);
         }
     }
 
-    // --- Build the managed <C> elements and append them to the page.
-    let page_path = doc.page_path(opts.page_title.as_deref()).ok_or_else(|| {
-        Error::Compile(match &opts.page_title {
-            Some(t) => format!("no <C Type=\"Page\"> titled `{t}` in the base config"),
-            None => "the base config has no <C Type=\"Page\"> to place blocks on".to_string(),
-        })
-    })?;
-    let page = doc
-        .element_at_mut(&page_path)
-        .expect("page path just resolved");
+    // --- Build the managed <C> elements and append each to its pinned
+    //     page. The index is taken once after teardown; appending children
+    //     never shifts the recorded page paths.
+    let page_index = doc.index();
     for block in module.blocks() {
         let plan = &managed[&block.slug];
         let mut el = Element::new("C");
@@ -248,6 +274,18 @@ pub fn compile(
         el.set_attr("Cl", "141,255,112");
         el.set_attr("Nio", &plan.keys.len().to_string());
         el.set_attr("WF", "147456");
+        for name in attr_params(&block.block_type) {
+            if let Some(v) = managed_attrs.get(&(block.slug.clone(), (*name).to_string())) {
+                el.set_attr(name, v);
+            }
+        }
+        // Every observed Formula= attribute travels with Valid="false"
+        // (the GUI revalidates the expression on load).
+        if block.block_type == "Formula"
+            && managed_attrs.contains_key(&(block.slug.clone(), "Formula".to_string()))
+        {
+            el.set_attr("Valid", "false");
+        }
         for key in &plan.keys {
             let mut co = Element::new("Co");
             co.set_attr("K", key);
@@ -256,6 +294,23 @@ pub fn compile(
             }
             co.set_attr("U", &plan.ports[key]);
             el.push_child(co);
+        }
+        let page_path = page_index.by_uuid.get(&plan.page_uuid).ok_or_else(|| {
+            Error::Compile(format!(
+                "the page `{}` recorded for block `{}` no longer exists in the \
+                 base config; re-pin it by editing the lockfile entry's page_uuid \
+                 (or remove the block from the lock to place it afresh)",
+                plan.page_uuid, block.slug
+            ))
+        })?;
+        let page = doc.element_at_mut(page_path).expect("indexed path");
+        if page.attr("Type") != Some("Page") {
+            return Err(Error::Compile(format!(
+                "object `{}` recorded as the page for block `{}` is a `{}`, not a Page",
+                plan.page_uuid,
+                block.slug,
+                page.attr("Type").unwrap_or("?")
+            )));
         }
         page.push_child(el);
     }
@@ -323,8 +378,6 @@ pub fn compile(
             .collect::<String>(),
     );
     lock.target.source_config_sha256 = Some(sha256_hex(&base.to_bytes()));
-
-    fixup_emptied_elements(&mut doc.xml.root);
     Ok(doc)
 }
 
@@ -335,6 +388,8 @@ struct PlannedBlock {
     keys: Vec<String>,
     ports: BTreeMap<String, String>,
     layout: Layout,
+    /// UUID of the page the block is (re)built on.
+    page_uuid: String,
 }
 
 struct ResolvedPort {
@@ -606,17 +661,6 @@ fn set_attr_ordered(el: &mut Element, name: &str, value: &str, before: &[&str]) 
             value: crate::xml::escape(value).into_owned(),
         },
     );
-}
-
-/// Elements our removals emptied must serialize as `<X/>`, like everything
-/// empty in Loxone output.
-fn fixup_emptied_elements(el: &mut Element) {
-    if el.children.is_empty() {
-        el.self_closing = true;
-    }
-    for child in el.child_elements_mut() {
-        fixup_emptied_elements(child);
-    }
 }
 
 /// First stacking position below every layout already in the lock, so new

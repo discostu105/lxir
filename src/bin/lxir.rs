@@ -5,7 +5,8 @@
 //! nothing here has semantics of its own.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Module, compile, decompile, decompile_pages,
+    CompileOptions, DecompileOptions, DecompileScope, Module, adopt, compile, decompile,
+    decompile_pages,
 };
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc};
@@ -42,6 +43,15 @@ USAGE:
         restricts it to managed-type blocks and what they touch (the
         adoption subset). --out-dir writes one module per logic page
         instead of printing.
+
+  lxir adopt <cfg.Loxone> --out-module <m.lxir> --out-lock <lock.json>
+        Move every managed-type block in the config under source control:
+        writes the managed-only module plus a lockfile pinning each block's
+        existing identity (object/port UUIDs, layout, page), so compiling
+        the pair rebuilds the blocks in place instead of minting
+        duplicates. Blocks the rebuild could not reproduce faithfully are
+        skipped with a warning and stay unmanaged. Never modifies the
+        config; refuses existing outputs.
 
   lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
@@ -81,6 +91,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["fmt", rest @ ..] => cmd_fmt(rest),
         ["compile", rest @ ..] => cmd_compile(rest),
         ["decompile", rest @ ..] => cmd_decompile(rest),
+        ["adopt", rest @ ..] => cmd_adopt(rest),
         ["diff", rest @ ..] => cmd_diff(rest),
         ["observe", rest @ ..] => cmd_observe(rest),
         ["roundtrip", path] => cmd_roundtrip(path),
@@ -306,6 +317,74 @@ fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
     eprintln!(
         "# {path}: {} managed, {} externs across {} pages, {} raw objects untouched",
         report.managed, report.externs, report.pages, report.raw_objects
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
+    const USAGE: &str =
+        "usage: lxir adopt <cfg.Loxone> --out-module <m.lxir> --out-lock <lock.json>";
+    let mut path = None;
+    let mut out_module: Option<PathBuf> = None;
+    let mut out_lock: Option<PathBuf> = None;
+    let mut it = args.iter();
+    while let Some(&a) = it.next() {
+        let mut value = || -> Result<&str, AnyError> {
+            it.next()
+                .copied()
+                .ok_or_else(|| format!("{a} needs a value").into())
+        };
+        match a {
+            "--out-module" => out_module = Some(PathBuf::from(value()?)),
+            "--out-lock" => out_lock = Some(PathBuf::from(value()?)),
+            flag if flag.starts_with("--") => {
+                return Err(format!("unknown flag `{flag}` — run `lxir help`").into());
+            }
+            p if path.is_none() => path = Some(p),
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let (Some(path), Some(out_module), Some(out_lock)) = (path, out_module, out_lock) else {
+        return Err(USAGE.into());
+    };
+    // Adoption is a one-time claim of identity; overwriting an existing
+    // module or lock would silently discard identities already pinned.
+    for existing in [&out_module, &out_lock] {
+        if existing.exists() {
+            return Err(format!(
+                "{} already exists — adopt refuses to overwrite (move it away first)",
+                existing.display()
+            )
+            .into());
+        }
+    }
+
+    let doc = read_doc(path)?;
+    let (module, lock, report) = adopt(&doc)?;
+    std::fs::write(&out_module, module.to_text())?;
+    lock.save(&out_lock)?;
+    for r in &report.refused {
+        eprintln!("warning: {r}");
+    }
+    println!(
+        "adopted {} blocks ({} externs pinned) across {} pages from {path}{}",
+        report.blocks,
+        report.externs,
+        report.pages,
+        if report.refused.is_empty() {
+            String::new()
+        } else {
+            format!(" ({} refused, see warnings)", report.refused.len())
+        }
+    );
+    println!(
+        "wrote {} and {}\nnext: lxir compile --base {path} --module {} --lock {} \
+         --serial <miniserver-serial> --out <out.Loxone>, then `lxir diff {path} \
+         <out.Loxone>` — it should be empty",
+        out_module.display(),
+        out_lock.display(),
+        out_module.display(),
+        out_lock.display()
     );
     Ok(ExitCode::SUCCESS)
 }

@@ -27,7 +27,7 @@
 //! `iname` when it is unique for the type (INames are locale-stable),
 //! else `title` when unique, else the exact `uuid`.
 
-use crate::connectors::BUILTIN_TYPES;
+use crate::connectors::{BUILTIN_TYPES, attr_params};
 use crate::doc::{LoxoneDoc, ObjectSummary, ports};
 use crate::error::Result;
 use crate::ir::ast::{
@@ -56,6 +56,10 @@ pub struct DecompileOptions {
     /// the compiler could rebuild.
     pub managed_types: BTreeSet<String>,
     pub scope: DecompileScope,
+    /// Object UUIDs to treat as unmanaged even though their type is in
+    /// `managed_types` (they can still appear as externs). `adopt` uses
+    /// this for individual blocks whose rebuild would not be faithful.
+    pub exclude: BTreeSet<String>,
 }
 
 impl Default for DecompileOptions {
@@ -63,6 +67,7 @@ impl Default for DecompileOptions {
         DecompileOptions {
             managed_types: BUILTIN_TYPES.iter().map(|t| String::from(*t)).collect(),
             scope: DecompileScope::Full,
+            exclude: BTreeSet::new(),
         }
     }
 }
@@ -118,25 +123,28 @@ pub fn decompile_pages(
 
 /// Everything both output shapes need, computed once: which objects are
 /// lifted (and as what), their slugs, their page, and the lifted wires.
-struct Lift {
-    objects: Vec<ObjectSummary>,
+/// `pub(super)` because `adopt` builds on the same lift.
+pub(super) struct Lift {
+    pub(super) objects: Vec<ObjectSummary>,
     /// Page titles, document order — all pages, with or without content.
     page_titles: Vec<String>,
+    /// Page UUIDs, parallel to `page_titles`.
+    pub(super) page_uuids: Vec<String>,
     /// Object UUID → index into `page_titles` (absent: not on any page).
     page_of: BTreeMap<String, usize>,
     /// Object UUID → slug, one namespace across the whole document, and
     /// the reverse direction (slug → object index).
-    slug_of: BTreeMap<String, String>,
+    pub(super) slug_of: BTreeMap<String, String>,
     obj_of_slug: BTreeMap<String, usize>,
     /// Object indexes lifted as managed blocks / externs, emission order.
-    managed: Vec<usize>,
-    externs: Vec<usize>,
+    pub(super) managed: Vec<usize>,
+    pub(super) externs: Vec<usize>,
     /// Prebuilt declarations, keyed by object index. `match_specs` also
     /// covers managed objects, for foreign-extern declarations in the
     /// per-page view.
     extern_decls: BTreeMap<usize, ExternDecl>,
     block_decls: BTreeMap<usize, BlockDecl>,
-    match_specs: BTreeMap<usize, MatchSpec>,
+    pub(super) match_specs: BTreeMap<usize, MatchSpec>,
     /// `<-` statements with the sink and source object indexes,
     /// deduplicated, document order.
     wires: Vec<(WireDecl, usize, usize)>,
@@ -152,7 +160,7 @@ struct Bucket {
 }
 
 impl Lift {
-    fn build(doc: &LoxoneDoc, opts: &DecompileOptions) -> Lift {
+    pub(super) fn build(doc: &LoxoneDoc, opts: &DecompileOptions) -> Lift {
         let objects = doc.objects();
         let idx = doc.index();
         let obj_index: BTreeMap<&str, usize> = objects
@@ -165,10 +173,12 @@ impl Lift {
         // ancestor page (by element-path prefix).
         let mut page_paths: Vec<&[usize]> = Vec::new();
         let mut page_titles: Vec<String> = Vec::new();
+        let mut page_uuids: Vec<String> = Vec::new();
         for o in &objects {
             if o.block_type == "Page" {
                 page_paths.push(&o.path);
                 page_titles.push(o.title.clone().unwrap_or_else(|| "Page".into()));
+                page_uuids.push(o.uuid.clone());
             }
         }
         let mut page_of: BTreeMap<String, usize> = BTreeMap::new();
@@ -195,7 +205,7 @@ impl Lift {
         let mut lifted = vec![false; objects.len()];
         let mut managed = Vec::new();
         for (i, o) in objects.iter().enumerate() {
-            if opts.managed_types.contains(&o.block_type) {
+            if opts.managed_types.contains(&o.block_type) && !opts.exclude.contains(&o.uuid) {
                 lifted[i] = true;
                 managed.push(i);
             }
@@ -313,6 +323,17 @@ impl Lift {
             let o = &objects[i];
             let el = doc.element_at(&o.path).expect("path from objects()");
             let mut args = Vec::new();
+            // Attribute parameters (block logic stored as an element
+            // attribute, e.g. `Formula=`) lead the argument list.
+            for name in attr_params(&o.block_type) {
+                if let Some(v) = el.attr_decoded(name) {
+                    args.push(ArgItem::Binding(Binding {
+                        port: (*name).to_string(),
+                        kind: BindingKind::Param(Value::from_literal(&v)),
+                        comment: None,
+                    }));
+                }
+            }
             for p in ports(el) {
                 if !is_ident(&p.key) {
                     continue; // not representable, stays raw
@@ -387,6 +408,7 @@ impl Lift {
         Lift {
             objects,
             page_titles,
+            page_uuids,
             page_of,
             slug_of,
             obj_of_slug,
@@ -399,7 +421,7 @@ impl Lift {
         }
     }
 
-    fn page_of(&self, obj: usize) -> Option<usize> {
+    pub(super) fn page_of(&self, obj: usize) -> Option<usize> {
         self.page_of.get(&self.objects[obj].uuid).copied()
     }
 
@@ -421,7 +443,7 @@ impl Lift {
         map.into_iter().collect()
     }
 
-    fn single_module(&self) -> Module {
+    pub(super) fn single_module(&self) -> Module {
         let mut items = Vec::new();
         for (page, b) in self.buckets() {
             items.push(Item::Comment(match page {
@@ -528,7 +550,7 @@ impl Lift {
         Ok(out)
     }
 
-    fn report(&self) -> DecompileReport {
+    pub(super) fn report(&self) -> DecompileReport {
         DecompileReport {
             managed: self.managed.len(),
             externs: self.externs.len(),

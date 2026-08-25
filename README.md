@@ -91,6 +91,8 @@ lxir compile --base current.Loxone --module modules/beschattung.lxir \
 lxir diff current.Loxone out.Loxone  # semantic diff, locale noise flagged
 lxir decompile current.Loxone        # full IR view, grouped by page
 lxir decompile --out-dir view/ current.Loxone  # one module per page
+lxir adopt current.Loxone --out-module modules/haus.lxir \
+     --out-lock modules/haus.lock.json  # take over existing blocks in place
 lxir observe current.Loxone          # port-direction evidence (JSON)
 lxir roundtrip current.Loxone        # byte-fidelity self-check
 ```
@@ -131,7 +133,7 @@ byte-for-byte.
 | `uuid` | The anatomy of Loxone UUIDs — creation time, mint counters, minting-machine id, connector index — plus a deterministic minter (no clock, no RNG). |
 | `doc` | Semantic read layer: objects, ports, wires, counters, pages. |
 | `connectors` | Port-direction knowledge: a **verified** builtin table (gates, comparators, `Formula`, `Monoflop`, `PulseGen`, `AnalogThresholdTrigger` — see [docs/connector-db.md](docs/connector-db.md)) and evidence-based inference (`observe`, corpus merge, legacy-db crosscheck) over real configs. |
-| `ir` | The text language: constructor-style block declarations with inline wires/parameters, `extern`, `let`, lifecycle statements; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view). |
+| `ir` | The text language: constructor-style block declarations with inline wires/parameters, `extern`, `let`, lifecycle statements; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view), `adopt` (existing blocks → module + identity-pinning lockfile). |
 | `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, extern-port `Def=` originals. |
 | `diff` | Semantic diff between two configs, with locale-rename noise flagged. |
 

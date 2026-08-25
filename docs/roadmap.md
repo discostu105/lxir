@@ -142,9 +142,19 @@ haus/
 
 - [ ] `import` between modules; the compiler merges all modules into the
       one `.Loxone` document (the file split is source ergonomics only).
-- [ ] `adopt`: move an existing unmanaged object under source control
-      (`lxir adopt <uuid> --as beschattung.vorhandener_block`) — the
-      block-by-block migration path for existing installations.
+- [x] `adopt` (whole-config form) 2026-08-25 (D18): `lxir adopt <cfg>`
+      moves every managed-type block under source control — the
+      managed-only module plus a lockfile pinning existing object/port
+      UUIDs, layout, and page, so the first compile rebuilds in place
+      instead of minting duplicates. Verified per block (unfaithful
+      rebuilds are skipped with a reason, e.g. GUI input inversion
+      `Inv=`); acceptance on the real house config: adopt → compile →
+      semantically empty diff, recompile byte-identical. Brought page
+      pinning (`page_uuid` in the lock) and attribute parameters
+      (`Formula:`) with it.
+- [ ] `adopt` (incremental form): `lxir adopt <uuid> --as
+      beschattung.vorhandener_block` — adopting a single block into an
+      *existing* module/lock pair.
 - [ ] Drift fingerprint: hash the unmanaged remainder (the sketch's
       `raw_digest`) so tooling can cheaply detect "another writer changed
       something" without a full diff.

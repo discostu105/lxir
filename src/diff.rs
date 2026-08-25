@@ -6,6 +6,7 @@
 //! into the UI language — 111 renames in one observed save with zero
 //! semantic change. [`Rename::locale_suspect`] flags those.
 
+use crate::connectors::attr_params;
 use crate::doc::{LoxoneDoc, ObjectSummary, WireView, ports};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -104,6 +105,25 @@ pub fn diff(a: &LoxoneDoc, b: &LoxoneDoc) -> DocDiff {
                             port_key: key.clone(),
                             from: def_a.clone(),
                             to: None,
+                        });
+                    }
+                }
+                // Attribute parameters (block logic stored as an element
+                // attribute, e.g. `Formula=`) — a diff blind to them would
+                // call a changed formula "semantically empty".
+                for name in attr_params(&ob.block_type) {
+                    let attr = |doc: &LoxoneDoc, o: &ObjectSummary| {
+                        doc.element_at(&o.path)
+                            .and_then(|el| el.attr_decoded(name).map(|v| v.into_owned()))
+                    };
+                    let (va, vb) = (attr(a, oa), attr(b, ob));
+                    if va != vb {
+                        out.param_changes.push(ParamChange {
+                            object_uuid: uuid.clone(),
+                            block_type: ob.block_type.clone(),
+                            port_key: (*name).to_string(),
+                            from: va,
+                            to: vb,
                         });
                     }
                 }

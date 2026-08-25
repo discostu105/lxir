@@ -23,12 +23,14 @@
 //! because display titles are locale-volatile (a config save can rename
 //! all built-ins to the writing system's language); `uuid:` pins exactly.
 
+mod adopt;
 mod ast;
 mod compile;
 mod decompile;
 mod parser;
 mod validate;
 
+pub use adopt::{AdoptReport, adopt};
 pub use ast::{
     ArgItem, Binding, BindingKind, BlockDecl, ExternDecl, Item, LetDecl, MatchSpec, Module,
     MovedDecl, PortRef, RemovedDecl, SetDecl, Value, WireDecl,

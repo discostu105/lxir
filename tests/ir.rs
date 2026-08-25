@@ -3,7 +3,7 @@
 //! decompile view of compiled output.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Item, Module, compile, decompile,
+    CompileOptions, DecompileOptions, DecompileScope, Item, Module, adopt, compile, decompile,
     decompile_pages,
 };
 use lxir::uuid::parse_serial;
@@ -286,6 +286,149 @@ fn per_page_decompile_produces_self_contained_modules() {
     // Each page module is canonical, parseable language text.
     let text = m.to_text();
     assert_eq!(&Module::parse(&text).unwrap(), m);
+}
+
+/// A module exercising everything adoption must preserve: a Formula with
+/// an attribute parameter, a comparator fed by it, and a wire onto an
+/// extern port. Compiling it yields the "existing config" the adopt tests
+/// then treat as GUI-authored.
+const ADOPT_SRC: &str = "\
+extern aussentemp = VirtualIn(iname: \"VI1\")
+extern sonne = VirtualIn(iname: \"VI3\")
+extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")
+
+summe = Formula(
+\t\"Summe\",
+\tFormula: \"I1+I2\",
+\tInput1: aussentemp.Q,
+\tInput2: sonne.Q,
+)
+heiss = GreaterEqual(
+\tInput1: summe.AQ,
+\tInput2: 50,
+)
+
+jal_sued.AutoShade <- heiss.Q
+";
+
+fn adopted_config() -> LoxoneDoc {
+    let m = Module::parse(ADOPT_SRC).unwrap();
+    compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap()
+}
+
+#[test]
+fn adopt_then_compile_rebuilds_in_place() {
+    let existing = adopted_config();
+    let (module, mut lock, report) = adopt(&existing).unwrap();
+    assert_eq!(report.blocks, 2);
+    assert_eq!(report.pages, 1);
+
+    assert!(report.refused.is_empty(), "{:?}", report.refused);
+
+    // The lock pins the blocks' existing identities.
+    let objs = existing.objects();
+    let formula = objs.iter().find(|o| o.block_type == "Formula").unwrap();
+    assert_eq!(lock.objects["summe"].uuid, formula.uuid);
+    let page = objs.iter().find(|o| o.block_type == "Page").unwrap();
+    assert_eq!(
+        lock.objects["summe"].page_uuid.as_deref(),
+        Some(&*page.uuid)
+    );
+
+    // The lifted view carries the attribute parameter.
+    assert!(module.to_text().contains("Formula: \"I1+I2\""));
+
+    // Compiling the pair is a no-op: nothing minted, nothing moved —
+    // byte-identical, since the "existing" config is our own output shape.
+    let out = compile(&existing, &module, &mut lock, &opts()).unwrap();
+    assert!(lxir::diff::diff(&existing, &out).is_empty());
+    assert_eq!(out.counters().next_obj, existing.counters().next_obj);
+    assert_eq!(out.to_bytes(), existing.to_bytes());
+}
+
+#[test]
+fn formula_attribute_parameter_compiles_and_diffs() {
+    let existing = adopted_config();
+    let objs = existing.objects();
+    let f = objs.iter().find(|o| o.block_type == "Formula").unwrap();
+    let el = existing.element_at(&f.path).unwrap();
+    assert_eq!(el.attr("Formula"), Some("I1+I2"));
+    assert_eq!(el.attr("Valid"), Some("false"));
+
+    // A changed formula is a visible param change, not "semantically empty".
+    let changed_src = ADOPT_SRC.replace("I1+I2", "I1*I2");
+    let changed = compile(
+        &base(),
+        &Module::parse(&changed_src).unwrap(),
+        &mut Lockfile::new(),
+        &opts(),
+    )
+    .unwrap();
+    let d = lxir::diff::diff(&existing, &changed);
+    assert_eq!(d.param_changes.len(), 1, "{d:?}");
+    assert_eq!(d.param_changes[0].port_key, "Formula");
+    assert_eq!(d.param_changes[0].to.as_deref(), Some("I1*I2"));
+}
+
+#[test]
+fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
+    // An element attribute the rebuild does not emit would be lost: the
+    // block is skipped with a reason, the rest of the config still adopts.
+    let mut existing = adopted_config();
+    let path = existing
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "Formula")
+        .unwrap()
+        .path
+        .clone();
+    existing
+        .element_at_mut(&path)
+        .unwrap()
+        .set_attr("SpStates", "1;2");
+    let (module, lock, report) = adopt(&existing).unwrap();
+    assert_eq!(report.refused.len(), 1);
+    assert!(
+        report.refused[0].contains("SpStates"),
+        "{}",
+        report.refused[0]
+    );
+    assert!(report.refused[0].contains("Summe"), "{}", report.refused[0]);
+    assert_eq!(report.blocks, 1, "the GreaterEqual still adopts");
+    assert!(!lock.objects.contains_key("summe"));
+    assert!(lock.objects.contains_key("heiss"));
+    // The refused Formula stays visible as a pinned extern (heiss wires
+    // from its AQ), and compiling the pair is still a no-op.
+    assert!(module.externs().any(|e| e.slug == "summe"));
+    assert!(lock.externals.contains_key("summe"));
+    let out = compile(&existing, &module, &mut lock.clone(), &opts()).unwrap();
+    assert!(lxir::diff::diff(&existing, &out).is_empty());
+
+    // The GUI's per-connector input inversion has no IR representation yet.
+    let mut existing = adopted_config();
+    let path = existing
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "GreaterEqual")
+        .unwrap()
+        .path
+        .clone();
+    existing
+        .element_at_mut(&path)
+        .unwrap()
+        .child_elements_mut()
+        .find(|c| c.name == "Co")
+        .unwrap()
+        .set_attr("Inv", "true");
+    let (_, lock, report) = adopt(&existing).unwrap();
+    assert_eq!(report.refused.len(), 1);
+    assert!(report.refused[0].contains("`Inv`"), "{}", report.refused[0]);
+    assert!(
+        report.refused[0].contains("Not block"),
+        "hints at the workaround: {}",
+        report.refused[0]
+    );
+    assert!(lock.objects.contains_key("summe"), "Formula still adopts");
 }
 
 #[test]

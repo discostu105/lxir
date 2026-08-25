@@ -251,3 +251,45 @@ Anything unverified is an error, not a heuristic:
   language identifiers (Loxone's numeric type ids) stay raw. Slugs form
   one namespace across the whole document — identical in the single and
   per-page views — and statement keywords are never handed out as slugs.
+- **D18 — Adoption is decompile-with-lock, verified per block**
+  (2026-08-25). `lxir adopt <cfg>` moves existing managed-type blocks
+  under source control by pairing the `--managed-only` view with a fresh
+  lockfile that pins each block's *existing* identity — object UUID, port
+  UUIDs, layout, and page — so the first compile rebuilds the blocks in
+  place instead of minting duplicates (acceptance: adopt → compile →
+  semantically empty diff against the real house config; recompiling that
+  output is a byte-identical fixpoint). Identity comes from the lift, not
+  from matching: title-based adoption is ambiguous in real configs
+  (duplicate titles like "O1657"×4 observed). Consequences that fell out
+  of making the rebuild faithful:
+  - **Page pinning** (`LockedObject.page_uuid`): without it, every
+    adopted block would be re-emitted onto the *one* compile-options
+    page. Every managed block is now pinned to a page — adopted blocks to
+    the page they were drawn on, new blocks to the options' page on first
+    compile. Old locks without the field keep working (the next compile
+    fills it in).
+  - **Attribute parameters**: some block logic lives in element
+    attributes, not connectors — `Formula="I1+I2"` on Formula blocks. A
+    rebuild that dropped it would silently destroy logic. These are now
+    language surface (`Formula: "I1+I2"` binds like a parameter, never a
+    wire), declared per type in `connectors::attr_params`, emitted with
+    the observed `Valid="false"` companion, lifted by decompile, and
+    compared by `lxir diff` (which was blind to element attributes).
+  - **Verification, not translation**: adopt whitelists exactly what the
+    rebuild emits (plus known normalizations: `WF=` → the value Loxone
+    Config itself normalizes to on save, `LtE=`/color are display state,
+    `<Co>` element order is cosmetic — the port-UUID index tails prove
+    spec order, the GUI just serializes in canvas order sometimes). A
+    block failing verification is *skipped, not translated*: it stays
+    unmanaged, re-enters as a pinned extern where adopted logic touches
+    it, and the reason lands in `AdoptReport::refused` — one bespoke GUI
+    flag (the real config's `Inv=` input inversion on a PulseGen) must
+    not block adopting the other 22 blocks. All-or-nothing was rejected
+    for exactly that reason.
+  - The real-config run also falsified "empty elements in Loxone output
+    are always self-closing" (`<IoData></IoData>` exists): the compiler's
+    blanket empty-element fixup rewrote elements it never touched, and is
+    now scoped to elements *our removals* emptied.
+  Adopt never modifies the config and refuses to overwrite existing
+  outputs. The per-object incremental form (`lxir adopt <uuid> --as
+  <slug>`) remains future work.

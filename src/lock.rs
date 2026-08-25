@@ -74,6 +74,13 @@ pub struct LockedObject {
     /// Port key → port UUID. Every port gets its own pinned UUID.
     pub ports: BTreeMap<String, String>,
     pub layout: Option<Layout>,
+    /// UUID of the `<C Type="Page">` the block lives on. Pinned on first
+    /// compile (from the compile options' page) or by adoption (the page
+    /// the existing block was drawn on); rebuilds place the block there.
+    /// `None` only in locks from before page pinning — the next compile
+    /// fills it with the options' page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +194,7 @@ mod tests {
                     px2: 2304,
                     py2: 1656,
                 }),
+                page_uuid: Some("00000002-0000-0000-ffff504f94112233".into()),
             },
         );
         let json = lock.to_json();
@@ -205,6 +213,7 @@ mod tests {
                 block_type: "And".into(),
                 ports: BTreeMap::new(),
                 layout: None,
+                page_uuid: None,
             },
         );
         lock.rename_object("a", "b").unwrap();

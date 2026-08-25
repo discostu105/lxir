@@ -244,6 +244,13 @@ fn remove_object(el: &mut Element, uuid: &str) -> Option<Element> {
         let Node::Element(removed) = el.children.remove(i) else {
             unreachable!()
         };
+        // An element we emptied serializes self-closing, as Loxone writes
+        // emptied containers. Only here: elements that were *always* empty
+        // keep whatever form the source had (real configs contain
+        // non-self-closing `<IoData></IoData>`).
+        if el.children.is_empty() {
+            el.self_closing = true;
+        }
         return Some(removed);
     }
     for child in el.child_elements_mut() {

@@ -7,7 +7,7 @@
 //! two entry points cannot drift apart.
 
 use super::ast::Module;
-use crate::connectors::{BUILTIN_TYPES, PortDir, builtin};
+use crate::connectors::{BUILTIN_TYPES, PortDir, attr_params, builtin};
 use crate::error::{Error, Result};
 
 /// Check every managed block's type, port names, and wire directions
@@ -25,6 +25,11 @@ pub fn validate_ports(module: &Module) -> Result<()> {
             )));
         }
         for (key, _) in block.params() {
+            // Attribute parameters (e.g. `Formula:` on Formula blocks)
+            // bind like any parameter but are not connectors.
+            if attr_params(&block.block_type).contains(&key) {
+                continue;
+            }
             known_port(module, &block.slug, key)?;
         }
     }
@@ -37,6 +42,13 @@ pub fn validate_ports(module: &Module) -> Result<()> {
             let Some(block) = module.blocks().find(|b| b.slug == endpoint.slug) else {
                 continue; // extern — checked against the base config later
             };
+            if attr_params(&block.block_type).contains(&endpoint.port.as_str()) {
+                return Err(Error::Compile(format!(
+                    "`{endpoint}` is an attribute parameter, not a connector — \
+                     it takes a value (`{port}: \"…\"`), never a wire",
+                    port = endpoint.port,
+                )));
+            }
             known_port(module, &block.slug, &endpoint.port)?;
             let specs = builtin(&block.block_type).expect("type validated above");
             let dir = specs
@@ -93,7 +105,13 @@ fn known_port(module: &Module, slug: &str, key: &str) -> Result<()> {
     } else {
         ""
     };
-    let hint = suggest(key, specs.iter().map(|s| s.key));
+    let hint = suggest(
+        key,
+        specs
+            .iter()
+            .map(|s| s.key)
+            .chain(attr_params(&block.block_type).iter().copied()),
+    );
     Err(Error::Compile(format!(
         "unknown port `{key}` on block `{slug}` (type `{}`); known ports: {}{hint}{gate_hint}",
         block.block_type,
@@ -203,5 +221,20 @@ mod tests {
     fn valid_module_passes() {
         let m = Module::parse("b = GreaterEqual(Input2: 28)\na = And(I1: b.Q)\n").unwrap();
         validate_ports(&m).unwrap();
+    }
+
+    #[test]
+    fn attr_params_bind_as_values_but_never_as_wires() {
+        let m = Module::parse("f = Formula(Formula: \"I1+I2\", Input1: 3)\n").unwrap();
+        validate_ports(&m).unwrap();
+
+        let m = Module::parse("a = And()\nf = Formula(Formula: a.Q)\n").unwrap();
+        let err = validate_ports(&m).unwrap_err().to_string();
+        assert!(err.contains("attribute parameter"), "{err}");
+
+        // Typos are matched against attribute parameters too.
+        let m = Module::parse("f = Formula(Formla: \"I1\")\n").unwrap();
+        let err = validate_ports(&m).unwrap_err().to_string();
+        assert!(err.contains("did you mean `Formula`?"), "{err}");
     }
 }
