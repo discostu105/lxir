@@ -5,8 +5,9 @@
 //! nothing here has semantics of its own.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Module, adopt, adopt_one, adopt_pages,
-    compile, decompile, decompile_pages, slugify, validate_ports,
+    CompileOptions, DecompileOptions, DecompileScope, Item, Module, adopt, adopt_one, adopt_pages,
+    apply_rekeys, compile, decompile, decompile_pages, lock_rekeys, rename_slug, slugify,
+    valid_slug, validate_ports,
 };
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc, Project};
@@ -54,6 +55,17 @@ USAGE:
         A base written by a different Loxone release than the lock's
         ConfigVersion pin is refused; after qualifying the release
         (one oracle open+save run), --accept-version <v> re-pins it.
+
+  lxir rename <old-slug> <new-slug> [<project-dir>]
+        Rename a module-level name — extern, block, constant, template,
+        or instance — across every module file (comments included) and
+        rekey the lockfile so every pinned identity survives, synthetic
+        slugs from templates and expressions too. Verified before
+        anything is written: the baseline lock must be current, and the
+        recompiled output must be byte-identical except for Title labels
+        the slug itself feeds (auto-labeled blocks, D24 expression
+        labels). Needs a lox.toml project (module, lock, base); also
+        refreshes the project's out file.
 
   lxir decompile [--managed-only] [--all-params] [--out-dir <dir>] <cfg.Loxone>
         Print the IR view of a config, grouped into sections headed by
@@ -144,6 +156,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["check", rest @ ..] => cmd_check(rest),
         ["fmt", rest @ ..] => cmd_fmt(rest),
         ["compile", rest @ ..] => cmd_compile(rest),
+        ["rename", rest @ ..] => cmd_rename(rest),
         ["decompile", rest @ ..] => cmd_decompile(rest),
         ["adopt", rest @ ..] => cmd_adopt(rest),
         ["diff", rest @ ..] => cmd_diff(rest),
@@ -510,6 +523,165 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
         lock_path.display()
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_rename(args: &[&str]) -> Result<ExitCode, AnyError> {
+    let (old, new, dir) = match args {
+        [old, new] => (*old, *new, "."),
+        [old, new, dir] if !dir.starts_with('-') => (*old, *new, *dir),
+        _ => return Err("usage: lxir rename <old-slug> <new-slug> [<project-dir>]".into()),
+    };
+    let project_file = Project::find(Path::new(dir)).ok_or_else(|| {
+        format!("no lox.toml in `{dir}` — rename needs a project (module, lock, base)")
+    })?;
+    let project = Project::load(&project_file)?;
+    valid_slug(new)?;
+
+    // Fragments load individually so each file can be rewritten in place.
+    let files = if project.module.is_dir() {
+        module_dir_files(&project.module).map_err(|(p, e)| format!("{p}: {e}"))?
+    } else {
+        vec![project.module.clone()]
+    };
+    let mut fragments: Vec<(PathBuf, String, Module)> = Vec::new();
+    for f in &files {
+        let src = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let m = Module::parse_fragment(&src).map_err(|e| format!("{}: {e}", f.display()))?;
+        fragments.push((f.clone(), src, m));
+    }
+    let merge = |frags: &[(PathBuf, String, Module)]| Module {
+        items: frags.iter().flat_map(|(_, _, m)| m.items.clone()).collect(),
+    };
+    let merged_old = merge(&fragments);
+    merged_old
+        .validate()
+        .map_err(|e| format!("{}: {e}", project.module.display()))?;
+
+    let declares = |m: &Module, name: &str| {
+        m.items.iter().any(|i| match i {
+            Item::Extern(e) => e.slug == name,
+            Item::Block(b) | Item::Instance(b) => b.slug == name,
+            Item::Let(l) => l.name == name,
+            Item::Template(t) => t.name == name,
+            _ => false,
+        })
+    };
+    if !declares(&merged_old, old) {
+        return Err(format!(
+            "`{old}` is not declared in {} — rename takes a module-level name \
+             (extern, block, constant, template, or instance)",
+            project.module.display()
+        )
+        .into());
+    }
+    if declares(&merged_old, new) {
+        return Err(format!("`{new}` is already declared — pick a fresh name").into());
+    }
+
+    for (_, _, m) in &mut fragments {
+        rename_slug(m, old, new);
+    }
+    let merged_new = merge(&fragments);
+    merged_new
+        .validate()
+        .map_err(|e| format!("after rename: {e}"))?;
+    let rekeys = lock_rekeys(&merged_old, &merged_new)?;
+
+    // Verification: baseline compile must reproduce the committed lock
+    // (otherwise module and lock are out of sync and a rename would bake
+    // that confusion in), and the renamed pair must compile to the same
+    // bytes — Title labels the slug feeds excepted.
+    let base_doc = read_doc(&project.base.display().to_string())?;
+    let disk_lock = Lockfile::load(&project.lock)?;
+    let serial = project
+        .serial
+        .clone()
+        .or_else(|| disk_lock.target.miniserver_serial.clone())
+        .ok_or("no serial in the project file and none recorded in the lockfile")?;
+    let opts = CompileOptions {
+        machine: parse_serial(&serial)?,
+        accept_version: None,
+        // Nothing may mint during a rename (the currency check below
+        // guarantees it), so a fixed time keeps the comparison exact.
+        mint_time_unix: 0,
+        page_title: project.page.clone(),
+        allow_removals: false,
+    };
+    let mut lock_a = disk_lock.clone();
+    let out_old = compile(&base_doc, &merged_old, &mut lock_a, &opts)
+        .map_err(|e| format!("baseline compile failed — fix that first: {e}"))?;
+    if lock_a.to_json() != disk_lock.to_json() {
+        return Err("the lockfile is not current (a compile would change it) — \
+             run `lxir compile`, commit, then rename"
+            .into());
+    }
+    let mut lock_new = disk_lock.clone();
+    let moved = apply_rekeys(&mut lock_new, &rekeys)?;
+    let out_new = compile(&base_doc, &merged_new, &mut lock_new, &opts)?;
+    let title_changes = title_only_diff(&out_old.to_bytes(), &out_new.to_bytes())
+        .map_err(|e| format!("rename is not cosmetic — nothing written: {e}"))?;
+
+    let mut files_changed = 0;
+    for (path, src, m) in &fragments {
+        let text = m.to_text();
+        if *src != text {
+            std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+            files_changed += 1;
+        }
+    }
+    lock_new.save(&project.lock)?;
+    std::fs::write(&project.out, out_new.to_bytes())?;
+    println!(
+        "renamed `{old}` -> `{new}`: {files_changed} file(s) rewritten, \
+         {moved} lock entr{} rekeyed, output {}",
+        if moved == 1 { "y" } else { "ies" },
+        if title_changes == 0 {
+            "byte-identical".to_string()
+        } else {
+            format!("changed in {title_changes} Title label(s) the slug feeds")
+        }
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Count the lines two outputs differ in, requiring every difference to
+/// be confined to a `Title="…"` attribute; any other difference is an
+/// error describing the first offending pair.
+fn title_only_diff(a: &[u8], b: &[u8]) -> Result<usize, String> {
+    if a == b {
+        return Ok(0);
+    }
+    let a = String::from_utf8_lossy(a);
+    let b = String::from_utf8_lossy(b);
+    let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+    if la.len() != lb.len() {
+        return Err(format!(
+            "outputs have different line counts ({} vs {})",
+            la.len(),
+            lb.len()
+        ));
+    }
+    // XML attribute values escape `"` as `&quot;`, so the closing quote
+    // found here always ends the attribute.
+    fn strip_title(line: &str) -> Option<String> {
+        let start = line.find(" Title=\"")?;
+        let rest = &line[start + 8..];
+        let end = rest.find('"')?;
+        Some(format!("{}{}", &line[..start], &rest[end + 1..]))
+    }
+    let mut changes = 0;
+    for (x, y) in la.iter().zip(&lb) {
+        if x == y {
+            continue;
+        }
+        match (strip_title(x), strip_title(y)) {
+            (Some(sx), Some(sy)) if sx == sy => changes += 1,
+            _ => {
+                return Err(format!("first non-Title difference:\n  - {x}\n  + {y}"));
+            }
+        }
+    }
+    Ok(changes)
 }
 
 fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {

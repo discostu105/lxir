@@ -41,6 +41,7 @@ mod compile;
 mod decompile;
 mod desugar;
 mod parser;
+mod rename;
 mod template;
 mod validate;
 
@@ -56,4 +57,5 @@ pub use decompile::{
     slugify,
 };
 pub use desugar::DesugarInfo;
+pub use rename::{Rekey, RekeyKind, apply_rekeys, lock_rekeys, rename_slug, valid_slug};
 pub use validate::validate_ports;

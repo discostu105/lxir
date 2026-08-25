@@ -319,6 +319,20 @@ haus/
 
 ## Tooling & ecosystem
 
+- **Refactoring**
+  - [x] `lxir rename <old> <new>` 2026-08-25: renames a module-level name
+        (extern, block, constant, template, instance) across every module
+        file — comments included — and rekeys the lockfile so every pinned
+        identity survives. Synthetic slugs are covered by expanding and
+        desugaring the module before and after the rename and pairing the
+        item lists positionally (template bodies `<instance>_<body>`,
+        expression blocks `<sink>_<port>__<op><n>`). Verified before
+        writing: the baseline lock must be current, and the recompiled
+        output must be byte-identical except for `Title=` labels the slug
+        itself feeds (auto-labeled blocks, D24 expression labels); the
+        project's out file is refreshed alongside. Born from the r50
+        Slug-Kur, which needed a hand-written script plus `moved`
+        statements for 170 renames.
 - **Editor**
   - [x] VS Code: syntax highlighting + snippets (`editor/vscode/`).
   - [ ] LSP server (`lxir lsp`): diagnostics from `Module::parse`/`validate`
