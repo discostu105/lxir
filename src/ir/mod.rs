@@ -26,7 +26,8 @@
 //!
 //! In a block's argument list, the value decides the meaning: a literal or
 //! constant binds the port's `Def=` parameter, a `slug.Port` reference
-//! wires that source into the port. Slugs are `[a-z][a-z0-9_]*` and
+//! wires that source into the port, and an expression (D26) desugars into
+//! gate blocks wired into the port. Slugs are `[a-z][a-z0-9_]*` and
 //! project-unique. References are always slugs — never UUIDs, never
 //! titles. `iname:` is preferred over `title:` for built-in objects
 //! because display titles are locale-volatile (a config save can rename

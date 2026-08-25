@@ -24,18 +24,22 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `check` reporting.
 #[derive(Debug, Default)]
 pub struct DesugarInfo {
-    /// Number of `<-` expression statements desugared.
+    /// Number of expressions desugared — `<-` statements and argument-list
+    /// expression bindings alike.
     pub expressions: usize,
     /// Slugs of all synthetic blocks.
     pub synthetic: BTreeSet<String>,
 }
 
 impl Module {
-    /// Replace every expression wire with its discrete-backend expansion.
+    /// Replace every expression — `<-` statements (D24) and argument-list
+    /// expression bindings (D26) — with its discrete-backend expansion.
     /// A module without expressions comes back unchanged (cloned).
     pub fn desugar(&self) -> Result<(Module, DesugarInfo)> {
         let mut info = DesugarInfo::default();
-        if self.expr_wires().next().is_none() {
+        if self.expr_wires().next().is_none()
+            && !self.blocks().any(|b| b.expr_bindings().next().is_some())
+        {
             return Ok((self.clone(), info));
         }
 
@@ -55,26 +59,66 @@ impl Module {
 
         let mut items = Vec::with_capacity(self.items.len());
         let mut minted: Vec<String> = Vec::new();
+        // Counters persist across expressions sharing one sink prefix, so
+        // two expressions fanning into the same port number on.
+        let mut counters: BTreeMap<(String, &'static str), usize> = BTreeMap::new();
         for item in &self.items {
-            let Item::ExprWire(w) = item else {
-                items.push(item.clone());
-                continue;
-            };
-            info.expressions += 1;
-            let mut ctx = Desugar {
-                prefix: format!("{}_{}__", w.to.slug, w.to.port.to_lowercase()),
-                sink: &w.to,
-                counters: BTreeMap::new(),
-                out: &mut items,
-                minted: &mut minted,
-                taken: &taken,
-            };
-            let root = ctx.node(&w.expr)?;
-            items.push(Item::Wire(WireDecl {
-                to: w.to.clone(),
-                from: root,
-                comment: w.comment.clone(),
-            }));
+            match item {
+                Item::ExprWire(w) => {
+                    info.expressions += 1;
+                    let mut ctx = Desugar {
+                        prefix: format!("{}_{}__", w.to.slug, w.to.port.to_lowercase()),
+                        sink: &w.to,
+                        counters: &mut counters,
+                        out: &mut items,
+                        minted: &mut minted,
+                        taken: &taken,
+                    };
+                    let root = ctx.node(&w.expr)?;
+                    items.push(Item::Wire(WireDecl {
+                        to: w.to.clone(),
+                        from: root,
+                        comment: w.comment.clone(),
+                    }));
+                }
+                // A block with expression bindings: each expression's
+                // blocks are emitted ahead of the declaration, and the
+                // binding becomes a plain wire from the root's `Q`.
+                Item::Block(b) if b.expr_bindings().next().is_some() => {
+                    let mut args = Vec::with_capacity(b.args.len());
+                    for arg in &b.args {
+                        let ArgItem::Binding(x) = arg else {
+                            args.push(arg.clone());
+                            continue;
+                        };
+                        let BindingKind::Expr(e) = &x.kind else {
+                            args.push(arg.clone());
+                            continue;
+                        };
+                        info.expressions += 1;
+                        let sink = PortRef {
+                            slug: b.slug.clone(),
+                            port: x.port.clone(),
+                        };
+                        let mut ctx = Desugar {
+                            prefix: format!("{}_{}__", sink.slug, sink.port.to_lowercase()),
+                            sink: &sink,
+                            counters: &mut counters,
+                            out: &mut items,
+                            minted: &mut minted,
+                            taken: &taken,
+                        };
+                        let root = ctx.node(e)?;
+                        args.push(ArgItem::Binding(Binding {
+                            port: x.port.clone(),
+                            kind: BindingKind::Wire(root),
+                            comment: x.comment.clone(),
+                        }));
+                    }
+                    items.push(Item::Block(BlockDecl { args, ..b.clone() }));
+                }
+                other => items.push(other.clone()),
+            }
         }
         info.synthetic = minted.into_iter().collect();
         Ok((Module { items }, info))
@@ -84,8 +128,9 @@ impl Module {
 struct Desugar<'a> {
     prefix: String,
     sink: &'a PortRef,
-    /// Per-operator counters within one expression (`__ge1`, `__ge2`, …).
-    counters: BTreeMap<&'static str, usize>,
+    /// Per-(sink, operator) counters (`__ge1`, `__ge2`, …), shared across
+    /// the module's expressions.
+    counters: &'a mut BTreeMap<(String, &'static str), usize>,
     out: &'a mut Vec<Item>,
     minted: &'a mut Vec<String>,
     taken: &'a BTreeSet<&'a str>,
@@ -150,7 +195,7 @@ impl Desugar<'_> {
         node: &Expr,
         args: Vec<ArgItem>,
     ) -> Result<PortRef> {
-        let n = self.counters.entry(op).or_insert(0);
+        let n = self.counters.entry((self.prefix.clone(), op)).or_insert(0);
         *n += 1;
         let slug = format!("{}{op}{}", self.prefix, n);
         if self.taken.contains(slug.as_str()) || self.minted.contains(&slug) {

@@ -1556,3 +1556,171 @@ fn expression_misuse_is_reported() {
     .unwrap_err();
     assert!(err.to_string().contains("targets managed block"), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// Expressions in argument bindings (D26)
+
+#[test]
+fn expression_bindings_desugar_like_wire_expressions() {
+    let base = base();
+    let src = "\
+extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+extern wind_alarm = VirtualIn(iname: \"VI2\")\n\
+extern sonne = VirtualIn(iname: \"VI3\")\n\
+extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+\n\
+let schwelle = 28\n\
+\n\
+gate = And(\n\
+\tI1: sonne.Q and aussentemp.Q >= schwelle,\n\
+\tI2: wind_alarm.Q,\n\
+)\n\
+\n\
+jal_sued.AutoShade <- gate.Q\n";
+    let module = Module::parse(src).unwrap();
+
+    // Canonical form keeps the expression as written and is a fixpoint.
+    let text = module.to_text();
+    assert!(
+        text.contains("\tI1: sonne.Q and aussentemp.Q >= schwelle,"),
+        "{text}"
+    );
+    assert_eq!(
+        Module::parse(&text).unwrap(),
+        module,
+        "parse ∘ to_text = id"
+    );
+    assert_eq!(Module::parse(&text).unwrap().to_text(), text, "fixpoint");
+
+    // Desugaring prefixes with the managed sink and rewires the binding.
+    let (plain, info) = module.expand().unwrap().desugar().unwrap();
+    assert_eq!(info.expressions, 1);
+    assert_eq!(
+        info.synthetic.iter().collect::<Vec<_>>(),
+        ["gate_i1__and1", "gate_i1__ge1"]
+    );
+    let gate = plain.blocks().find(|b| b.slug == "gate").unwrap();
+    let wires: Vec<String> = gate
+        .input_wires()
+        .map(|(p, src)| format!("{p}: {src}"))
+        .collect();
+    assert_eq!(wires, ["I1: gate_i1__and1.Q", "I2: wind_alarm.Q"]);
+    assert!(gate.expr_bindings().next().is_none());
+
+    // Compile: synthetic blocks are locked and expression-owned; the
+    // recompile is byte-identical (no re-mint).
+    let mut lock = Lockfile::new();
+    let out = compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert!(lock.objects["gate_i1__and1"].expr_owned);
+    assert!(lock.objects["gate_i1__ge1"].expr_owned);
+    assert!(!lock.objects["gate"].expr_owned);
+    let out2 = compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(out.to_bytes(), out2.to_bytes());
+
+    // Dropping the expression from the binding auto-removes its blocks.
+    let shrunk =
+        Module::parse(&src.replace("I1: sonne.Q and aussentemp.Q >= schwelle,", "I1: sonne.Q,"))
+            .unwrap();
+    compile(&base, &shrunk, &mut lock, &opts()).unwrap();
+    assert_eq!(lock.objects.keys().collect::<Vec<_>>(), ["gate"]);
+}
+
+#[test]
+fn expression_bindings_expand_inside_template_bodies() {
+    let base = base();
+    let module = Module::parse(
+        "extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+         extern sonne = VirtualIn(iname: \"VI3\")\n\
+         extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+         template fassade(jalousie: AutoJalousie, schwelle = 28)\n\
+         \tgate = Not(I: sonne.Q and aussentemp.Q >= schwelle)\n\
+         \tjalousie.AutoShade <- gate.Q\n\
+         end\n\
+         sued = fassade(jalousie: jal_sued, schwelle: 30)\n",
+    )
+    .unwrap();
+
+    // The synthetic prefix uses the *expanded* block slug, and the value
+    // parameter substitutes into the expression.
+    let (plain, info) = module.expand().unwrap().desugar().unwrap();
+    assert_eq!(
+        info.synthetic.iter().collect::<Vec<_>>(),
+        ["sued_gate_i__and1", "sued_gate_i__ge1"]
+    );
+    let ge = plain
+        .blocks()
+        .find(|b| b.slug == "sued_gate_i__ge1")
+        .unwrap();
+    assert!(
+        ge.params()
+            .any(|(p, v)| p == "Input2" && v.to_string() == "30"),
+        "template value parameter substitutes into the expression"
+    );
+    let mut lock = Lockfile::new();
+    compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert!(lock.objects["sued_gate_i__and1"].expr_owned);
+}
+
+#[test]
+fn expression_binding_misuse_is_reported() {
+    let head = "extern a = VirtualIn(iname: \"VI1\")\n\
+                extern b = VirtualIn(iname: \"VI2\")\n\
+                let schwelle = 28\n";
+    let fails = |args: &str, needle: &str| {
+        let err = Module::parse(&format!("{head}gate = And({args})\n"))
+            .and_then(|m| m.expand())
+            .and_then(|m| m.desugar().map(|_| ()))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(needle),
+            "`{args}`: expected {needle:?} in: {err}"
+        );
+    };
+
+    fails("I1: a.Q and \"x\"", "strings have no place");
+    fails("I1: nix.Q and a.Q", "reference to undeclared slug `nix`");
+    fails("I1: 5 and a.Q", "cannot drive a gate input");
+    fails("I1: schwelle >= 28", "compares two constants");
+    fails(
+        "I1: a.Q and b.Q, I1: a.Q and b.Q",
+        "duplicate expression `I1: a.Q and b.Q`",
+    );
+
+    // A parenthesized bare port or value canonicalizes to the plain form.
+    let m = Module::parse(&format!("{head}gate = And(I1: (a.Q), I2: (28))\n")).unwrap();
+    let gate = m.blocks().next().unwrap();
+    assert!(
+        matches!(
+            &gate.args[0],
+            ArgItem::Binding(Binding {
+                kind: BindingKind::Wire(_),
+                ..
+            })
+        ),
+        "(a.Q) is a plain wire binding"
+    );
+    assert!(
+        matches!(
+            &gate.args[1],
+            ArgItem::Binding(Binding {
+                kind: BindingKind::Param(_),
+                ..
+            })
+        ),
+        "(28) is a plain parameter binding"
+    );
+
+    // A template's value parameter refuses an expression argument.
+    let err = Module::parse(
+        "extern a = VirtualIn(iname: \"VI1\")\n\
+         template t(x: VirtualIn, n = 1)\n\
+         \ty = Not(I: x.Q)\n\
+         end\n\
+         z = t(x: a, n: a.Q and a.Qm)\n",
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("not a port or expression"),
+        "{err}"
+    );
+}

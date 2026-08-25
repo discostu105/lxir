@@ -33,7 +33,9 @@ args       = arg { "," arg } [ "," ] ;
 arg        = string                                (* label; first argument only *)
            | port ":" binding ;
 binding    = value                                 (* Def= parameter *)
-           | slug "." port ;                       (* wire from that source *)
+           | slug "." port                         (* wire from that source *)
+           | expr ;                                (* expression sugar (D26):
+                                                      desugars into gate blocks *)
 
 wire       = slug "." port "<-" ( slug "." port | expr ) [ comment ] ;
                                     (* extern target; an expression RHS
@@ -187,6 +189,9 @@ value decides the meaning:
   this port. Sources may be extern or managed ports (including the block
   itself — feedback is representable) and are referenced before or after
   their declaration.
+- `Port: a.Q and b.AQ >= 28` — an **expression** (D26): desugars into
+  gate/comparator blocks whose result is wired into the port — the same
+  sugar as on `<-` (see [Expressions](#expressions--sugar-over-the-discrete-blocks)).
 - An optional leading string is the display **label** (the XML `Title`);
   it defaults to the slug.
 
@@ -324,10 +329,16 @@ error.
 let schwelle = 28
 
 jal_sued.AutoShade <- sonne.Q and aussentemp.Q >= schwelle
+
+wp_ein = And(
+	I1: wassertemp.AQ < wunschtemp and abdeckung_offen.Q,
+	I2: pv_ueberschuss.AQ >= pv_schwelle,
+)
 ```
 
-The RHS of `<-` may be a boolean expression; it desugars — before
-compile, like template expansion — into the verified discrete blocks:
+The RHS of `<-` and the value of an argument binding (D26) may be a
+boolean expression; it desugars — before compile, like template
+expansion — into the verified discrete blocks:
 `and`/`or` become `And`/`Or` (fixed 2-input, longer chains cascade
 left-associatively), `not` becomes `Not`, and each comparison becomes
 one comparator block (`>=` → `GreaterEqual`, `>` → `Greater`, `<=` →
@@ -336,7 +347,9 @@ order is preserved: the left side binds `Input1`, the right side
 `Input2`; a port operand becomes a wire, a number or `let` reference
 becomes the port's `Def=` parameter. Each generated block's label is
 its sub-expression text, so the rule stays readable on the Loxone
-Config canvas. A bare `slug.Port` RHS stays a plain wire.
+Config canvas. A bare `slug.Port` stays a plain wire, a bare value a
+plain parameter — parenthesizing one changes nothing (one canonical
+spelling per fact).
 
 Precedence, loosest to tightest: `or` < `and` < `not` < comparison;
 parentheses group. Comparisons take plain operands (a port, a number,
@@ -346,10 +359,11 @@ drive a gate input directly; compare it. Gates take boolean ports or
 sub-expressions.
 
 **Identity.** The generated blocks get synthetic slugs
-`<sink>_<port>__<op><n>` (post-order walk, one counter per operator) —
-here `jal_sued_autoshade__ge1` and `jal_sued_autoshade__and1` — and are
-keyed in the lockfile like hand-written blocks, but marked
-expression-owned. An unchanged expression therefore never re-mints.
+`<sink>_<port>__<op><n>` (post-order walk, one counter per operator;
+the sink is the extern port on `<-`, the managed block's port for an
+argument binding) — here `jal_sued_autoshade__ge1`,
+`jal_sued_autoshade__and1`, and `wp_ein_i1__lt1` — and are keyed in the
+lockfile like hand-written blocks, but marked expression-owned. An unchanged expression therefore never re-mints.
 Editing the expression re-derives its slugs, and the compiler
 auto-removes the orphaned expression-owned entries — no `removed`
 statement needed: the expression is the blocks' single source of

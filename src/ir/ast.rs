@@ -180,7 +180,7 @@ impl BlockDecl {
     pub fn params(&self) -> impl Iterator<Item = (&str, &Value)> {
         self.bindings().filter_map(|b| match &b.kind {
             BindingKind::Param(v) => Some((b.port.as_str(), v)),
-            BindingKind::Wire(_) => None,
+            _ => None,
         })
     }
 
@@ -188,7 +188,16 @@ impl BlockDecl {
     pub fn input_wires(&self) -> impl Iterator<Item = (&str, &PortRef)> {
         self.bindings().filter_map(|b| match &b.kind {
             BindingKind::Wire(src) => Some((b.port.as_str(), src)),
-            BindingKind::Param(_) => None,
+            _ => None,
+        })
+    }
+
+    /// The expression bindings (`Port: a.Q and b.Q`) as `(sink_port, expr)`
+    /// — desugared by [`Module::desugar`] like `<-` expressions.
+    pub fn expr_bindings(&self) -> impl Iterator<Item = (&str, &Expr)> {
+        self.bindings().filter_map(|b| match &b.kind {
+            BindingKind::Expr(e) => Some((b.port.as_str(), e)),
+            _ => None,
         })
     }
 }
@@ -201,8 +210,8 @@ pub enum ArgItem {
     Comment(String),
 }
 
-/// `Port: value` (parameter) or `Port: slug.Port` (wire) inside a block's
-/// argument list.
+/// `Port: value` (parameter), `Port: slug.Port` (wire), or
+/// `Port: <expr>` (expression sugar, D26) inside a block's argument list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
     pub port: String,
@@ -217,6 +226,11 @@ pub enum BindingKind {
     Param(Value),
     /// A `slug.Port` source reference: becomes a wire into the port.
     Wire(PortRef),
+    /// A boolean expression (D26): desugars into gate/comparator blocks
+    /// whose result is wired into the port — the same machinery as the
+    /// `<-` expression statement (D24). A bare `slug.Port` stays a
+    /// [`BindingKind::Wire`], a bare value a [`BindingKind::Param`].
+    Expr(Expr),
 }
 
 impl fmt::Display for BindingKind {
@@ -224,6 +238,7 @@ impl fmt::Display for BindingKind {
         match self {
             BindingKind::Param(v) => v.fmt(f),
             BindingKind::Wire(r) => r.fmt(f),
+            BindingKind::Expr(e) => e.fmt(f),
         }
     }
 }
@@ -706,12 +721,32 @@ impl Module {
                 }
             }
         };
+        // Expression operands, shared by `<-` expressions and expression
+        // bindings in argument lists: ports must resolve, constants must be
+        // numbers or `let` references.
+        let check_expr_operands = |e: &Expr, sink: &str| -> Result<()> {
+            for operand in e.operands() {
+                match operand {
+                    Operand::Port(p) => object_ref(p)?,
+                    Operand::Value(Value::Str(s)) => {
+                        return compile_err(format!(
+                            "string {} in the expression on `{sink}` — \
+                             expressions compare numbers and ports only",
+                            quote(s),
+                        ));
+                    }
+                    Operand::Value(v) => value_refs(v)?,
+                }
+            }
+            Ok(())
+        };
 
         for item in &self.items {
             match item {
                 Item::Block(b) => {
                     let mut params_seen: BTreeSet<&str> = BTreeSet::new();
                     let mut wires_seen: BTreeSet<(&str, &PortRef)> = BTreeSet::new();
+                    let mut exprs_seen: BTreeSet<(&str, String)> = BTreeSet::new();
                     for binding in b.bindings() {
                         match &binding.kind {
                             BindingKind::Param(v) => {
@@ -728,6 +763,15 @@ impl Module {
                                 if !wires_seen.insert((&binding.port, src)) {
                                     return compile_err(format!(
                                         "duplicate wire `{}: {src}` in `{} = {}(…)`",
+                                        binding.port, b.slug, b.block_type
+                                    ));
+                                }
+                            }
+                            BindingKind::Expr(e) => {
+                                check_expr_operands(e, &format!("{}.{}", b.slug, binding.port))?;
+                                if !exprs_seen.insert((&binding.port, e.to_string())) {
+                                    return compile_err(format!(
+                                        "duplicate expression `{}: {e}` in `{} = {}(…)`",
                                         binding.port, b.slug, b.block_type
                                     ));
                                 }
@@ -762,20 +806,7 @@ impl Module {
                             slug = w.to.slug,
                         ));
                     }
-                    for operand in w.expr.operands() {
-                        match operand {
-                            Operand::Port(p) => object_ref(p)?,
-                            Operand::Value(Value::Str(s)) => {
-                                return compile_err(format!(
-                                    "string {} in the expression on `{}` — \
-                                     expressions compare numbers and ports only",
-                                    quote(s),
-                                    w.to,
-                                ));
-                            }
-                            Operand::Value(v) => value_refs(v)?,
-                        }
-                    }
+                    check_expr_operands(&w.expr, &w.to.to_string())?;
                 }
                 Item::Set(s) => {
                     object_ref(&s.target)?;
@@ -895,10 +926,14 @@ impl Module {
                             (TemplateParam::Value { .. }, BindingKind::Param(v)) => {
                                 value_refs(v)?;
                             }
-                            (TemplateParam::Value { name, .. }, BindingKind::Wire(_)) => {
+                            (
+                                TemplateParam::Value { name, .. },
+                                BindingKind::Wire(_) | BindingKind::Expr(_),
+                            ) => {
                                 return compile_err(format!(
                                     "`{} = {}(…)`: value parameter `{name}` takes a \
-                                     number, string, or constant — not a port",
+                                     number, string, or constant — not a port or \
+                                     expression",
                                     call.slug, call.block_type
                                 ));
                             }

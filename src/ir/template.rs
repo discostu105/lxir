@@ -136,7 +136,10 @@ impl Module {
                 (TemplateParam::Value { name, .. }, BindingKind::Param(v)) => {
                     values.insert(name, v.clone());
                 }
-                (TemplateParam::Value { name, .. }, BindingKind::Wire(_)) => {
+                (
+                    TemplateParam::Value { name, .. },
+                    BindingKind::Wire(_) | BindingKind::Expr(_),
+                ) => {
                     return Err(fail(format!(
                         "value parameter `{name}` takes a number, string, or constant"
                     )));
@@ -199,6 +202,9 @@ impl Module {
                                 kind: match &x.kind {
                                     BindingKind::Param(v) => BindingKind::Param(map_value(v)?),
                                     BindingKind::Wire(r) => BindingKind::Wire(map_ref(r)),
+                                    BindingKind::Expr(e) => {
+                                        BindingKind::Expr(map_expr(e, &map_ref, &map_value)?)
+                                    }
                                 },
                                 comment: x.comment.clone(),
                             })),

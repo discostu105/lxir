@@ -491,3 +491,19 @@ Anything unverified is an error, not a heuristic:
   `.` would sweep stray `.lxir` files (decompile views, backups) into a
   compile. The serial is validated at parse time so a typo fails before
   any file is read.
+- **D26 — Expressions bind in argument lists too** (2026-08-25). D24
+  allowed a boolean expression only on the RHS of `<-` (extern sinks),
+  so `ext.Port <- a.Q and b.Q` worked while
+  `x = Monoflop(InputTrigger: a.Q and b.Q)` did not — a rule that
+  existed only because D24 shipped first. The original D16 objection to
+  expressions (anonymous intermediates break lockfile identity) was
+  already answered by D24's deterministic synthetic slugs and
+  expression-owned lock entries, and `<sink>_<port>__<op><n>` extends
+  naturally when the sink is a managed block's port. An argument
+  binding's value may now be an expression; it desugars through exactly
+  the D24 machinery, and the binding becomes a plain wire from the
+  expression root's `Q`. A bare `slug.Port` (parenthesized or not)
+  stays a wire binding and a bare value a parameter binding — one
+  spelling per fact. Synthetic-slug counters persist across the
+  module's expressions per (sink, operator), so two expressions fanning
+  into the same port number on instead of colliding.

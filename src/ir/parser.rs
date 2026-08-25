@@ -731,43 +731,30 @@ fn parse_call_args(call: &mut BlockDecl, toks: &[Tok], lineno: usize) -> Result<
                         "expected `:` after argument name `{port}` (`{port}: <value>`)"
                     )));
                 }
-                let (kind, consumed) = match toks.get(i + 2) {
-                    Some(Tok::Num(n)) => (BindingKind::Param(Value::Number(n.clone())), 1),
-                    // A quoted string that reads as a number canonicalizes
-                    // to the bare number — one canonical spelling per value.
-                    Some(Tok::Str(s)) => (BindingKind::Param(Value::from_literal(s)), 1),
-                    Some(Tok::Ident(name)) => {
-                        if toks.get(i + 3) == Some(&Tok::Dot) {
-                            match toks.get(i + 4) {
-                                Some(Tok::Ident(src_port)) => (
-                                    BindingKind::Wire(PortRef {
-                                        slug: name.clone(),
-                                        port: src_port.clone(),
-                                    }),
-                                    3,
-                                ),
-                                _ => {
-                                    return Err(err(format!("expected a port after `{name}.`")));
-                                }
-                            }
-                        } else {
-                            (BindingKind::Param(Value::Ref(name.clone())), 1)
-                        }
+                // The binding value runs to the next top-level comma or the
+                // call's closing `)` — one value token, a `slug.Port`
+                // source, or an expression (D26).
+                let start = i + 2;
+                let mut end = start;
+                let mut depth = 0usize;
+                while let Some(t) = toks.get(end) {
+                    match t {
+                        Tok::LParen => depth += 1,
+                        Tok::RParen if depth == 0 => break,
+                        Tok::RParen => depth -= 1,
+                        Tok::Comma if depth == 0 => break,
+                        _ => {}
                     }
-                    _ => {
-                        return Err(err(format!(
-                            "expected a value after `{port}:` — a number, quoted string, \
-                             constant name, or source port (`<slug>.<Port>`)"
-                        )));
-                    }
-                };
+                    end += 1;
+                }
+                let kind = binding_kind(port, &toks[start..end], lineno)?;
                 call.args.push(ArgItem::Binding(Binding {
                     port: port.clone(),
                     kind,
                     comment: None,
                 }));
                 pushed_binding = true;
-                i += 2 + consumed;
+                i = end;
             }
             Some(_) => {
                 return Err(err(
@@ -782,6 +769,42 @@ fn parse_call_args(call: &mut BlockDecl, toks: &[Tok], lineno: usize) -> Result<
             Some(_) => return Err(err("expected `,` between arguments".into())),
         }
     }
+}
+
+/// Classify one binding's value tokens: a literal or constant is a
+/// parameter, a `slug.Port` a wire, anything longer an expression (D26).
+/// A parenthesized bare port or value canonicalizes to the plain form —
+/// one spelling per fact.
+fn binding_kind(port: &str, toks: &[Tok], lineno: usize) -> Result<BindingKind> {
+    let err = |msg: String| Error::IrParse { line: lineno, msg };
+    Ok(match toks {
+        [] => {
+            return Err(err(format!(
+                "expected a value after `{port}:` — a number, quoted string, \
+                 constant name, source port (`<slug>.<Port>`), or an expression \
+                 like `a.Q and b.AQ >= 28`"
+            )));
+        }
+        // A quoted string that reads as a number canonicalizes to the bare
+        // number — one canonical spelling per value.
+        [Tok::Str(s)] => BindingKind::Param(Value::from_literal(s)),
+        [Tok::Num(n)] => BindingKind::Param(Value::Number(n.clone())),
+        [Tok::Ident(name)] if !matches!(name.as_str(), "and" | "or" | "not") => {
+            BindingKind::Param(Value::Ref(name.clone()))
+        }
+        [Tok::Ident(slug), Tok::Dot, Tok::Ident(src_port)] => BindingKind::Wire(PortRef {
+            slug: slug.clone(),
+            port: src_port.clone(),
+        }),
+        [Tok::Ident(slug), Tok::Dot] => {
+            return Err(err(format!("expected a port after `{slug}.`")));
+        }
+        _ => match parse_expr(toks, lineno)? {
+            Expr::Atom(Operand::Port(p)) => BindingKind::Wire(p),
+            Expr::Atom(Operand::Value(v)) => BindingKind::Param(v),
+            e => BindingKind::Expr(e),
+        },
+    })
 }
 
 fn value_of(tok: &Tok, lineno: usize) -> Result<Value> {
