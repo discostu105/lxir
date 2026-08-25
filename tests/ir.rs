@@ -658,6 +658,64 @@ b = melder(quelle: vi_b, schwelle: 5)\n";
 }
 
 #[test]
+fn template_titles_interpolate_value_parameters() {
+    let src = "\
+extern vi_a = VirtualIn(iname: \"VI1\")\n\
+extern vi_b = VirtualIn(iname: \"VI2\")\n\
+\n\
+let name_b = \"Melder Garage\"\n\
+\n\
+template melder(quelle: VirtualIn, titel = \"Melder\", schwelle = 1)\n\
+\talarm = GreaterEqual(\"{titel} (scharf)\", Input1: quelle.Q, Input2: schwelle)\n\
+end\n\
+\n\
+a = melder(quelle: vi_a, titel: \"Melder Keller\")\n\
+b = melder(quelle: vi_b, titel: name_b)\n";
+    let module = Module::parse(src).unwrap();
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module, &mut lock, &opts()).unwrap();
+    let mut titles: Vec<_> = out
+        .objects()
+        .iter()
+        .filter(|o| o.block_type == "GreaterEqual")
+        .map(|o| o.title.clone().unwrap())
+        .collect();
+    titles.sort();
+    assert_eq!(titles, ["Melder Garage (scharf)", "Melder Keller (scharf)"]);
+
+    // A brace-wrapped slug that names no value parameter is a typo guard.
+    let bad = src.replace("{titel}", "{titl}");
+    let err = compile(
+        &base(),
+        &Module::parse(&bad).unwrap(),
+        &mut Lockfile::new(),
+        &opts(),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("{titl}"), "{err}");
+
+    // Braces around anything not slug-shaped pass through verbatim.
+    let verbatim = src.replace("{titel} (scharf)", "{titel} {2x} {}");
+    let out2 = compile(
+        &base(),
+        &Module::parse(&verbatim).unwrap(),
+        &mut Lockfile::new(),
+        &opts(),
+    )
+    .unwrap();
+    assert!(
+        out2.objects()
+            .iter()
+            .any(|o| o.title.as_deref() == Some("Melder Keller {2x} {}")),
+        "{:?}",
+        out2.objects()
+            .iter()
+            .map(|o| o.title.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn template_misuse_is_reported() {
     let fails = |src: &str, needle: &str| {
         let err = match Module::parse(src) {

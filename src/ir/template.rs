@@ -190,6 +190,58 @@ impl Module {
             Ok(v.clone())
         };
 
+        // A body title may interpolate value parameters: `{titel}` becomes
+        // the parameter's string at expansion, so instances carry their own
+        // app-visible titles. A brace-wrapped slug naming no value parameter
+        // is an error (typo guard); braces around anything not slug-shaped
+        // pass through verbatim.
+        let map_title = |title: &str| -> Result<String> {
+            let mut out = String::with_capacity(title.len());
+            let mut rest = title;
+            while let Some(open) = rest.find('{') {
+                out.push_str(&rest[..open]);
+                let tail = &rest[open + 1..];
+                let placeholder = tail.find('}').map(|close| &tail[..close]).filter(|name| {
+                    name.starts_with(|c: char| c.is_ascii_lowercase())
+                        && name
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                });
+                let Some(name) = placeholder else {
+                    out.push('{');
+                    rest = tail;
+                    continue;
+                };
+                match values.get(name) {
+                    Some(Value::Str(s)) => out.push_str(s),
+                    Some(Value::Ref(r)) => {
+                        match self.lets().find(|l| l.name == *r).map(|l| &l.value) {
+                            Some(Value::Str(s)) => out.push_str(s),
+                            _ => {
+                                return Err(fail(format!(
+                                    "title placeholder `{{{name}}}`: `{r}` is not a \
+                                     string constant"
+                                )));
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        return Err(fail(format!(
+                            "title placeholder `{{{name}}}` needs a string value"
+                        )));
+                    }
+                    None => {
+                        return Err(fail(format!(
+                            "title placeholder `{{{name}}}` names no value parameter"
+                        )));
+                    }
+                }
+                rest = &tail[name.len() + 1..];
+            }
+            out.push_str(rest);
+            Ok(out)
+        };
+
         let mut out = Vec::new();
         for item in &t.body {
             match item {
@@ -214,7 +266,7 @@ impl Module {
                     out.push(Item::Block(BlockDecl {
                         slug: format!("{}_{}", call.slug, b.slug),
                         block_type: b.block_type.clone(),
-                        title: b.title.clone(),
+                        title: b.title.as_deref().map(&map_title).transpose()?,
                         args,
                         comment: b.comment.clone(),
                         close_comment: b.close_comment.clone(),

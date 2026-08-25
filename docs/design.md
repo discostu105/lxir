@@ -423,6 +423,16 @@ Anything unverified is an error, not a heuristic:
     block-declaration form — one call syntax, distinguished by case.
     Nested templates and template-local `let`/`extern` are deferred,
     not rejected.
+  - Title interpolation (2026-08-25): body titles may embed `{param}`
+    placeholders that substitute a string value parameter at expansion —
+    without this, every instance of a template shares one app-visible
+    title, which ruled templates out for real configs (r50's 16
+    AutoJalousie blocks all carry distinct titles). Interpolation lives
+    entirely in the expansion pass — grammar, AST, fmt, and everything
+    downstream are untouched, and a placeholder naming no value
+    parameter is an error (typo guard) while non-slug braces pass
+    verbatim. Rejected: a `Value`-typed label position in the grammar
+    (ripples through parser/fmt/decompile for no added power).
 
 - **D24 — Expressions are sugar over the discrete blocks, owned by their
   statement** (2026-08-25). The sketch's

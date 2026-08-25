@@ -382,6 +382,14 @@ body mints only what is new in each instance; `removed` and `moved` apply
 per expanded slug (`removed sued_hoch`). Reference an instance's blocks by
 their expanded names.
 
+A block title in the body may interpolate value parameters:
+`"{titel} (scharf)"` substitutes the parameter's string at expansion, so
+each instance carries its own app-visible title. The placeholder must
+name a value parameter whose value is a string (a `let` reference to a
+string constant also works); a brace-wrapped slug naming no value
+parameter is an error (typo guard), and braces around anything not
+slug-shaped pass through verbatim.
+
 The body may contain only block declarations, wires, sets and comments —
 no nesting, no template-local `let`/`extern` (deferred, D23). `template`
 and `end` are reserved words; `use` is reserved for the v0 migration
