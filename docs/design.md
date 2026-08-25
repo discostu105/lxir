@@ -507,3 +507,18 @@ Anything unverified is an error, not a heuristic:
   spelling per fact. Synthetic-slug counters persist across the
   module's expressions per (sink, operator), so two expressions fanning
   into the same port number on instead of colliding.
+- **D27 — Unit-suffixed values, scaled at compile, no port checking**
+  (2026-08-25). `Time: 90min`, `TimeHigh: 250ms`, `DayMinTemp: 2700K`,
+  `TargetPos: 70%` — a number may carry a unit suffix, written
+  immediately adjacent. Time units (`ms`/`s`/`min`/`h`) scale exactly
+  (decimal integer arithmetic, no floats) into Loxone's base unit,
+  seconds; `K` and `%` are annotations with factor 1. The suffix is the
+  value's canonical spelling (`1.5h` stays `1.5h` through `fmt`) and
+  the compiled `Def=` is byte-identical to writing the plain number —
+  tested. Deliberately *not* included: per-port unit checking (is
+  `Time:` really seconds? is `Dir:` degrees?) — that needs the
+  connector DB to learn per-port units with evidence, so a wrong unit
+  today is accepted like a wrong plain number, and the roadmap keeps
+  the checking entry. A quoted string that looks like a unit value
+  (`"40s"`) stays a string; decompile keeps lifting plain numbers (it
+  cannot know a port's unit without that same evidence).

@@ -48,7 +48,7 @@ unary      = "not" unary | primary ;
 primary    = comparison | operand | "(" expr ")" ;
 comparison = operand cmp-op operand ;              (* no chaining *)
 cmp-op     = ">=" | ">" | "<=" | "<" | "==" | "!=" ;
-operand    = slug "." port | number | const-ref ;
+operand    = slug "." port | number [ unit ] | const-ref ;
 removed    = "removed" slug [ comment ] ;
 moved      = "moved" slug "->" slug [ comment ] ;
 
@@ -57,16 +57,17 @@ template   = "template" slug "(" [ params ] ")" [ comment ]
              "end" [ comment ] ;
 params     = param { "," param } ;
 param      = slug ":" type                         (* object parameter *)
-           | slug "=" ( number | string ) ;        (* value parameter, default *)
+           | slug "=" ( number [ unit ] | string ) ;   (* value parameter, default *)
 instance   = slug "=" slug "(" [ inst-args ] ")" [ comment ] ;
 inst-args  = param-name ":" ( slug | value ) { "," … } [ "," ] ;
 
 slug       = lowercase-letter { lowercase-letter | digit | "_" } ;
 type       = uppercase-letter { letter | digit } ;          (* PascalCase *)
 port       = letter-or-digit-or-underscore-sequence ;       (* as in the XML `K=` key *)
-value      = number | string | const-ref ;
+value      = number [ unit ] | string | const-ref ;
 const-ref  = slug ;                                (* names a `let` constant *)
 number     = [ "-" ] digits [ "." digits ] ;       (* exactly — `1.2.3`, `5.` are errors *)
+unit       = "ms" | "s" | "min" | "h" | "K" | "%" ;   (* immediately adjacent (D27) *)
 string     = '"' { character | escape } '"' ;
 escape     = '\"' | "\\" | "\n" ;
 ```
@@ -86,6 +87,14 @@ Notes:
   it must name a `let` in the same module. A dotted identifier
   (`slug.Port`) is always a **port reference**. String values are always
   quoted.
+- A number may carry a **unit suffix** (D27), written immediately
+  adjacent: `40s`, `250ms`, `90min`, `1.5h`, `2700K`, `70%`. Time units
+  scale exactly into Loxone's base unit, seconds (`1.5h` compiles to
+  `Def="5400"`, byte-identical to writing `5400`); `K` (color
+  temperature) and `%` are annotations with factor 1. The suffix is part
+  of the value's canonical spelling — `1.5h` stays `1.5h` in source and
+  through `fmt`. An unknown suffix is a parse error. A *quoted* `"40s"`
+  stays a string — two spellings, two meanings.
 - The keywords `let`, `extern`, `removed`, `moved`, `template`, `end`,
   and the expression operators `and`, `or`, `not` are reserved, as are
   v0's `block`, `wire`, `set`, and `use` (migration errors) — none can
@@ -430,7 +439,8 @@ multi-line block declaration. An argument-free call stays on one line
 (`b = And()`, `c = Or("Oder")`); a call with bindings puts the label and
 each argument on its own tab-indented line with a trailing comma, and the
 `)` on its own line. Values keep their variant: numbers bare, strings
-quoted, constant references bare, port references dotted. The one value
+quoted, constant references bare, port references dotted, unit values
+with their suffix as written. The one value
 canonicalization happens at parse time: a quoted string that reads exactly
 as a number (`"28"`) becomes the bare number, so every value has one
 canonical spelling. `parse(to_text(m)) == m`, and `to_text` is a fixpoint.
@@ -447,7 +457,7 @@ with remedies in [agents.md](agents.md#errors-and-remedies).
 
 This is v1; there are no v0 files in the wild (pre-release revision).
 Anything not specified here (template nesting and template-local
-declarations, the `formula` expression backend, unit-suffixed values) is
-future work —
+declarations, the `formula` expression backend, per-port unit checking)
+is future work —
 see [roadmap.md](roadmap.md). Future versions will keep v1 files parsing
 unchanged or provide a migration tool.

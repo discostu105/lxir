@@ -9,6 +9,8 @@ enum Tok {
     Ident(String),
     Str(String),
     Num(String),
+    /// A number with a unit suffix (`40s`, `1.5h` — D27).
+    UnitNum(String, Unit),
     Colon,
     Dot,
     Comma,
@@ -128,7 +130,7 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
                     if s == "-" {
                         return Err(err("unexpected `-`".into()));
                     }
-                    toks.push(number(s, lineno)?);
+                    toks.push(number(s, &mut chars, lineno)?);
                 }
             }
             '"' => {
@@ -161,7 +163,7 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
                         break;
                     }
                 }
-                toks.push(number(s, lineno)?);
+                toks.push(number(s, &mut chars, lineno)?);
             }
             c if c.is_alphanumeric() || c == '_' => {
                 let mut s = String::new();
@@ -181,16 +183,46 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
     Ok((toks, comment))
 }
 
-/// A lexed digit-and-dot run must be exactly `-?digits(.digits)?`.
-fn number(s: String, lineno: usize) -> Result<Tok> {
-    if is_number_literal(&s) {
-        Ok(Tok::Num(s))
-    } else {
-        Err(Error::IrParse {
-            line: lineno,
-            msg: format!("invalid number literal `{s}` (expected digits with at most one `.`)"),
-        })
+/// A lexed digit-and-dot run must be exactly `-?digits(.digits)?`. An
+/// immediately following letter run or `%` is a unit suffix (D27):
+/// `40s`, `1.5h`, `2700K`, `70%`.
+fn number(
+    s: String,
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    lineno: usize,
+) -> Result<Tok> {
+    let err = |msg: String| Error::IrParse { line: lineno, msg };
+    if !is_number_literal(&s) {
+        return Err(err(format!(
+            "invalid number literal `{s}` (expected digits with at most one `.`)"
+        )));
     }
+    let mut suffix = String::new();
+    if chars.peek() == Some(&'%') {
+        chars.next();
+        suffix.push('%');
+    } else {
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_alphabetic() {
+                suffix.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+    if suffix.is_empty() {
+        return Ok(Tok::Num(s));
+    }
+    let Some(unit) = Unit::parse(&suffix) else {
+        return Err(err(format!(
+            "unknown unit `{suffix}` on `{s}{suffix}` (known units: ms, s, min, h, K, %)"
+        )));
+    };
+    if scale_by_unit(&s, unit).is_none() {
+        return Err(err(format!("`{s}{suffix}` is too large to scale exactly")));
+    }
+    Ok(Tok::UnitNum(s, unit))
 }
 
 fn opt(c: Option<char>) -> String {
@@ -318,7 +350,7 @@ pub fn parse(src: &str) -> Result<Module> {
                             (
                                 Some(Tok::Ident(n)),
                                 Some(Tok::Eq),
-                                Some(v @ (Tok::Num(_) | Tok::Str(_))),
+                                Some(v @ (Tok::Num(_) | Tok::UnitNum(..) | Tok::Str(_))),
                             ) => {
                                 params.push(TemplateParam::Value {
                                     name: check_slug(n, lineno)?,
@@ -789,6 +821,10 @@ fn binding_kind(port: &str, toks: &[Tok], lineno: usize) -> Result<BindingKind> 
         // number — one canonical spelling per value.
         [Tok::Str(s)] => BindingKind::Param(Value::from_literal(s)),
         [Tok::Num(n)] => BindingKind::Param(Value::Number(n.clone())),
+        [Tok::UnitNum(n, u)] => BindingKind::Param(Value::Unit {
+            number: n.clone(),
+            unit: *u,
+        }),
         [Tok::Ident(name)] if !matches!(name.as_str(), "and" | "or" | "not") => {
             BindingKind::Param(Value::Ref(name.clone()))
         }
@@ -810,6 +846,10 @@ fn binding_kind(port: &str, toks: &[Tok], lineno: usize) -> Result<BindingKind> 
 fn value_of(tok: &Tok, lineno: usize) -> Result<Value> {
     match tok {
         Tok::Num(n) => Ok(Value::Number(n.clone())),
+        Tok::UnitNum(n, u) => Ok(Value::Unit {
+            number: n.clone(),
+            unit: *u,
+        }),
         // A quoted string that reads as a number canonicalizes to the bare
         // number — one canonical spelling per value.
         Tok::Str(s) => Ok(Value::from_literal(s)),
@@ -966,6 +1006,14 @@ impl ExprParser<'_> {
                 self.pos += 1;
                 Ok(r)
             }
+            (Some(Tok::UnitNum(n, u)), _, _) => {
+                let r = Operand::Value(Value::Unit {
+                    number: n.clone(),
+                    unit: *u,
+                });
+                self.pos += 1;
+                Ok(r)
+            }
             (Some(Tok::Str(_)), _, _) => Err(self.err(
                 "strings have no place in an expression — it compares numbers and ports".into(),
             )),
@@ -1110,6 +1158,78 @@ sonne.Qm = 30 # override
         assert!(m.to_text().contains("s.Q = 28"), "{}", m.to_text());
         let m = Module::parse("b = GreaterEqual(Input2: \"28\")\n").unwrap();
         assert!(m.to_text().contains("Input2: 28,"), "{}", m.to_text());
+    }
+
+    #[test]
+    fn unit_values_parse_scale_and_roundtrip() {
+        // Canonical form keeps the unit spelling; resolution scales into
+        // the base unit, exactly.
+        let m = Module::parse(
+            "let nachlauf = 90min\n\
+             t = Monoflop(Time: 1.5h)\n\
+             p = PulseGen(TimeHigh: 250ms, TimeLow: 2s)\n",
+        )
+        .unwrap();
+        let text = m.to_text();
+        for needle in ["nachlauf = 90min", "Time: 1.5h,", "TimeHigh: 250ms,"] {
+            assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
+        }
+        assert_eq!(Module::parse(&text).unwrap(), m);
+        assert_eq!(Module::parse(&text).unwrap().to_text(), text, "fixpoint");
+        let resolved: Vec<String> = m
+            .blocks()
+            .flat_map(|b| {
+                b.params()
+                    .map(|(_, v)| m.resolve_value(v).unwrap().into_owned())
+            })
+            .collect();
+        assert_eq!(resolved, ["5400", "0.25", "2"]);
+        let nachlauf = m.lets().next().unwrap();
+        assert_eq!(
+            m.resolve_value(&Value::Ref(nachlauf.name.clone())).unwrap(),
+            "5400"
+        );
+
+        // K and % are annotations with factor 1; negatives keep the sign.
+        for (src, want) in [
+            ("2700K", "2700"),
+            ("70%", "70"),
+            ("-30s", "-30"),
+            ("0.3s", "0.3"),
+            ("1000ms", "1"),
+            ("0ms", "0"),
+        ] {
+            let m = Module::parse(&format!("t = Monoflop(Time: {src})\n")).unwrap();
+            let (_, v) = m.blocks().next().unwrap().params().next().unwrap();
+            assert_eq!(m.resolve_value(v).unwrap(), want, "{src}");
+            assert!(m.to_text().contains(&format!("Time: {src},")), "{src}");
+        }
+
+        // Units work in expressions and template defaults.
+        let m = Module::parse(
+            "extern a = VirtualIn(iname: \"VI1\")\n\
+             extern j = AutoJalousie(title: \"J\")\n\
+             j.AutoShade <- a.AQ >= 1.5h\n",
+        )
+        .unwrap();
+        let (plain, _) = m.desugar().unwrap();
+        let ge = plain.blocks().next().unwrap();
+        assert_eq!(ge.title.as_deref(), Some("a.AQ >= 1.5h"));
+        let (_, v) = ge.params().next().unwrap();
+        assert_eq!(plain.resolve_value(v).unwrap(), "5400");
+        Module::parse("template t(x: VirtualIn, zeit = 5min)\n\ty = Monoflop(Time: zeit)\nend\n")
+            .unwrap();
+
+        // Unknown or malformed units are refused at parse time.
+        let e = Module::parse("t = Monoflop(Time: 5x)\n").unwrap_err();
+        assert!(e.to_string().contains("unknown unit `x`"), "{e}");
+        let e = Module::parse("t = Monoflop(Time: 5sec)\n").unwrap_err();
+        assert!(e.to_string().contains("unknown unit `sec`"), "{e}");
+        // A quoted "40s" is a string, not a unit value — two spellings,
+        // two meanings.
+        let m = Module::parse("t = Monoflop(Time: \"40s\")\n").unwrap();
+        let (_, v) = m.blocks().next().unwrap().params().next().unwrap();
+        assert_eq!(v, &Value::Str("40s".into()));
     }
 
     #[test]

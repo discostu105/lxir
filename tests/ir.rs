@@ -1558,6 +1558,33 @@ fn expression_misuse_is_reported() {
 }
 
 // ---------------------------------------------------------------------------
+// Unit-suffixed values (D27)
+
+#[test]
+fn unit_values_compile_byte_identically_to_their_base_literal() {
+    let base = base();
+    let with_units = Module::parse(
+        "extern sonne = VirtualIn(iname: \"VI3\")\n\
+         nachlauf = Monoflop(InputTrigger: sonne.Q, Time: 1.5h)\n",
+    )
+    .unwrap();
+    let plain = Module::parse(
+        "extern sonne = VirtualIn(iname: \"VI3\")\n\
+         nachlauf = Monoflop(InputTrigger: sonne.Q, Time: 5400)\n",
+    )
+    .unwrap();
+    let mut lock_a = Lockfile::new();
+    let out_a = compile(&base, &with_units, &mut lock_a, &opts()).unwrap();
+    let mut lock_b = Lockfile::new();
+    let out_b = compile(&base, &plain, &mut lock_b, &opts()).unwrap();
+    assert_eq!(
+        out_a.to_bytes(),
+        out_b.to_bytes(),
+        "a unit value compiles byte-identically to its base-unit literal"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Expressions in argument bindings (D26)
 
 #[test]

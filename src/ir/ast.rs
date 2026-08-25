@@ -1,6 +1,7 @@
 //! IR abstract syntax and canonical text emission.
 
 use crate::error::{Error, Result};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -52,6 +53,101 @@ pub enum Value {
     Str(String),
     /// Bare identifier referencing a `let` constant.
     Ref(String),
+    /// A number with a unit suffix (`40s`, `1.5h`, `2700K` — D27), kept as
+    /// written; the compiler resolves it to the port's base unit
+    /// (`1.5h` → `5400`) when emitting `Def=`.
+    Unit { number: String, unit: Unit },
+}
+
+/// A value's unit suffix (D27). Time units scale to Loxone's base unit,
+/// seconds; `K` (color temperature) and `%` are annotations with factor 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unit {
+    Ms,
+    S,
+    Min,
+    H,
+    K,
+    Pct,
+}
+
+impl Unit {
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Unit::Ms => "ms",
+            Unit::S => "s",
+            Unit::Min => "min",
+            Unit::H => "h",
+            Unit::K => "K",
+            Unit::Pct => "%",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Unit> {
+        Some(match s {
+            "ms" => Unit::Ms,
+            "s" => Unit::S,
+            "min" => Unit::Min,
+            "h" => Unit::H,
+            "K" => Unit::K,
+            "%" => Unit::Pct,
+            _ => return None,
+        })
+    }
+
+    /// `(multiplier, extra decimal digits)`: the literal scales by
+    /// `multiplier / 10^shift` into the base unit.
+    fn factor(self) -> (u128, u32) {
+        match self {
+            Unit::Ms => (1, 3),
+            Unit::S | Unit::K | Unit::Pct => (1, 0),
+            Unit::Min => (60, 0),
+            Unit::H => (3600, 0),
+        }
+    }
+}
+
+impl fmt::Display for Unit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.suffix())
+    }
+}
+
+/// Scale a number literal (`-?digits(.digits)?`) by a unit's factor,
+/// exactly, rendering a plain number literal (`1.5`×3600 → `5400`,
+/// `250`÷1000 → `0.25`). `None` when the digits overflow the exact range.
+pub(crate) fn scale_by_unit(number: &str, unit: Unit) -> Option<String> {
+    let (mul, shift) = unit.factor();
+    let (neg, rest) = match number.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, number),
+    };
+    let (int, frac) = rest.split_once('.').unwrap_or((rest, ""));
+    let mantissa: u128 = format!("{int}{frac}").parse().ok()?;
+    let mantissa = mantissa.checked_mul(mul)?;
+    let point = frac.len() as u32 + shift;
+    let digits = mantissa.to_string();
+    let mut out = if point == 0 {
+        digits
+    } else {
+        let point = point as usize;
+        let (int, frac) = if digits.len() > point {
+            let split = digits.len() - point;
+            (digits[..split].to_string(), digits[split..].to_string())
+        } else {
+            ("0".to_string(), format!("{digits:0>point$}"))
+        };
+        let frac = frac.trim_end_matches('0');
+        if frac.is_empty() {
+            int
+        } else {
+            format!("{int}.{frac}")
+        }
+    };
+    if neg && out != "0" {
+        out.insert(0, '-');
+    }
+    Some(out)
 }
 
 impl Value {
@@ -64,12 +160,14 @@ impl Value {
         }
     }
 
-    /// The literal content for `Number`/`Str`; `None` for a `Ref` (resolve
-    /// it through [`Module::resolve_value`]).
-    pub fn literal(&self) -> Option<&str> {
+    /// The literal content this value resolves to: `Number`/`Str` verbatim,
+    /// `Unit` scaled into its base unit; `None` for a `Ref` (resolve it
+    /// through [`Module::resolve_value`]).
+    pub fn literal(&self) -> Option<Cow<'_, str>> {
         match self {
-            Value::Number(s) | Value::Str(s) => Some(s),
+            Value::Number(s) | Value::Str(s) => Some(Cow::Borrowed(s)),
             Value::Ref(_) => None,
+            Value::Unit { number, unit } => scale_by_unit(number, *unit).map(Cow::Owned),
         }
     }
 }
@@ -80,6 +178,7 @@ impl fmt::Display for Value {
             Value::Number(n) => f.write_str(n),
             Value::Str(s) => f.write_str(&quote(s)),
             Value::Ref(r) => f.write_str(r),
+            Value::Unit { number, unit } => write!(f, "{number}{unit}"),
         }
     }
 }
@@ -423,7 +522,8 @@ pub struct SetDecl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LetDecl {
     pub name: String,
-    /// Always `Number` or `Str` (constants cannot reference constants).
+    /// Always `Number`, `Str`, or `Unit` (constants cannot reference
+    /// constants).
     pub value: Value,
     /// Trailing `#` comment on the statement line, verbatim.
     pub comment: Option<String>,
@@ -637,15 +737,19 @@ impl Module {
     }
 
     /// Resolve a value to the literal string that becomes `Def=`: literals
-    /// resolve to themselves, `Ref`s through the module's `let` constants.
-    pub fn resolve_value<'m>(&'m self, value: &'m Value) -> Result<&'m str> {
+    /// resolve to themselves, unit values scale into their base unit
+    /// (`1.5h` → `5400`), `Ref`s resolve through the module's `let`
+    /// constants.
+    pub fn resolve_value<'m>(&'m self, value: &'m Value) -> Result<Cow<'m, str>> {
         match value {
-            Value::Number(s) | Value::Str(s) => Ok(s),
             Value::Ref(name) => self
                 .lets()
                 .find(|l| l.name == *name)
                 .and_then(|l| l.value.literal())
                 .ok_or_else(|| Error::Compile(format!("undeclared constant `{name}`"))),
+            other => other
+                .literal()
+                .ok_or_else(|| Error::Compile(format!("value `{other}` overflows its unit"))),
         }
     }
 

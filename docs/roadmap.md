@@ -113,10 +113,12 @@ types) contradict each other. Results and methodology:
       to a Place/Category title. Format fact validated corpus-wide
       first (~36 900 occurrences, zero counterexamples in real
       configs; [loxone-format.md](loxone-format.md)).
-- [ ] Unit-suffixed values (`Time = 5s`, `TargetPos = 70%`) documenting
-      intent and catching unit errors. **Blocked on the connector DB**
-      learning per-port units — the plain number stays the canonical form
-      until then.
+- [x] Unit-suffixed values 2026-08-25 (D27): `Time: 90min`, `1.5h`,
+      `250ms`, `2700K`, `70%` — the suffix scales exactly into the base
+      unit at compile (byte-identical to the plain number) and is the
+      value's canonical spelling. Deliberately *without* per-port unit
+      checking: that stays blocked on the connector DB learning per-port
+      units (a `Time: 70%` is accepted today).
 
 ## Stufe 1 — Templates
 
