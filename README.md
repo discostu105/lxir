@@ -108,6 +108,8 @@ lxir compile --base current.Loxone --module modules/beschattung.lxir \
              --serial 504F94112233
 lxir rename alter_name neuer_name    # refactor: sources + lockfile together,
                                      # identities kept, output verified
+lxir lint                            # advisory: unused names, blocks whose
+                                     # outputs feed nothing (GUI wires count)
 lxir diff current.Loxone out.Loxone  # semantic diff, locale noise flagged
 lxir decompile current.Loxone        # full IR view, grouped by page
 lxir decompile --out-dir view/ current.Loxone  # one module per page

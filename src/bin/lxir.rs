@@ -5,9 +5,9 @@
 //! nothing here has semantics of its own.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Item, Module, adopt, adopt_one, adopt_pages,
-    apply_rekeys, compile, decompile, decompile_pages, lock_rekeys, rename_slug, slugify,
-    valid_slug, validate_ports,
+    CompileOptions, DecompileOptions, DecompileScope, Item, LintFinding, Module, adopt, adopt_one,
+    adopt_pages, apply_rekeys, compile, decompile, decompile_pages, lint_dead_outputs, lint_source,
+    lock_rekeys, rename_slug, slugify, valid_slug, validate_ports,
 };
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc, Project};
@@ -66,6 +66,16 @@ USAGE:
         the slug itself feeds (auto-labeled blocks, D24 expression
         labels). Needs a lox.toml project (module, lock, base); also
         refreshes the project's out file.
+
+  lxir lint [<module.lxir | module-dir | project-dir>]
+        Advisory findings a compile has no business rejecting: unused
+        externs and constants, uninstantiated templates — and, inside a
+        lox.toml project, managed blocks whose outputs feed nothing in
+        the *compiled* config (GUI-drawn wires count as consumers; a
+        block that reaches only dead ref plumbing is still dead). Never
+        modifies anything; exit 1 when there are findings — they can be
+        deliberate (reference externs kept as documentation, app-visible
+        state blocks), so lint is not part of the compile path.
 
   lxir decompile [--managed-only] [--all-params] [--out-dir <dir>] <cfg.Loxone>
         Print the IR view of a config, grouped into sections headed by
@@ -157,6 +167,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["fmt", rest @ ..] => cmd_fmt(rest),
         ["compile", rest @ ..] => cmd_compile(rest),
         ["rename", rest @ ..] => cmd_rename(rest),
+        ["lint", rest @ ..] => cmd_lint(rest),
         ["decompile", rest @ ..] => cmd_decompile(rest),
         ["adopt", rest @ ..] => cmd_adopt(rest),
         ["diff", rest @ ..] => cmd_diff(rest),
@@ -682,6 +693,100 @@ fn title_only_diff(a: &[u8], b: &[u8]) -> Result<usize, String> {
         }
     }
     Ok(changes)
+}
+
+fn cmd_lint(args: &[&str]) -> Result<ExitCode, AnyError> {
+    let path = match args {
+        [] => ".".to_string(),
+        [p] if !p.starts_with('-') => p.to_string(),
+        _ => return Err("usage: lxir lint [<module.lxir | module-dir | project-dir>]".into()),
+    };
+    // A project directory gets the full treatment (dead-output analysis
+    // needs base + lock); a bare module gets the source-only lints.
+    let p = Path::new(&path);
+    let project = if p.is_dir() {
+        Project::find(p).map(|f| Project::load(&f)).transpose()?
+    } else {
+        None
+    };
+    let (module_path, project) = match project {
+        Some(prj) => (prj.module.display().to_string(), Some(prj)),
+        None => (path.clone(), None),
+    };
+    let module = read_module(&module_path)?;
+
+    let mut findings = lint_source(&module)?;
+    match &project {
+        Some(prj) => {
+            let base_doc = read_doc(&prj.base.display().to_string())?;
+            let lock = Lockfile::load(&prj.lock)?;
+            let serial = prj
+                .serial
+                .clone()
+                .or_else(|| lock.target.miniserver_serial.clone())
+                .ok_or("no serial in the project file and none recorded in the lockfile")?;
+            let opts = CompileOptions {
+                machine: parse_serial(&serial)?,
+                accept_version: None,
+                mint_time_unix: 0,
+                page_title: prj.page.clone(),
+                allow_removals: false,
+            };
+            let mut lock_copy = lock.clone();
+            let compiled = compile(&base_doc, &module, &mut lock_copy, &opts)
+                .map_err(|e| format!("compile for dead-output analysis failed: {e}"))?;
+            findings.extend(lint_dead_outputs(&module, &lock, &compiled)?);
+        }
+        None => eprintln!("note: no lox.toml project — dead-output analysis skipped"),
+    }
+
+    if findings.is_empty() {
+        println!("lint: clean");
+        return Ok(ExitCode::SUCCESS);
+    }
+    // Name the declaring file where the module is a directory of fragments.
+    let locate: Vec<(PathBuf, Module)> = if Path::new(&module_path).is_dir() {
+        module_dir_files(Path::new(&module_path))
+            .map_err(|(p, e)| format!("{p}: {e}"))?
+            .into_iter()
+            .filter_map(|f| {
+                let src = std::fs::read_to_string(&f).ok()?;
+                Some((f, Module::parse_fragment(&src).ok()?))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let file_of = |finding: &LintFinding| -> String {
+        for (f, m) in &locate {
+            let declares = m.items.iter().any(|i| match i {
+                Item::Extern(e) => e.slug == finding.slug,
+                Item::Block(b) | Item::Instance(b) => b.slug == finding.slug,
+                Item::Let(l) => l.name == finding.slug,
+                Item::Template(t) => t.name == finding.slug,
+                _ => false,
+            });
+            if declares {
+                return format!("{}: ", f.display());
+            }
+        }
+        String::new()
+    };
+    for finding in &findings {
+        println!(
+            "{}{}: `{}` — {}",
+            file_of(finding),
+            finding.kind.label(),
+            finding.slug,
+            finding.detail
+        );
+    }
+    println!(
+        "lint: {} finding{}",
+        findings.len(),
+        if findings.len() == 1 { "" } else { "s" }
+    );
+    Ok(ExitCode::FAILURE)
 }
 
 fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {

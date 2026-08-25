@@ -333,6 +333,19 @@ haus/
         project's out file is refreshed alongside. Born from the r50
         Slug-Kur, which needed a hand-written script plus `moved`
         statements for 170 renames.
+  - [x] `lxir lint` 2026-08-25: advisory findings a compile has no
+        business rejecting. Source layer: unused externs/constants (after
+        expansion + desugaring, so template captures and expression
+        operands count as uses), uninstantiated templates. Project layer:
+        managed blocks whose outputs feed nothing in the *compiled*
+        config — GUI-drawn wires count as consumers, a block reaching
+        only dead ref plumbing is still dead, and side-channel actors are
+        exempt (central blocks command through `rec=` uuid lists, `Code16`
+        acts through its program). Findings name their declaring
+        fragment; exit 1 on findings, but deliberately not part of the
+        compile path (reference externs kept as documentation are a
+        legitimate pattern). First run on the house config surfaced one
+        real dead block and three suspicious app-visible tasters.
 - **Editor**
   - [x] VS Code: syntax highlighting + snippets (`editor/vscode/`).
   - [ ] LSP server (`lxir lsp`): diagnostics from `Module::parse`/`validate`

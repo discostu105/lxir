@@ -40,6 +40,7 @@ mod ast;
 mod compile;
 mod decompile;
 mod desugar;
+mod lint;
 mod parser;
 mod rename;
 mod template;
@@ -57,5 +58,6 @@ pub use decompile::{
     slugify,
 };
 pub use desugar::DesugarInfo;
+pub use lint::{LintFinding, LintKind, lint_dead_outputs, lint_source};
 pub use rename::{Rekey, RekeyKind, apply_rekeys, lock_rekeys, rename_slug, valid_slug};
 pub use validate::validate_ports;
