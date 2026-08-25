@@ -191,6 +191,74 @@ fn unverified_block_type_is_refused() {
 }
 
 #[test]
+fn composite_extern_matching_narrows_by_room_and_category() {
+    // Two identically-titled Switches in different rooms; the room lives
+    // in `<IoData Pr=…>` pointing at a Place (docs/loxone-format.md).
+    let base = LoxoneDoc::parse(
+        "<ControlList Version=\"1\" NextObj=\"20\">\r\n\
+         \t<C Type=\"Document\" U=\"00000001-0000-0000-ffff000000000001\">\r\n\
+         \t\t<C Type=\"Place\" U=\"00000002-0000-0000-ffff000000000001\" Title=\"B\u{fc}ro\"/>\r\n\
+         \t\t<C Type=\"Place\" U=\"00000003-0000-0000-ffff000000000001\" Title=\"K\u{fc}che\"/>\r\n\
+         \t\t<C Type=\"Category\" U=\"00000004-0000-0000-ffff000000000001\" Title=\"Beleuchtung\"/>\r\n\
+         \t\t<C Type=\"Page\" U=\"00000005-0000-0000-ffff000000000001\" Title=\"P\">\r\n\
+         \t\t\t<C Type=\"Switch\" U=\"00000006-0000-0000-ffff000000000001\" Title=\"Deckenlicht\">\r\n\
+         \t\t\t\t<Co K=\"Trigger\" U=\"00000006-0000-0001-01ff000000000001\"/>\r\n\
+         \t\t\t\t<IoData Visu=\"true\" Cr=\"00000004-0000-0000-ffff000000000001\" Pr=\"00000002-0000-0000-ffff000000000001\"/>\r\n\
+         \t\t\t</C>\r\n\
+         \t\t\t<C Type=\"Switch\" U=\"00000007-0000-0000-ffff000000000001\" Title=\"Deckenlicht\">\r\n\
+         \t\t\t\t<Co K=\"Trigger\" U=\"00000007-0000-0001-01ff000000000001\"/>\r\n\
+         \t\t\t\t<IoData Visu=\"true\" Pr=\"00000003-0000-0000-ffff000000000001\"/>\r\n\
+         \t\t\t</C>\r\n\
+         \t\t</C>\r\n\
+         \t</C>\r\n\
+         </ControlList>\r\n"
+            .as_bytes(),
+    )
+    .unwrap();
+
+    // Title alone is ambiguous.
+    let m = Module::parse("extern licht = Switch(title: \"Deckenlicht\")\n").unwrap();
+    let err = compile(&base, &m, &mut Lockfile::new(), &opts()).unwrap_err();
+    assert!(err.to_string().contains("2"), "{err}");
+
+    // The room narrows it to one.
+    let m = Module::parse("extern licht = Switch(title: \"Deckenlicht\", room: \"B\u{fc}ro\")\n")
+        .unwrap();
+    let mut lock = Lockfile::new();
+    compile(&base, &m, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.externals["licht"].uuid,
+        "00000006-0000-0000-ffff000000000001"
+    );
+
+    // So does the category (only one Switch carries Cr=).
+    let m =
+        Module::parse("extern licht = Switch(title: \"Deckenlicht\", category: \"Beleuchtung\")\n")
+            .unwrap();
+    let mut lock = Lockfile::new();
+    compile(&base, &m, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.externals["licht"].uuid,
+        "00000006-0000-0000-ffff000000000001"
+    );
+
+    // A wrong room is NoMatch, and the error shows the full spec.
+    let m =
+        Module::parse("extern licht = Switch(title: \"Deckenlicht\", room: \"Bad\")\n").unwrap();
+    let err = compile(&base, &m, &mut Lockfile::new(), &opts()).unwrap_err();
+    assert!(err.to_string().contains("room: \"Bad\""), "{err}");
+
+    // uuid + room is a parse error; the composite form survives fmt.
+    assert!(
+        Module::parse("extern x = Switch(uuid: \"00000006-0000-0000-ffff000000000001\", room: \"B\u{fc}ro\")\n")
+            .is_err()
+    );
+    let src = "extern licht = Switch(title: \"Deckenlicht\", room: \"B\u{fc}ro\")\n";
+    let m = Module::parse(src).unwrap();
+    assert_eq!(m.to_text(), src, "canonical form round-trips");
+}
+
+#[test]
 fn config_version_pin_refuses_an_unqualified_release() {
     let base = base(); // ConfigVersion="17010727"
     let module = module();

@@ -234,25 +234,76 @@ pub fn parse(src: &str) -> Result<Module> {
                     Tok::Eq,
                     Tok::Ident(ty),
                     Tok::LParen,
-                    Tok::Ident(kind),
-                    Tok::Colon,
-                    Tok::Str(value),
+                    rest @ ..,
                     Tok::RParen,
                 ] => {
-                    let match_spec = match kind.as_str() {
-                        "uuid" => MatchSpec::Uuid(value.clone()),
-                        "iname" => MatchSpec::IName(value.clone()),
-                        "title" => MatchSpec::Title(value.clone()),
-                        other => {
+                    // `kind: "value"` pairs, comma-separated: one primary
+                    // matcher (uuid|iname|title) first, then optional
+                    // `room:` / `category:` constraints.
+                    let mut pairs = Vec::new();
+                    let mut it = rest.iter();
+                    loop {
+                        match (it.next(), it.next(), it.next()) {
+                            (Some(Tok::Ident(k)), Some(Tok::Colon), Some(Tok::Str(v))) => {
+                                pairs.push((k.as_str(), v.clone()));
+                            }
+                            _ => {
+                                return Err(err(
+                                    "expected `extern <slug> = <Type>(uuid|iname|title: \"…\"\
+                                     [, room: \"…\"] [, category: \"…\"])`"
+                                        .into(),
+                                ));
+                            }
+                        }
+                        match it.next() {
+                            None => break,
+                            Some(Tok::Comma) => continue,
+                            Some(_) => {
+                                return Err(err("expected `,` between matchers".into()));
+                            }
+                        }
+                    }
+                    let mut pairs = pairs.into_iter();
+                    let match_spec = match pairs.next() {
+                        Some(("uuid", v)) => MatchSpec::Uuid(v),
+                        Some(("iname", v)) => MatchSpec::IName(v),
+                        Some(("title", v)) => MatchSpec::Title(v),
+                        Some((other, _)) => {
                             return Err(err(format!(
-                                "unknown matcher `{other}` (expected uuid, iname, or title)"
+                                "unknown matcher `{other}` (expected uuid, iname, or title \
+                                 first; room/category only narrow it)"
                             )));
                         }
+                        None => return Err(err("empty matcher list".into())),
                     };
+                    let (mut room, mut category) = (None, None);
+                    for (k, v) in pairs {
+                        let slot = match k {
+                            "room" => &mut room,
+                            "category" => &mut category,
+                            other => {
+                                return Err(err(format!(
+                                    "unknown constraint `{other}` (expected room or category)"
+                                )));
+                            }
+                        };
+                        if slot.replace(v).is_some() {
+                            return Err(err(format!("duplicate `{k}:` constraint")));
+                        }
+                    }
+                    if matches!(match_spec, MatchSpec::Uuid(_))
+                        && (room.is_some() || category.is_some())
+                    {
+                        return Err(err("`uuid:` pins exactly — room/category constraints are \
+                             redundant and not allowed with it"
+                            .into()));
+                    }
                     items.push(Item::Extern(ExternDecl {
                         slug: check_slug(slug, lineno)?,
                         block_type: check_type(ty, lineno)?,
                         match_spec,
+                        room,
+                        category,
                         comment,
                     }));
                 }

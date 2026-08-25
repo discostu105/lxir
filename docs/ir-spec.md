@@ -22,8 +22,10 @@ line       = comment | let | extern | block-head | arg-line
 
 comment    = "#" any-text ;                        (* whole line *)
 let        = "let" slug "=" ( number | string ) [ comment ] ;
-extern     = "extern" slug "=" type "(" matcher ":" string ")" [ comment ] ;
+extern     = "extern" slug "=" type "(" matcher ":" string
+             { "," constraint ":" string } ")" [ comment ] ;
 matcher    = "uuid" | "iname" | "title" ;
+constraint = "room" | "category" ;      (* not with "uuid"; each at most once *)
 
 block-head = slug "=" type "(" [ args ] [ ")" ] [ comment ] ;
 arg-line   = args [ ")" ] [ comment ] | comment ;  (* only inside an open call *)
@@ -88,6 +90,7 @@ module's one slug namespace (they have no ports and cannot be wired).
 extern sonne = VirtualIn(iname: "VI3")
 extern jal_sued = AutoJalousie(title: "Beschattung Süd")
 extern boiler = Switch(uuid: "1d844a67-0333-5301-ffffed57184a04d2")
+extern licht_buero = LightController2(title: "Deckenlicht", room: "Büro")
 ```
 
 Declares a slug for an existing object in the base config. The compiler
@@ -96,7 +99,12 @@ never creates, deletes, or moves externs; it only wires to their ports
 
 Match semantics: the object must have the declared type **and** match the
 spec. Exactly one object may match — zero is a `NoMatch` error, several is
-an `AmbiguousMatch` error listing candidates. Once resolved, the UUID is
+an `AmbiguousMatch` error listing candidates. Where titles repeat per
+room (every floor has a "Deckenlicht"), `room:` and/or `category:`
+narrow an `iname`/`title` match: the object's `<IoData Pr=…>`/`Cr=…`
+must point at a `Place`/`Category` with that title
+([loxone-format.md](loxone-format.md)). They never combine with
+`uuid:`, which pins exactly on its own. Once resolved, the UUID is
 pinned in the lockfile; subsequent compiles use the pin (even if the title
 has changed since) as long as an object with that UUID and type still
 exists.

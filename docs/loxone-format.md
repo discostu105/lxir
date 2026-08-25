@@ -118,6 +118,22 @@ is rendered inline (`<Key>2B35</Key>`).
   lxir (design decision D20): carried verbatim, refused as a source-
   declared wire/value target.
 
+## Rooms and categories: `<IoData Cr=… Pr=…>`
+
+Rooms are `<C Type="Place">` elements under the `PlaceCaption` folder,
+categories `<C Type="Category">` under `CategoryCaption` — plain
+objects with user-given titles. A block's room/category assignment
+lives in its `<IoData>` child: `Pr=` holds the Place UUID, `Cr=` the
+Category UUID. Validated corpus-wide (2026-08-25): ~36 900 `Cr`/`Pr`
+occurrences across the house config and all 132 web configs sit on
+`IoData` and resolve to a Place/Category element (the only exceptions:
+one hand-written non-Config file carrying them on `<C>`, and dangling
+references inside template/fragment exports — so a resolver must treat
+an unresolvable `Pr`/`Cr` as "no room", not an error). `IoData` is D19
+GUI-owned residue: lxir never writes the assignment, only reads it for
+composite extern matching (`room:` / `category:` in
+[ir-spec.md](ir-spec.md)).
+
 ## Time functions: per-project singletons
 
 The GUI's *Zeitfunktionen* periphery folder is a `TimeCaption` element

@@ -89,8 +89,30 @@ pub struct ExternDecl {
     pub slug: String,
     pub block_type: String,
     pub match_spec: MatchSpec,
+    /// Room constraint (`room: "Büro"`): the object's `<IoData Pr=…>`
+    /// must point at a `Place` with this title. Narrows `iname`/`title`
+    /// matching where titles repeat per room; never combined with
+    /// `uuid` (which pins exactly).
+    pub room: Option<String>,
+    /// Category constraint (`category: "Beleuchtung"`): the object's
+    /// `<IoData Cr=…>` must point at a `Category` with this title.
+    pub category: Option<String>,
     /// Trailing `#` comment on the statement line, verbatim.
     pub comment: Option<String>,
+}
+
+impl ExternDecl {
+    /// The full match spec as source text: `title: "…", room: "…"`.
+    pub fn spec(&self) -> String {
+        let mut s = self.match_spec.to_string();
+        if let Some(r) = &self.room {
+            s.push_str(&format!(", room: {}", quote(r)));
+        }
+        if let Some(c) = &self.category {
+            s.push_str(&format!(", category: {}", quote(c)));
+        }
+        s
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -604,7 +626,7 @@ impl Module {
                         "extern {} = {}({}){}\n",
                         e.slug,
                         e.block_type,
-                        e.match_spec,
+                        e.spec(),
                         tail(&e.comment)
                     ));
                 }

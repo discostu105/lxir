@@ -101,11 +101,12 @@ types) contradict each other. Results and methodology:
       adoption subset); `--out-dir` writes one self-contained module per
       logic page, foreign references annotated with their origin page.
       Groundwork for the Stufe-4 `externals.lxir` / multi-module layout.
-- [ ] Composite extern matching (e.g. `title: "Jalousie", room: "Büro"`)
-      for real houses where titles repeat per room. **Blocked on format
-      verification**: how objects reference rooms/categories is not yet a
-      validated fact in [loxone-format.md](loxone-format.md) — establish it
-      from the corpus + oracle first (refuse, never guess).
+- [x] Composite extern matching 2026-08-25: `extern x = Type(title:
+      "Deckenlicht", room: "Büro")` — `room:`/`category:` narrow an
+      iname/title match via the object's `<IoData Pr=/Cr=>` reference
+      to a Place/Category title. Format fact validated corpus-wide
+      first (~36 900 occurrences, zero counterexamples in real
+      configs; [loxone-format.md](loxone-format.md)).
 - [ ] Unit-suffixed values (`Time = 5s`, `TargetPos = 70%`) documenting
       intent and catching unit errors. **Blocked on the connector DB**
       learning per-port units — the plain number stays the canonical form

@@ -315,6 +315,8 @@ impl Lift {
                 (
                     i,
                     ExternDecl {
+                        room: None,
+                        category: None,
                         slug: slug_of[&objects[i].uuid].clone(),
                         block_type: objects[i].block_type.clone(),
                         match_spec: match_specs[&i].clone(),
@@ -574,6 +576,8 @@ impl Lift {
                     // A managed block on another page: referenced here as
                     // an extern.
                     ExternDecl {
+                        room: None,
+                        category: None,
                         slug: self.slug_of[&self.objects[i].uuid].clone(),
                         block_type: self.objects[i].block_type.clone(),
                         match_spec: self.match_specs[&i].clone(),

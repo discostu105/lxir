@@ -559,6 +559,25 @@ fn resolve_externs(
     lock: &mut Lockfile,
 ) -> Result<BTreeMap<String, String>> {
     let objects = doc.objects();
+    // Room/category lookup for composite matching: `<IoData Pr=…/Cr=…>`
+    // on an object points at a `Place`/`Category` element (validated
+    // corpus-wide, docs/loxone-format.md); constraints compare titles.
+    let titles_of = |ty: &str| -> BTreeMap<String, String> {
+        objects
+            .iter()
+            .filter(|o| o.block_type == ty)
+            .filter_map(|o| Some((o.uuid.clone(), o.title.clone()?)))
+            .collect()
+    };
+    let place_titles = titles_of("Place");
+    let cat_titles = titles_of("Category");
+    let iodata_ref = |o: &crate::doc::ObjectSummary, attr: &str| -> Option<String> {
+        doc.element_at(&o.path)?
+            .child_elements()
+            .find(|c| c.name == "IoData")?
+            .attr(attr)
+            .map(str::to_string)
+    };
     let mut out = BTreeMap::new();
     for ext in module.externs() {
         // Lock pin wins as long as it still resolves to an object of the
@@ -580,13 +599,23 @@ fn resolve_externs(
                         MatchSpec::IName(v) => o.iname.as_deref() == Some(v),
                         MatchSpec::Title(v) => o.title.as_deref() == Some(v),
                     }
+                    && ext.room.as_ref().is_none_or(|want| {
+                        iodata_ref(o, "Pr")
+                            .and_then(|u| place_titles.get(&u))
+                            .is_some_and(|t| t == want)
+                    })
+                    && ext.category.as_ref().is_none_or(|want| {
+                        iodata_ref(o, "Cr")
+                            .and_then(|u| cat_titles.get(&u))
+                            .is_some_and(|t| t == want)
+                    })
             })
             .collect();
         match matches.as_slice() {
             [] => {
                 return Err(Error::NoMatch {
                     slug: ext.slug.clone(),
-                    spec: format!("{}({})", ext.block_type, ext.match_spec),
+                    spec: format!("{}({})", ext.block_type, ext.spec()),
                 });
             }
             [only] => {
@@ -609,7 +638,7 @@ fn resolve_externs(
             many => {
                 return Err(Error::AmbiguousMatch {
                     slug: ext.slug.clone(),
-                    spec: format!("{}({})", ext.block_type, ext.match_spec),
+                    spec: format!("{}({})", ext.block_type, ext.spec()),
                     count: many.len(),
                     candidates: many.iter().map(|o| o.uuid.clone()).collect(),
                 });

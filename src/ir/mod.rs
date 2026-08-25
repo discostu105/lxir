@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! let     <name> = <value>                     (named constant)
-//! extern  <slug> = <Type>(uuid|iname|title: "<value>")
+//! extern  <slug> = <Type>(uuid|iname|title: "<value>"[, room|category: "<title>"])
 //! <slug>  = <Type>(["Label",] <Port>: <value | slug.Port>, …)
 //!                                              (managed block: params and
 //!                                               input wires in one place)
