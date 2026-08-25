@@ -41,6 +41,11 @@ pub enum Error {
     #[error("extern `{slug}`: no object matches {spec}")]
     NoMatch { slug: String, spec: String },
 
+    /// Project file (`lox.toml`) problems: syntax outside the supported
+    /// subset, unknown or missing keys.
+    #[error("lox.toml: {0}")]
+    Project(String),
+
     /// Lockfile violations (counter decrease, orphaned slug, …).
     #[error("lockfile error: {0}")]
     Lock(String),

@@ -97,6 +97,7 @@ cargo run --bin lxir -- help         # or: cargo install --path .
 
 lxir check modules/beschattung.lxir  # parse + validate (line-numbered errors)
 lxir fmt --write modules/beschattung.lxir
+lxir compile                         # in a lox.toml project: no flags needed
 lxir compile --base current.Loxone --module modules/beschattung.lxir \
              --lock modules/beschattung.lock.json --out out.Loxone \
              --serial 504F94112233
@@ -110,6 +111,14 @@ lxir adopt current.Loxone --uuid <uuid> --as <slug> --module modules/ \
 lxir observe current.Loxone          # port-direction evidence (JSON)
 lxir roundtrip current.Loxone        # byte-fidelity self-check
 ```
+
+A directory with a `lox.toml` — flat `key = "value"` lines naming the
+base config, module, lockfile, output, and optionally serial and page —
+is a **project**: `lxir compile` inside it needs no flags,
+`check`/`fmt`/`drift` default to its module and lock, and the module
+directory may nest subdirectories (`rooms/`, `systems/`). Fragments
+merge into one namespace, so there is no `import` statement to write
+(decision D25).
 
 For a repo holding your `.lxir` sources, [examples/ci.sh](examples/ci.sh)
 is the CI check path: parse/validate, canonical formatting, lock currency,

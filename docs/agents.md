@@ -53,6 +53,9 @@ lxir compile --base current.Loxone \
             --out out.Loxone
 # --serial only needed the first time (recorded in the lock afterwards);
 # --time only for reproducible builds (lock pins minted UUIDs regardless).
+# In a directory with a lox.toml (a project: base/module/lock/out/serial/
+# page as flat key = "value" lines), `lxir compile` alone does all of
+# this, and check/fmt/drift default to the project's module and lock.
 
 # 4. Show your work as a SEMANTIC diff, never an XML diff:
 lxir diff current.Loxone out.Loxone

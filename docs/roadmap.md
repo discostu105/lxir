@@ -75,6 +75,12 @@ types) contradict each other. Results and methodology:
       batches covered everything the house needs; see Stufe −1.)
 - [ ] Minting ports for extern types with observed (not just builtin)
       connector indexes, lifting the "port must exist in base" limitation.
+      (Deprioritized 2026-08-25 on corpus evidence: of ~49k corpus
+      objects that have same-type siblings, exactly **one** lacks a
+      `<Co>` a sibling carries — Loxone writes every descriptor
+      connector, so the limitation essentially never bites and the
+      "wire it once in Loxone Config" remedy stands. Revisit only if a
+      real config refuses.)
 - [x] Preserve trailing comments and comments inside block bodies (D10).
       Trailing comments attach to their statement/parameter, body comments
       are body items. (Since the 2026-08-25 revision, `} # text` stays on
@@ -183,30 +189,38 @@ types) contradict each other. Results and methodology:
 
 ## Stufe 4 — Multi-module projects
 
-The sketch's target shape for a whole installation, once modules can
-reference each other:
+The sketch's target shape for a whole installation:
 
 ```text
 haus/
-  lox.toml            # target Miniserver, ConfigVersion pin, options
+  lox.toml            # target Miniserver, paths, options
   haus.lock.json      # identities — generated, but committed
   externals.lxir      # externs for everything Loxone Config owns
   rooms/…  systems/…  templates/…
 ```
 
-- [ ] `import` between modules; the compiler merges all modules into the
-      one `.Loxone` document (the file split is source ergonomics only).
-      First step shipped 2026-08-25: **module directories** — `check`,
-      `fmt`, and `compile --module` accept a directory of `*.lxir`
-      fragments, merged in file-name order; fragments parse individually
-      (errors name the file) and may reference sibling-file slugs, with
-      name resolution running once on the whole. One file per page is
-      the convention (the house repo's `pages/` layout). No `import`
-      statement yet. Second step 2026-08-25: `adopt --out-dir` writes
-      the adoption directly in that layout — one fragment per page plus
-      `_periphery.lxir` (externs; sorts first), concatenation identical
-      to the `--out-module` single file, same lockfile, dir compile
-      byte-identical.
+- [x] Multi-module projects, complete 2026-08-25 (D25) — in three steps,
+      and with the considered `import` statement **rejected, not
+      deferred**: fragments share one namespace and one lockfile, and
+      the compiler merges everything into the one `.Loxone` document, so
+      an import would declare a dependency with no semantic consequence.
+      First step: **module directories** — `check`, `fmt`, and
+      `compile --module` accept a directory of `*.lxir` fragments,
+      merged in path order (since the third step: recursively, so
+      `rooms/…` nests); fragments parse individually (errors name the
+      file) and may reference sibling-file slugs, with name resolution
+      running once on the whole. One file per page is the convention
+      (the house repo's `pages/` layout). Second step: `adopt --out-dir`
+      writes the adoption directly in that layout — one fragment per
+      page plus `_periphery.lxir` (externs; sorts first), concatenation
+      identical to the `--out-module` single file, same lockfile, dir
+      compile byte-identical. Third step: **`lox.toml` project files** —
+      base, module, lock, out, serial, page in flat `key = "value"`
+      lines (strict TOML subset, hand-parsed, no new dependency);
+      `lxir compile` inside the directory needs no flags, flags override
+      the file, and `check`/`fmt`/`drift` default to the project's
+      module and lock. The sketch's ConfigVersion pin lives in the
+      lockfile instead (D22), where qualification state belongs.
 - [x] `adopt` (whole-config form) 2026-08-25 (D18): `lxir adopt <cfg>`
       moves every managed-type block under source control — the
       managed-only module plus a lockfile pinning existing object/port

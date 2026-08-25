@@ -376,6 +376,38 @@ expansion, so the synthetic prefix uses the instance's actual sink.
 checks (block types, port names, wire directions) — everything that does
 not need the base config. `--json` emits the result machine-readably.
 
+## Multi-file modules and projects
+
+A module may be a directory of `*.lxir` fragments instead of one file.
+Fragments parse individually (errors name the file), then concatenate —
+subdirectories included, in path order — into one module; name resolution
+runs once on the whole, so a fragment may freely reference slugs declared
+in a sibling file. The split carries no semantics: one namespace, one
+lockfile, and **no `import` statement** (decision D25 — an import would
+name a dependency that has no semantic consequence). It is source
+ergonomics, with one file per page as the convention (`_periphery.lxir`
+for the externs). Dot-entries (`.git`, editor caches) are skipped; merge
+order affects nothing but determinism.
+
+A directory with a `lox.toml` is a **project** — one deployment target:
+
+```toml
+base = "r50.Loxone"      # the deployed config (required)
+module = "pages"         # module file or fragment directory (required)
+lock = "r50.lock.json"   # default lxir.lock.json
+out = "out.Loxone"       # default out.Loxone
+serial = "504F94A26236"  # optional; the first compile records it in the lock
+page = "lxir"            # optional page title for newly placed blocks
+```
+
+The format is a strict flat subset of TOML — `key = "string"` pairs and
+`#` comments; tables, arrays, and unquoted values are refused with
+pointed errors. Paths are relative to the file. `module` deliberately has
+no default: a stray `.lxir` view or backup next to the file must never be
+compiled by accident. Inside the directory, `lxir compile` needs no flags
+(flags override the file), and `check`/`fmt`/`drift` default to the
+project's module and lock.
+
 ## Canonical form
 
 `lxir fmt` emits: statements in source order, single spaces between
@@ -400,8 +432,8 @@ with remedies in [agents.md](agents.md#errors-and-remedies).
 ## Versioning
 
 This is v1; there are no v0 files in the wild (pre-release revision).
-Anything not specified here (imports, template nesting and
-template-local declarations, the `formula` expression backend,
-unit-suffixed values) is future work —
+Anything not specified here (template nesting and template-local
+declarations, the `formula` expression backend, unit-suffixed values) is
+future work —
 see [roadmap.md](roadmap.md). Future versions will keep v1 files parsing
 unchanged or provide a migration tool.

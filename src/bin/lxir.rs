@@ -9,7 +9,7 @@ use lxir::ir::{
     compile, decompile, decompile_pages, slugify, validate_ports,
 };
 use lxir::uuid::parse_serial;
-use lxir::{Lockfile, LoxoneDoc};
+use lxir::{Lockfile, LoxoneDoc, Project};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -17,27 +17,39 @@ const USAGE: &str = "\
 lxir — Loxone config-as-code toolchain
 
 USAGE:
-  lxir check [--json] <module.lxir | module-dir>
+  lxir check [--json] [<module.lxir | module-dir>]
         Parse and validate an IR module: syntax, references, and managed
         block types/ports/directions against the builtin table (no base
         config needed; parse errors carry line numbers). --json prints a
         machine-readable result on stdout and still exits 1 on errors.
+        With no path: the module of the lox.toml project in the current
+        directory.
 
-  lxir fmt [--write | --check] <module.lxir | module-dir>
+  lxir fmt [--write | --check] [<module.lxir | module-dir>]
         Print the canonical form. --write rewrites the file(s) in place;
-        --check exits 1 if a file is not already canonical.
+        --check exits 1 if a file is not already canonical. With no
+        path: the module of the lox.toml project in the current
+        directory.
 
-  lxir compile --base <cfg.Loxone> --module <m.lxir | module-dir> --lock <lock.json> --out <out.Loxone>
+  lxir compile [<project-dir>]
+              [--base <cfg.Loxone>] [--module <m.lxir | module-dir>]
+              [--lock <lock.json>] [--out <out.Loxone>]
               [--serial <12-hex>] [--time <unix-seconds>] [--page <title>]
               [--allow-removals] [--accept-version <v>]
-        Compile IR against a base config, updating the lockfile.
-        --serial defaults to the lockfile's recorded Miniserver serial;
+        Compile IR against a base config, updating the lockfile. Inside
+        a lox.toml project (see below) every path flag is optional and
+        flags override the file; otherwise --base, --module, --lock,
+        and --out are required.
+        --serial defaults to the project file, then to the lockfile's
+        recorded Miniserver serial;
         --time defaults to now (only affects newly minted UUIDs — the
         lockfile pins everything minted before);
-        --page defaults to the document's first page.
+        --page defaults to the project file, then to the document's
+        first page.
         A module directory stands for a multi-file module: all *.lxir
-        files inside, merged in file-name order (one file per page is
-        the convention; a fragment may reference sibling-file slugs).
+        files inside — subdirectories included — merged in path order
+        (one file per page is the convention; a fragment may reference
+        sibling-file slugs).
         A base written by a different Loxone release than the lock's
         ConfigVersion pin is refused; after qualifying the release
         (one oracle open+save run), --accept-version <v> re-pins it.
@@ -76,13 +88,14 @@ USAGE:
   lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
 
-  lxir drift <cfg.Loxone> --lock <lock.json>
+  lxir drift <cfg.Loxone> [--lock <lock.json>]
         Check a config (typically a fresh download) against the semantic
         fingerprint the lockfile recorded at the last adopt/compile.
         Exit 0 = in sync; 1 = another writer changed something since
         (position moves, save noise, and locale renames don't count).
         One parse, no reference config needed — `lxir diff` tells you
-        *what* changed, this tells you *whether* cheaply.
+        *what* changed, this tells you *whether* cheaply. --lock
+        defaults to the lox.toml project's lockfile.
 
   lxir observe <cfg.Loxone>... [--crosscheck <legacy.json>]...
         Port-direction evidence per block type, as JSON. Multiple configs
@@ -93,6 +106,15 @@ USAGE:
 
   lxir roundtrip <cfg.Loxone>
         Verify the file re-serializes byte-identically (exit 1 if not).
+
+PROJECT FILE (lox.toml):
+        A directory with a lox.toml is a project — one deployment
+        target. Flat `key = \"value\"` lines and # comments; keys:
+        base (the deployed .Loxone, required), module (file or
+        directory, required), lock (default lxir.lock.json), out
+        (default out.Loxone), serial, page. Paths are relative to the
+        file. Inside the directory, `lxir compile` needs no flags, and
+        check / fmt / drift default to the project's module and lock.
 ";
 
 type AnyError = Box<dyn std::error::Error>;
@@ -131,22 +153,53 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
     }
 }
 
-/// The `*.lxir` files of a module directory, sorted by name (the merge
-/// order — semantics don't depend on it, but determinism does).
+/// The `*.lxir` files of a module directory — recursive, so a project can
+/// split its sources into subdirectories (`rooms/`, `systems/`) — sorted
+/// by path (the merge order — semantics don't depend on it, but
+/// determinism does). Dot-entries (`.git`, editor droppings) are skipped.
 fn module_dir_files(dir: &std::path::Path) -> Result<Vec<PathBuf>, (String, lxir::Error)> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| (dir.display().to_string(), lxir::Error::Io(e)))?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "lxir"))
-        .collect();
+    fn collect(dir: &std::path::Path, depth: usize, out: &mut Vec<PathBuf>) -> lxir::Result<()> {
+        if depth > 16 {
+            return Err(lxir::Error::Compile(format!(
+                "module directory nested deeper than 16 levels at `{}` — symlink cycle?",
+                dir.display()
+            )));
+        }
+        for entry in std::fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
+            if path.is_dir() {
+                collect(&path, depth + 1, out)?;
+            } else if path.extension().is_some_and(|x| x == "lxir") {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    collect(dir, 0, &mut files).map_err(|e| (dir.display().to_string(), e))?;
     files.sort();
     if files.is_empty() {
         return Err((
             dir.display().to_string(),
-            lxir::Error::Compile("no .lxir files in directory".into()),
+            lxir::Error::Compile("no .lxir files in directory (searched recursively)".into()),
         ));
     }
     Ok(files)
+}
+
+/// The module path of the `lox.toml` project in the current directory —
+/// what zero-argument `check`/`fmt` operate on.
+fn project_module() -> Result<String, AnyError> {
+    match Project::find(Path::new(".")) {
+        Some(f) => Ok(Project::load(&f)?.module.display().to_string()),
+        None => Err("no module given and no lox.toml in the current directory".into()),
+    }
 }
 
 /// Load a module from one file or a directory of `*.lxir` fragments.
@@ -210,10 +263,13 @@ fn read_doc(path: &str) -> Result<LoxoneDoc, AnyError> {
 
 fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
     let (json, path) = match args {
-        [path] => (false, *path),
-        ["--json", path] | [path, "--json"] => (true, *path),
-        _ => return Err("usage: lxir check [--json] <module.lxir>".into()),
+        [] => (false, project_module()?),
+        ["--json"] => (true, project_module()?),
+        [path] => (false, path.to_string()),
+        ["--json", path] | [path, "--json"] => (true, path.to_string()),
+        _ => return Err("usage: lxir check [--json] [<module.lxir | module-dir>]".into()),
     };
+    let path = path.as_str();
     // Full static validation: parse (syntax + references), then template
     // expansion and expression desugaring, then types, ports, and wire
     // directions against the builtin table. Counts describe the source;
@@ -297,11 +353,16 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
 
 fn cmd_fmt(args: &[&str]) -> Result<ExitCode, AnyError> {
     let (mode, path) = match args {
-        [path] => ("print", *path),
-        ["--write", path] => ("write", *path),
-        ["--check", path] => ("check", *path),
-        _ => return Err("usage: lxir fmt [--write | --check] <module.lxir | module-dir>".into()),
+        ["--write"] => ("write", project_module()?),
+        ["--check"] => ("check", project_module()?),
+        [path] => ("print", path.to_string()),
+        ["--write", path] => ("write", path.to_string()),
+        ["--check", path] => ("check", path.to_string()),
+        _ => {
+            return Err("usage: lxir fmt [--write | --check] [<module.lxir | module-dir>]".into());
+        }
     };
+    let path = path.as_str();
     // Formatting is per file and needs no name resolution (a fragment of
     // a module directory may reference slugs from sibling files), so
     // every target parses as a fragment.
@@ -344,6 +405,7 @@ fn cmd_fmt(args: &[&str]) -> Result<ExitCode, AnyError> {
 }
 
 fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
+    let mut project_dir: Option<PathBuf> = None;
     let mut base = None;
     let mut module = None;
     let mut lock_path: Option<PathBuf> = None;
@@ -371,12 +433,43 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
             "--page" => page = Some(value()?.to_string()),
             "--allow-removals" => allow_removals = true,
             "--accept-version" => accept_version = Some(value()?.to_string()),
+            dir if !dir.starts_with('-') && project_dir.is_none() => {
+                project_dir = Some(PathBuf::from(dir));
+            }
             other => return Err(format!("unknown flag `{other}` — run `lxir help`").into()),
         }
     }
-    let (Some(base), Some(module), Some(lock_path), Some(out)) = (base, module, lock_path, out)
-    else {
-        return Err("compile requires --base, --module, --lock, and --out".into());
+    // Project resolution: an explicit <project-dir> must hold a lox.toml;
+    // otherwise, if any required path is still unset, the current
+    // directory's lox.toml (if there is one) fills the gaps. Flags always
+    // win over the file.
+    let project = match &project_dir {
+        Some(dir) => Some(Project::load(dir)?),
+        None if [&base, &module, &out].iter().any(|o| o.is_none()) || lock_path.is_none() => {
+            match Project::find(Path::new(".")) {
+                Some(f) => Some(Project::load(&f)?),
+                None => None,
+            }
+        }
+        None => None,
+    };
+    let (base, module, lock_path, out) = match &project {
+        Some(p) => (
+            base.unwrap_or_else(|| p.base.display().to_string()),
+            module.unwrap_or_else(|| p.module.display().to_string()),
+            lock_path.unwrap_or_else(|| p.lock.clone()),
+            out.unwrap_or_else(|| p.out.display().to_string()),
+        ),
+        None => {
+            let (Some(base), Some(module), Some(lock_path), Some(out)) =
+                (base, module, lock_path, out)
+            else {
+                return Err("compile requires --base, --module, --lock, and --out \
+                     (or a lox.toml project — run `lxir help`)"
+                    .into());
+            };
+            (base, module, lock_path, out)
+        }
     };
 
     let base_doc = read_doc(&base)?;
@@ -387,8 +480,10 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
         Lockfile::new()
     };
     let serial = serial
+        .or_else(|| project.as_ref().and_then(|p| p.serial.clone()))
         .or_else(|| lock.target.miniserver_serial.clone())
-        .ok_or("no --serial given and the lockfile has none recorded")?;
+        .ok_or("no --serial given, none in the project file, and the lockfile has none recorded")?;
+    let page = page.or_else(|| project.as_ref().and_then(|p| p.page.clone()));
     let opts = CompileOptions {
         machine: parse_serial(&serial)?,
         accept_version,
@@ -722,9 +817,18 @@ fn cmd_diff(args: &[&str]) -> Result<ExitCode, AnyError> {
 
 fn cmd_drift(args: &[&str]) -> Result<ExitCode, AnyError> {
     let (config, lock_path) = match args {
-        [config, "--lock", lock] | ["--lock", lock, config] => (*config, *lock),
-        _ => return Err("usage: lxir drift <cfg.Loxone> --lock <lock.json>".into()),
+        [config, "--lock", lock] | ["--lock", lock, config] => (*config, lock.to_string()),
+        [config] => {
+            let Some(f) = Project::find(Path::new(".")) else {
+                return Err("no --lock given and no lox.toml in the current directory \
+                     (usage: lxir drift <cfg.Loxone> [--lock <lock.json>])"
+                    .into());
+            };
+            (*config, Project::load(&f)?.lock.display().to_string())
+        }
+        _ => return Err("usage: lxir drift <cfg.Loxone> [--lock <lock.json>]".into()),
     };
+    let lock_path = lock_path.as_str();
     let doc = read_doc(config)?;
     let lock = Lockfile::load(Path::new(lock_path))?;
     let Some(recorded) = &lock.target.semantic_fingerprint else {

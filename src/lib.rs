@@ -16,6 +16,8 @@
 //!   (config → IR view), compile (IR + lockfile → config).
 //! - [`diff`] — semantic diff between two configs (objects, params, wires),
 //!   with locale-rename noise classification.
+//! - [`project`] — `lox.toml` project files: one directory, one deployment
+//!   target, zero flags.
 //!
 //! Transport (FTP, LoxCC compression, push) is deliberately **out of scope**;
 //! it lives in the `lox` / `lox-cli` CLIs, which are the intended consumers
@@ -27,11 +29,13 @@ pub mod doc;
 pub mod error;
 pub mod ir;
 pub mod lock;
+pub mod project;
 pub mod uuid;
 pub mod xml;
 
 pub use doc::LoxoneDoc;
 pub use error::{Error, Result};
 pub use lock::Lockfile;
+pub use project::Project;
 pub use uuid::LoxUuid;
 pub use xml::XmlDocument;

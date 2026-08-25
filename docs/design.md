@@ -465,3 +465,29 @@ Anything unverified is an error, not a heuristic:
     edits, but unreadable and leaking into the canvas) lost to the
     positional scheme, accepting that an edit re-mints the edited
     expression's nodes — a self-contained blast radius.
+
+- **D25 — Projects are a `lox.toml`, and there is no `import` statement**
+  (2026-08-25). A directory with a `lox.toml` is a project — one
+  deployment target: `base` (the deployed config) and `module` (file or
+  fragment directory) required, `lock`/`out` defaulted, `serial`/`page`
+  optional, all in flat `key = "value"` lines with `#` comments, paths
+  relative to the file. `lxir compile` inside the directory needs no
+  flags (flags override the file); `check`/`fmt`/`drift` default to the
+  project's module and lock. Module directories now search recursively,
+  so the sketch's Stufe-4 layout (`externals.lxir` beside `rooms/`,
+  `systems/`, `templates/`) is fully expressible.
+  The considered `import` statement is rejected, not deferred: fragments
+  of a module share one namespace and one lockfile, and the compiler
+  merges everything into the one `.Loxone` document — an import would
+  declare a dependency with no semantic consequence, pure ceremony on
+  every file. If a future multi-project or namespacing need arises, it
+  gets its own decision; nothing in today's format precludes it.
+  Implementation choices: the file is parsed by ~60 lines of strict
+  subset parser instead of a `toml` crate — six string keys do not
+  justify three transitive dependencies, and refusing tables, arrays,
+  and unquoted values with pointed errors keeps the format honest
+  (better a small language parsed exactly than a big one parsed
+  approximately). `module` deliberately has no default: defaulting to
+  `.` would sweep stray `.lxir` files (decompile views, backups) into a
+  compile. The serial is validated at parse time so a typo fails before
+  any file is read.
