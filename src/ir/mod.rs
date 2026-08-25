@@ -30,7 +30,7 @@ mod decompile;
 mod parser;
 mod validate;
 
-pub use adopt::{AdoptReport, adopt};
+pub use adopt::{AdoptReport, PageFragments, adopt, adopt_pages};
 pub use ast::{
     ArgItem, Binding, BindingKind, BlockDecl, ExternDecl, Item, LetDecl, MatchSpec, Module,
     MovedDecl, PortRef, RemovedDecl, SetDecl, Value, WireDecl,

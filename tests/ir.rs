@@ -3,8 +3,8 @@
 //! decompile view of compiled output.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Item, Module, adopt, compile, decompile,
-    decompile_pages,
+    CompileOptions, DecompileOptions, DecompileScope, Item, Module, adopt, adopt_pages, compile,
+    decompile, decompile_pages,
 };
 use lxir::uuid::parse_serial;
 use lxir::xml::{Attr, Element};
@@ -317,6 +317,33 @@ jal_sued.AutoShade <- heiss.Q
 fn adopted_config() -> LoxoneDoc {
     let m = Module::parse(ADOPT_SRC).unwrap();
     compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap()
+}
+
+#[test]
+fn adopt_pages_fragments_merge_to_the_single_module() {
+    // `adopt --out-dir` writes these fragments; concatenated in stem
+    // order they must be exactly the single-module adoption, with the
+    // identical lock — so both output shapes compile byte-identically.
+    let existing = adopted_config();
+    let (single, lock_a, _) = adopt(&existing).unwrap();
+    let (fragments, lock_b, _) = adopt_pages(&existing).unwrap();
+    assert_eq!(lock_a.to_json(), lock_b.to_json());
+    let stems: Vec<&str> = fragments.iter().map(|(s, _)| s.as_str()).collect();
+    assert_eq!(stems, ["_periphery", "beschattung"]);
+    let merged = Module {
+        items: fragments
+            .iter()
+            .flat_map(|(_, m)| m.items.iter().cloned())
+            .collect(),
+    };
+    assert_eq!(merged, single);
+    // Each fragment is parseable in fragment form (a lone fragment may
+    // cross-reference sibling slugs, so full parse is not required).
+    for (stem, m) in &fragments {
+        let re =
+            Module::parse_fragment(&m.to_text()).unwrap_or_else(|e| panic!("fragment {stem}: {e}"));
+        assert_eq!(&re, m, "fragment {stem} round-trips");
+    }
 }
 
 #[test]

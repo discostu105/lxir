@@ -464,21 +464,56 @@ impl Lift {
     pub(super) fn single_module(&self) -> Module {
         let mut items = Vec::new();
         for (page, b) in self.buckets() {
-            items.push(Item::Comment(match page {
-                Some(p) => format!(" page: {}", self.page_titles[p]),
-                None => " periphery (not placed on a page)".to_string(),
-            }));
-            for &i in &b.externs {
-                items.push(Item::Extern(self.extern_decls[&i].clone()));
-            }
-            for &i in &b.blocks {
-                items.push(Item::Block(self.block_decls[&i].clone()));
-            }
-            for &wi in &b.wires {
-                items.push(Item::Wire(self.wires[wi].0.clone()));
-            }
+            items.extend(self.bucket_items(page, &b));
         }
         Module { items }
+    }
+
+    fn bucket_items(&self, page: Option<usize>, b: &Bucket) -> Vec<Item> {
+        let mut items = vec![Item::Comment(match page {
+            Some(p) => format!(" page: {}", self.page_titles[p]),
+            None => " periphery (not placed on a page)".to_string(),
+        })];
+        for &i in &b.externs {
+            items.push(Item::Extern(self.extern_decls[&i].clone()));
+        }
+        for &i in &b.blocks {
+            items.push(Item::Block(self.block_decls[&i].clone()));
+        }
+        for &wi in &b.wires {
+            items.push(Item::Wire(self.wires[wi].0.clone()));
+        }
+        items
+    }
+
+    /// The lifted view as module-directory fragments: one `(file stem,
+    /// fragment)` per non-empty page bucket, the periphery leading as
+    /// `_periphery` (its underscore also sorts it first in the merge
+    /// order). Unlike [`Lift::page_modules`]'s self-contained modules,
+    /// the fragments share one namespace — concatenated in this order
+    /// they are exactly [`Lift::single_module`], so declarations appear
+    /// once and cross-file references resolve on the merged whole
+    /// (`Module::parse_fragment` semantics).
+    pub(super) fn fragment_modules(&self) -> Vec<(String, Module)> {
+        // File stems are assigned over ALL pages in document order, so a
+        // page gaining content never renames another page's file.
+        let mut names = SlugTable::default();
+        let file_slugs: Vec<String> = self.page_titles.iter().map(|t| names.assign(t)).collect();
+        self.buckets()
+            .into_iter()
+            .map(|(page, b)| {
+                let stem = match page {
+                    Some(p) => file_slugs[p].clone(),
+                    None => "_periphery".to_string(),
+                };
+                (
+                    stem,
+                    Module {
+                        items: self.bucket_items(page, &b),
+                    },
+                )
+            })
+            .collect()
     }
 
     fn page_modules(&self) -> Result<Vec<PageModule>> {

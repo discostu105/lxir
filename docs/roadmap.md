@@ -175,7 +175,11 @@ haus/
       (errors name the file) and may reference sibling-file slugs, with
       name resolution running once on the whole. One file per page is
       the convention (the house repo's `pages/` layout). No `import`
-      statement yet.
+      statement yet. Second step 2026-08-25: `adopt --out-dir` writes
+      the adoption directly in that layout — one fragment per page plus
+      `_periphery.lxir` (externs; sorts first), concatenation identical
+      to the `--out-module` single file, same lockfile, dir compile
+      byte-identical.
 - [x] `adopt` (whole-config form) 2026-08-25 (D18): `lxir adopt <cfg>`
       moves every managed-type block under source control — the
       managed-only module plus a lockfile pinning existing object/port

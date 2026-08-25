@@ -5,8 +5,8 @@
 //! nothing here has semantics of its own.
 
 use lxir::ir::{
-    CompileOptions, DecompileOptions, DecompileScope, Module, adopt, compile, decompile,
-    decompile_pages,
+    CompileOptions, DecompileOptions, DecompileScope, Module, adopt, adopt_pages, compile,
+    decompile, decompile_pages,
 };
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc};
@@ -47,14 +47,17 @@ USAGE:
         adoption subset). --out-dir writes one module per logic page
         instead of printing.
 
-  lxir adopt <cfg.Loxone> --out-module <m.lxir> --out-lock <lock.json>
+  lxir adopt <cfg.Loxone> (--out-module <m.lxir> | --out-dir <dir>) --out-lock <lock.json>
         Move every managed-type block in the config under source control:
         writes the managed-only module plus a lockfile pinning each block's
         existing identity (object/port UUIDs, layout, page), so compiling
         the pair rebuilds the blocks in place instead of minting
-        duplicates. Blocks the rebuild could not reproduce faithfully are
-        skipped with a warning and stay unmanaged. Never modifies the
-        config; refuses existing outputs.
+        duplicates. --out-dir writes the module as a directory of
+        fragments, one file per page (periphery externs in
+        _periphery.lxir) — the layout `compile --module <dir>` reads.
+        Blocks the rebuild could not reproduce faithfully are skipped
+        with a warning and stay unmanaged. Never modifies the config;
+        refuses existing outputs.
 
   lxir diff [--exit-code] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
@@ -396,10 +399,11 @@ fn cmd_decompile(args: &[&str]) -> Result<ExitCode, AnyError> {
 }
 
 fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
-    const USAGE: &str =
-        "usage: lxir adopt <cfg.Loxone> --out-module <m.lxir> --out-lock <lock.json>";
+    const USAGE: &str = "usage: lxir adopt <cfg.Loxone> \
+         (--out-module <m.lxir> | --out-dir <dir>) --out-lock <lock.json>";
     let mut path = None;
     let mut out_module: Option<PathBuf> = None;
+    let mut out_dir: Option<PathBuf> = None;
     let mut out_lock: Option<PathBuf> = None;
     let mut it = args.iter();
     while let Some(&a) = it.next() {
@@ -410,6 +414,7 @@ fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
         };
         match a {
             "--out-module" => out_module = Some(PathBuf::from(value()?)),
+            "--out-dir" => out_dir = Some(PathBuf::from(value()?)),
             "--out-lock" => out_lock = Some(PathBuf::from(value()?)),
             flag if flag.starts_with("--") => {
                 return Err(format!("unknown flag `{flag}` — run `lxir help`").into());
@@ -418,12 +423,18 @@ fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
             _ => return Err(USAGE.into()),
         }
     }
-    let (Some(path), Some(out_module), Some(out_lock)) = (path, out_module, out_lock) else {
+    let (Some(path), Some(out_lock)) = (path, out_lock) else {
         return Err(USAGE.into());
     };
+    if out_module.is_some() == out_dir.is_some() {
+        return Err(USAGE.into());
+    }
     // Adoption is a one-time claim of identity; overwriting an existing
     // module or lock would silently discard identities already pinned.
-    for existing in [&out_module, &out_lock] {
+    for existing in [out_module.as_ref(), out_dir.as_ref(), Some(&out_lock)]
+        .into_iter()
+        .flatten()
+    {
         if existing.exists() {
             return Err(format!(
                 "{} already exists — adopt refuses to overwrite (move it away first)",
@@ -434,8 +445,19 @@ fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
     }
 
     let doc = read_doc(path)?;
-    let (module, lock, report) = adopt(&doc)?;
-    std::fs::write(&out_module, module.to_text())?;
+    let (lock, report) = if let Some(dir) = &out_dir {
+        let (fragments, lock, report) = adopt_pages(&doc)?;
+        std::fs::create_dir_all(dir)?;
+        for (stem, fragment) in &fragments {
+            std::fs::write(dir.join(format!("{stem}.lxir")), fragment.to_text())?;
+        }
+        (lock, report)
+    } else {
+        let out_module = out_module.as_ref().expect("checked above");
+        let (module, lock, report) = adopt(&doc)?;
+        std::fs::write(out_module, module.to_text())?;
+        (lock, report)
+    };
     lock.save(&out_lock)?;
     for r in &report.refused {
         eprintln!("warning: {r}");
@@ -451,13 +473,17 @@ fn cmd_adopt(args: &[&str]) -> Result<ExitCode, AnyError> {
             format!(" ({} refused, see warnings)", report.refused.len())
         }
     );
+    let module_arg = out_module
+        .as_ref()
+        .or(out_dir.as_ref())
+        .expect("one is set");
     println!(
         "wrote {} and {}\nnext: lxir compile --base {path} --module {} --lock {} \
          --serial <miniserver-serial> --out <out.Loxone>, then `lxir diff {path} \
          <out.Loxone>` — it should be empty",
-        out_module.display(),
+        module_arg.display(),
         out_lock.display(),
-        out_module.display(),
+        module_arg.display(),
         out_lock.display()
     );
     Ok(ExitCode::SUCCESS)

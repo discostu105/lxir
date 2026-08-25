@@ -54,6 +54,34 @@ pub struct AdoptReport {
 /// each extern's resolution, and a report. `compile(doc, module, lock)` is
 /// then a semantic no-op.
 pub fn adopt(doc: &LoxoneDoc) -> Result<(Module, Lockfile, AdoptReport)> {
+    let (lift, refused) = adopt_lift(doc);
+    let module = lift.single_module();
+    module.validate()?;
+    validate_ports(&module)?;
+    let (lock, report) = adopt_lock(doc, &lift, refused);
+    Ok((module, lock, report))
+}
+
+/// The per-page module fragments of an adoption: one `(file stem,
+/// fragment)` per page, periphery leading as `_periphery`.
+pub type PageFragments = Vec<(String, Module)>;
+
+/// [`adopt`], with the module as directory fragments sharing one
+/// namespace — written to a directory they are the `--module <dir>`
+/// form of exactly the module `adopt` returns.
+pub fn adopt_pages(doc: &LoxoneDoc) -> Result<(PageFragments, Lockfile, AdoptReport)> {
+    let (lift, refused) = adopt_lift(doc);
+    // Fragments may cross-reference; validation runs on the merged whole,
+    // exactly as `lxir compile --module <dir>` will.
+    let merged = lift.single_module();
+    merged.validate()?;
+    validate_ports(&merged)?;
+    let fragments = lift.fragment_modules();
+    let (lock, report) = adopt_lock(doc, &lift, refused);
+    Ok((fragments, lock, report))
+}
+
+fn adopt_lift(doc: &LoxoneDoc) -> (Lift, Vec<String>) {
     let mut opts = DecompileOptions {
         scope: DecompileScope::ManagedOnly,
         ..DecompileOptions::default()
@@ -86,11 +114,10 @@ pub fn adopt(doc: &LoxoneDoc) -> Result<(Module, Lockfile, AdoptReport)> {
     if !opts.exclude.is_empty() {
         lift = Lift::build(doc, &opts);
     }
+    (lift, refused)
+}
 
-    let module = lift.single_module();
-    module.validate()?;
-    validate_ports(&module)?;
-
+fn adopt_lock(doc: &LoxoneDoc, lift: &Lift, refused: Vec<String>) -> (Lockfile, AdoptReport) {
     let mut lock = Lockfile::new();
     for &i in &lift.managed {
         let o = &lift.objects[i];
@@ -130,8 +157,7 @@ pub fn adopt(doc: &LoxoneDoc) -> Result<(Module, Lockfile, AdoptReport)> {
     lock.target.source_config_sha256 = Some(sha256_hex(&doc.to_bytes()));
 
     let d = lift.report();
-    Ok((
-        module,
+    (
         lock,
         AdoptReport {
             blocks: d.managed,
@@ -139,7 +165,7 @@ pub fn adopt(doc: &LoxoneDoc) -> Result<(Module, Lockfile, AdoptReport)> {
             pages: d.pages,
             refused,
         },
-    ))
+    )
 }
 
 /// Element attributes the compiler's rebuild emits. `Cl`/`LtE`/`WF` are
