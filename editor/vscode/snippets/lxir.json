@@ -1,32 +1,34 @@
 {
   "extern": {
     "prefix": "extern",
-    "body": "extern ${1:slug}: ${2:VirtualIn} match ${3|iname,title,uuid|} \"${4:VI1}\"",
+    "body": "extern ${1:slug} = ${2:VirtualIn}(${3|iname,title,uuid|}: \"${4:VI1}\")",
     "description": "Reference an existing object owned by Loxone Config"
   },
   "block": {
     "prefix": "block",
-    "body": "block ${1:slug}: ${2|And,Or,Not,Equal,GreaterEqual|}",
-    "description": "Managed logic block (compiler-owned)"
+    "body": "${1:slug} = ${2|And,Or,Not,Equal,GreaterEqual|}()",
+    "description": "Managed logic block (compiler-owned), no arguments yet"
   },
-  "block with params": {
+  "block with arguments": {
     "prefix": "blockp",
     "body": [
-      "block ${1:slug}: ${2|And,Or,Not,Equal,GreaterEqual|} \"${3:Title}\" {",
-      "\t${4:Input2} = ${5:28}",
-      "}"
+      "${1:slug} = ${2|And,Or,Not,Equal,GreaterEqual|}(",
+      "\t\"${3:Label}\",",
+      "\t${4:Input1}: ${5:source.Q},",
+      "\t${6:Input2}: ${7:28},",
+      ")"
     ],
-    "description": "Managed logic block with title and parameter body"
+    "description": "Managed logic block with label, input wire, and parameter"
   },
   "wire": {
     "prefix": "wire",
-    "body": "wire ${1:from}.${2:Q} -> ${3:to}.${4:I1}",
-    "description": "Connect an output port to an input port"
+    "body": "${1:extern}.${2:AutoShade} <- ${3:source}.${4:Q}",
+    "description": "Wire a source output onto an extern port (wires into managed blocks go in their argument list)"
   },
   "set": {
     "prefix": "set",
-    "body": "set ${1:slug}.${2:TargetPos} = ${3:70}",
-    "description": "Write a parameter (Def=) on an extern port; the original is restored when the set is removed"
+    "body": "${1:extern}.${2:TargetPos} = ${3:70}",
+    "description": "Write a parameter (Def=) on an extern port; the original is restored when the line is removed"
   },
   "let": {
     "prefix": "let",

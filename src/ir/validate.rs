@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 /// against the builtin table. Extern ports are open-world (they exist or
 /// not in the base config) and are checked by `compile` instead.
 pub fn validate_ports(module: &Module) -> Result<()> {
-    // Types and body parameters.
+    // Types and parameter bindings.
     for block in module.blocks() {
         if builtin(&block.block_type).is_none() {
             let hint = suggest(&block.block_type, BUILTIN_TYPES.iter().copied());
@@ -29,10 +29,11 @@ pub fn validate_ports(module: &Module) -> Result<()> {
         }
     }
 
-    // Wire endpoints on managed blocks: the port must exist and its
-    // direction must fit (source = output; sink = input or param).
-    for w in module.wires() {
-        for (endpoint, want) in [(&w.from, PortDir::Output), (&w.to, PortDir::Input)] {
+    // Wire endpoints on managed blocks — argument-list bindings and `<-`
+    // statements alike: the port must exist and its direction must fit
+    // (source = output; sink = input or param).
+    for (from, to) in module.wire_pairs() {
+        for (endpoint, want) in [(&from, PortDir::Output), (&to, PortDir::Input)] {
             let Some(block) = module.blocks().find(|b| b.slug == endpoint.slug) else {
                 continue; // extern — checked against the base config later
             };
@@ -171,26 +172,28 @@ mod tests {
 
     #[test]
     fn unknown_type_and_port_carry_suggestions() {
-        let m = Module::parse("block a: Monoflop {\n\tTme = 5\n}\n").unwrap();
+        let m = Module::parse("a = Monoflop(Tme: 5)\n").unwrap();
         let err = validate_ports(&m).unwrap_err().to_string();
         assert!(err.contains("did you mean `Time`?"), "{err}");
 
-        let m = Module::parse("block a: Monofop\n").unwrap();
+        let m = Module::parse("a = Monofop()\n").unwrap();
         let err = validate_ports(&m).unwrap_err().to_string();
         assert!(err.contains("did you mean `Monoflop`?"), "{err}");
     }
 
     #[test]
     fn wire_ports_and_directions_are_checked_statically() {
-        let m = Module::parse("block a: And\nblock b: And\nwire a.I1 -> b.I2\n").unwrap();
+        // A binding's source must be an output port.
+        let m = Module::parse("a = And()\nb = And(I2: a.I1)\n").unwrap();
         let err = validate_ports(&m).unwrap_err().to_string();
         assert!(err.contains("wire source"), "{err}");
 
-        let m = Module::parse("block a: And\nblock b: And\nwire a.Q -> b.Q\n").unwrap();
+        // A binding's own port is the sink: an output cannot take a wire.
+        let m = Module::parse("a = And()\nb = And(Q: a.Q)\n").unwrap();
         let err = validate_ports(&m).unwrap_err().to_string();
         assert!(err.contains("wire sink"), "{err}");
 
-        let m = Module::parse("block a: And\nblock b: And\nwire a.Q -> b.I3\n").unwrap();
+        let m = Module::parse("a = And()\nb = And(I3: a.Q)\n").unwrap();
         let err = validate_ports(&m).unwrap_err().to_string();
         assert!(err.contains("unknown port `I3`"), "{err}");
         assert!(err.contains("cascade"), "{err}");
@@ -198,10 +201,7 @@ mod tests {
 
     #[test]
     fn valid_module_passes() {
-        let m = Module::parse(
-            "block a: And\nblock b: GreaterEqual {\n\tInput2 = 28\n}\nwire b.Q -> a.I1\n",
-        )
-        .unwrap();
+        let m = Module::parse("b = GreaterEqual(Input2: 28)\na = And(I1: b.Q)\n").unwrap();
         validate_ports(&m).unwrap();
     }
 }

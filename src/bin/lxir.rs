@@ -111,7 +111,7 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
                     "{}",
                     serde_json::json!({ "ok": true, "path": path, "counts": {
                         "externs": m.externs().count(), "blocks": m.blocks().count(),
-                        "wires": m.wires().count(), "sets": m.sets().count(),
+                        "wires": m.wire_pairs().len(), "sets": m.sets().count(),
                         "lets": m.lets().count(), "removed": m.removed().count(),
                         "moved": m.moved().count(),
                     }})
@@ -122,7 +122,7 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
                      {} removed, {} moved",
                     m.externs().count(),
                     m.blocks().count(),
-                    m.wires().count(),
+                    m.wire_pairs().len(),
                     m.sets().count(),
                     m.lets().count(),
                     m.removed().count(),

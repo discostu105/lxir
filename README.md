@@ -12,23 +12,26 @@ the real `.Loxone` config without disturbing anything else in the file.
 
 let temp_schwelle = 28
 
-extern aussentemp: VirtualIn match iname "VI1"
-extern wind_alarm: VirtualIn match iname "VI2"
-extern sonne: VirtualIn match iname "VI3"
-extern jal_sued: AutoJalousie match title "Beschattung Süd"
+extern aussentemp = VirtualIn(iname: "VI1")
+extern wind_alarm = VirtualIn(iname: "VI2")
+extern sonne = VirtualIn(iname: "VI3")
+extern jal_sued = AutoJalousie(title: "Beschattung Süd")
 
-block temp_hoch: GreaterEqual "Temp über 28" {
-	Input2 = temp_schwelle
-}
-block beschatten: And
+temp_hoch = GreaterEqual(
+	"Temp über 28",
+	Input1: aussentemp.Q,
+	Input2: temp_schwelle,
+)
 
-wire aussentemp.Q -> temp_hoch.Input1
-wire temp_hoch.Q -> beschatten.I1
-wire sonne.Q -> beschatten.I2
-wire beschatten.Q -> jal_sued.AutoShade
-wire wind_alarm.Q -> jal_sued.Safety
+beschatten = And(
+	I1: temp_hoch.Q,
+	I2: sonne.Q,
+)
 
-set jal_sued.TargetPos = 70
+jal_sued.AutoShade <- beschatten.Q
+jal_sued.Safety <- wind_alarm.Q
+
+jal_sued.TargetPos = 70
 ```
 
 `lxir compile` turns this into exactly the XML Loxone Config would have
@@ -61,8 +64,8 @@ rule today; the rest of the config never notices. See
 - **Three writers, one file.** Loxone Config, the Miniserver itself
   (app-created autopilots, device registrations), and this compiler all
   write the config. The compiler owns *only* its managed blocks, the wires
-  it drew onto extern ports, and the `Def=` values it `set` — everything
-  else round-trips untouched through a byte-faithful XML layer.
+  it drew onto extern ports, and the `Def=` values it assigned there —
+  everything else round-trips untouched through a byte-faithful XML layer.
 - **Identity is UUID, not title.** Titles are locale-volatile (one observed
   save renamed 111 built-ins). Externs match by `uuid` > `iname` > `title`;
   once resolved, the lockfile pins the UUID — object *and* every port.
@@ -127,8 +130,8 @@ byte-for-byte.
 | `uuid` | The anatomy of Loxone UUIDs — creation time, mint counters, minting-machine id, connector index — plus a deterministic minter (no clock, no RNG). |
 | `doc` | Semantic read layer: objects, ports, wires, counters, pages. |
 | `connectors` | Port-direction knowledge: a **verified** builtin table (gates, comparators, `Formula`, `Monoflop`, `PulseGen`, `AnalogThresholdTrigger` — see [docs/connector-db.md](docs/connector-db.md)) and evidence-based inference (`observe`, corpus merge, legacy-db crosscheck) over real configs. |
-| `ir` | The text language: `extern` / `block` / `wire` / `set`; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view). |
-| `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, `set` originals. |
+| `ir` | The text language: constructor-style block declarations with inline wires/parameters, `extern`, `let`, lifecycle statements; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view). |
+| `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, extern-port `Def=` originals. |
 | `diff` | Semantic diff between two configs, with locale-rename noise flagged. |
 
 **Out of scope** — deliberately: transport (FTP/HTTP to the Miniserver),
@@ -140,7 +143,7 @@ which are the intended consumers of this crate.
 | Doc | Contents |
 |---|---|
 | [docs/vision.md](docs/vision.md) | Why config-as-code for Loxone; the Terraform analogy; the two-masters workflow |
-| [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D12 |
+| [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D16 |
 | [docs/ir-spec.md](docs/ir-spec.md) | Normative spec of the `.lxir` language (v0) |
 | [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v1) and its invariants |
 | [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
@@ -157,7 +160,7 @@ commands and repo rules at a glance.
 
 `editor/vscode/` contains a declarative VS Code extension for `.lxir`
 files: syntax highlighting, comment/bracket support, and snippets for all
-four statement forms. Install by symlinking it into `~/.vscode/extensions/`
+statement forms. Install by symlinking it into `~/.vscode/extensions/`
 (see [editor/vscode/README.md](editor/vscode/README.md)). A language server
 is scoped on the roadmap; until then `lxir check` / `lxir fmt --check`
 cover the validation loop.

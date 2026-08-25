@@ -37,14 +37,16 @@ itself (app-created autopilot rules, device registrations), and this
 compiler. The compiler therefore claims ownership of exactly three kinds of
 edit, and records each in the lockfile:
 
-1. **Managed blocks** (`block` declarations) — created, rebuilt, and deleted
-   by the compiler alone.
-2. **Extern wires** — `<In>` elements the compiler added to ports of objects
-   it does *not* own. Recorded in `lock.extern_wires` so they can be removed
-   again without touching wires drawn in the GUI.
-3. **Extern sets** — `Def=` values the compiler rewrote on extern ports.
-   The pre-set value is recorded in `lock.set_originals` and restored when
-   the `set` disappears from source.
+1. **Managed blocks** (`slug = Type(…)` declarations) — created, rebuilt,
+   and deleted by the compiler alone.
+2. **Extern wires** (`target.Port <- source.Port`) — `<In>` elements the
+   compiler added to ports of objects it does *not* own. Recorded in
+   `lock.extern_wires` so they can be removed again without touching wires
+   drawn in the GUI.
+3. **Extern sets** (`target.Port = value`) — `Def=` values the compiler
+   rewrote on extern ports. The pre-set value is recorded in
+   `lock.set_originals` and restored when the assignment disappears from
+   source.
 
 Everything else is somebody else's, and passes through unchanged.
 
@@ -153,10 +155,11 @@ Anything unverified is an error, not a heuristic:
   FTP/LoxCC/credentials live in `lox` / `lox-cli`.
 - **D10 — All comments survive the round trip**, so `lxir fmt` is
   non-destructive: whole-line comments are AST items, trailing comments
-  attach to their statement, parameter line, or closing `}`, and comments
-  inside block bodies are body items. (Originally `} # text` was
-  canonicalized onto its own line; it now stays attached to the `}` —
-  detaching a comment from its anchor lost intent for no gain.)
+  attach to their statement, argument line, or closing delimiter (v0: `}`;
+  v1: `)`), and comments inside argument lists are argument items.
+  (Originally `} # text` was canonicalized onto its own line; it now stays
+  attached to the closing delimiter — detaching a comment from its anchor
+  lost intent for no gain.)
 - **D11 — Counters (`NextObj`) advance by one per minted managed object**
   and never decrease (`Lockfile::absorb_counters` takes the max of lock and
   document). Whether ports also consume `NextObj` is unknown; object-only is
@@ -189,7 +192,9 @@ Anything unverified is an error, not a heuristic:
   with different ownership semantics per target (tracked-and-reverting on
   externs, plain param on blocks). One meaning per keyword: `set` now
   always means "tracked write to somebody else's port", and the validator
-  points managed-block sets at the body.
+  points managed-block sets at the body. (v1 keeps the semantics and
+  renames the spellings: the body became the argument list, `set` became
+  plain port assignment — D16.)
 - **D15 — Values are typed tokens, not sniffed strings** (2026-08-25). The
   AST records how a value was written (`Number` | `Str` | `Ref`), and the
   formatter emits by variant. The previous content-sniffing emitter printed
@@ -199,3 +204,26 @@ Anything unverified is an error, not a heuristic:
   becomes the bare number. Bare identifiers in value position are `let`
   references and must resolve — the previously undefined
   bare-ident-as-string lenience is gone.
+- **D16 — Constructor syntax: a block's inputs live at its declaration**
+  (2026-08-25, v1). v0 scattered a block's behavior across three statement
+  forms: `block` gave the type, a `{ … }` body the parameters, and `wire`
+  lines elsewhere the inputs. v1 unifies them into one call-shaped
+  declaration — `slug = Type("Label", Port: value, Port: source.Q, …)` —
+  where the argument's value decides its meaning (literal/constant →
+  `Def=` parameter; port reference → wire), mirroring the fact that both
+  target the same `<Co>` in the XML. Wires onto extern ports keep a
+  statement form (`target.Port <- source.Port`) because externs are not
+  constructed, and `set` collapses into plain port assignment
+  (`target.Port = value`). Every fact still has exactly one spelling:
+  managed sinks bind only in the argument list (`<-`/`=` on a managed slug
+  is an error pointing there), and the canonical formatter emits one
+  argument per line, so diff granularity stays one-line-per-fact.
+  Alternatives weighed and rejected: an expression language
+  (`node x = a >= 28 and sonne`) creates anonymous intermediate blocks
+  whose path-based identity breaks the lockfile's rename stability
+  (Terraform's `count` lesson), and a general-purpose host language
+  (Starlark) belongs *above* the IR as a generator, not in place of it —
+  the flat declarative form remains the total representation every
+  hand-drawn config can decompile into. Names stay mandatory, so the
+  lockfile, `moved`/`removed`, and the compile strategy are untouched; the
+  v1 example compiles byte-identically to its v0 counterpart.

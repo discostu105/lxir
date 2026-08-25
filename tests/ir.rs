@@ -87,8 +87,8 @@ fn vanished_slug_is_a_hard_error_until_removed_from_lock() {
     compile(&base, &module(), &mut lock, &opts()).unwrap();
 
     let smaller = Module::parse(
-        "extern jal_sued: AutoJalousie match title \"Beschattung S\u{fc}d\"\n\
-         block temp_hoch: GreaterEqual\n",
+        "extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+         temp_hoch = GreaterEqual()\n",
     )
     .unwrap();
     let err = compile(&base, &smaller, &mut lock, &opts()).unwrap_err();
@@ -155,7 +155,7 @@ fn removing_set_restores_original_def_and_wires_tear_down() {
 fn ambiguity_and_no_match_are_reported() {
     let base = base();
     let mut lock = Lockfile::new();
-    let nomatch = Module::parse("extern x: VirtualIn match iname \"VI99\"\n").unwrap();
+    let nomatch = Module::parse("extern x = VirtualIn(iname: \"VI99\")\n").unwrap();
     let err = compile(&base, &nomatch, &mut lock, &opts()).unwrap_err();
     assert!(err.to_string().contains("VI99"), "{err}");
 
@@ -165,9 +165,9 @@ fn ambiguity_and_no_match_are_reported() {
     // both And/Or absent → keep to NoMatch here; ambiguity is covered by
     // the unit-level resolver behavior below.
     let unknown_port = Module::parse(
-        "extern jal: AutoJalousie match title \"Beschattung S\u{fc}d\"\n\
-         block b: And\n\
-         wire b.Q -> jal.DoesNotExist\n",
+        "extern jal = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+         b = And()\n\
+         jal.DoesNotExist <- b.Q\n",
     )
     .unwrap();
     let err = compile(&base, &unknown_port, &mut Lockfile::new(), &opts()).unwrap_err();
@@ -180,7 +180,7 @@ fn ambiguity_and_no_match_are_reported() {
 
 #[test]
 fn unverified_block_type_is_refused() {
-    let m = Module::parse("block j: AutoJalousie\n").unwrap();
+    let m = Module::parse("j = AutoJalousie()\n").unwrap();
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
     assert!(err.to_string().contains("builtin table"), "{err}");
 }
@@ -191,13 +191,10 @@ fn grown_gate_inputs_are_refused() {
     // deletes off-descriptor connectors on save. A grown `I3` must be a
     // compile error, never minted.
     let m = Module::parse(
-        "extern t1: VirtualIn match iname \"VI1\"\n\
-         extern t2: VirtualIn match iname \"VI2\"\n\
-         extern t3: VirtualIn match iname \"VI3\"\n\
-         block any: Or\n\
-         wire t1.Q -> any.I1\n\
-         wire t2.Q -> any.I2\n\
-         wire t3.Q -> any.I3\n",
+        "extern t1 = VirtualIn(iname: \"VI1\")\n\
+         extern t2 = VirtualIn(iname: \"VI2\")\n\
+         extern t3 = VirtualIn(iname: \"VI3\")\n\
+         any = Or(I1: t1.Q, I2: t2.Q, I3: t3.Q)\n",
     )
     .unwrap();
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
@@ -216,7 +213,9 @@ fn decompile_of_compiled_output_reflects_the_module() {
     // decompile deliberately does not lift — 3 externs, 4 of the 5 wires.
     assert_eq!(report.externs, 3);
     assert_eq!(m.blocks().count(), 2);
-    assert_eq!(m.wires().count(), 4);
+    // 3 wires land in block argument lists, 1 (AutoShade) as a `<-`.
+    assert_eq!(m.wire_pairs().len(), 4);
+    assert_eq!(m.extern_wires().count(), 1);
     // The IR text parses back to the same module (canonical fixpoint).
     let text = m.to_text();
     assert_eq!(Module::parse(&text).unwrap(), m);
@@ -224,7 +223,7 @@ fn decompile_of_compiled_output_reflects_the_module() {
 
 #[test]
 fn wire_direction_is_checked_on_managed_blocks() {
-    let m = Module::parse("block a: And\nblock b: And\nwire a.I1 -> b.I2\n").unwrap();
+    let m = Module::parse("a = And()\nb = And(I2: a.I1)\n").unwrap();
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();
     assert!(err.to_string().contains("wire source"), "{err}");
 }
@@ -238,9 +237,12 @@ fn removed_statement_authorizes_scoped_removal() {
     // Drop `beschatten` from source with an explicit `removed` — no
     // allow_removals needed, and the removal is scoped to that one slug.
     let without = Module::parse(
-        "extern aussentemp: VirtualIn match iname \"VI1\"\n\
-         block temp_hoch: GreaterEqual \"Temp \u{fc}ber 28\" {\n\tInput2 = 28\n}\n\
-         wire aussentemp.Q -> temp_hoch.Input1\n\
+        "extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+         temp_hoch = GreaterEqual(\n\
+         \t\"Temp \u{fc}ber 28\",\n\
+         \tInput1: aussentemp.Q,\n\
+         \tInput2: 28,\n\
+         )\n\
          removed beschatten\n",
     )
     .unwrap();
@@ -271,23 +273,25 @@ fn moved_statement_renames_identity() {
     let old = lock.objects["beschatten"].clone();
 
     let renamed_src = "\
-extern aussentemp: VirtualIn match iname \"VI1\"
-extern wind_alarm: VirtualIn match iname \"VI2\"
-extern sonne: VirtualIn match iname \"VI3\"
-extern jal_sued: AutoJalousie match title \"Beschattung S\u{fc}d\"
+extern aussentemp = VirtualIn(iname: \"VI1\")
+extern wind_alarm = VirtualIn(iname: \"VI2\")
+extern sonne = VirtualIn(iname: \"VI3\")
+extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")
 
-block temp_hoch: GreaterEqual \"Temp \u{fc}ber 28\" {
-\tInput2 = 28
-}
-block schatten_gate: And
+temp_hoch = GreaterEqual(
+\t\"Temp \u{fc}ber 28\",
+\tInput1: aussentemp.Q,
+\tInput2: 28,
+)
+schatten_gate = And(
+\tI1: temp_hoch.Q,
+\tI2: sonne.Q,
+)
 
-wire aussentemp.Q -> temp_hoch.Input1
-wire temp_hoch.Q -> schatten_gate.I1
-wire sonne.Q -> schatten_gate.I2
-wire schatten_gate.Q -> jal_sued.AutoShade
-wire wind_alarm.Q -> jal_sued.Safety
+jal_sued.AutoShade <- schatten_gate.Q
+jal_sued.Safety <- wind_alarm.Q
 
-set jal_sued.TargetPos = 70
+jal_sued.TargetPos = 70
 
 moved beschatten -> schatten_gate
 ";
@@ -319,17 +323,15 @@ moved beschatten -> schatten_gate
 fn let_constants_resolve_to_defs() {
     let with_let = Module::parse(
         "let schwelle = 28\n\
-         extern aussentemp: VirtualIn match iname \"VI1\"\n\
-         block temp_hoch: GreaterEqual {\n\tInput2 = schwelle\n}\n\
-         wire aussentemp.Q -> temp_hoch.Input1\n\
-         set aussentemp.Qm = schwelle\n",
+         extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+         temp_hoch = GreaterEqual(Input1: aussentemp.Q, Input2: schwelle)\n\
+         aussentemp.Qm = schwelle\n",
     )
     .unwrap();
     let literal = Module::parse(
-        "extern aussentemp: VirtualIn match iname \"VI1\"\n\
-         block temp_hoch: GreaterEqual {\n\tInput2 = 28\n}\n\
-         wire aussentemp.Q -> temp_hoch.Input1\n\
-         set aussentemp.Qm = 28\n",
+        "extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+         temp_hoch = GreaterEqual(Input1: aussentemp.Q, Input2: 28)\n\
+         aussentemp.Qm = 28\n",
     )
     .unwrap();
     let a = compile(&base(), &with_let, &mut Lockfile::new(), &opts()).unwrap();
@@ -344,9 +346,9 @@ fn let_constants_resolve_to_defs() {
 #[test]
 fn extern_port_errors_suggest_close_names() {
     let m = Module::parse(
-        "extern jal: AutoJalousie match title \"Beschattung S\u{fc}d\"\n\
-         block b: And\n\
-         wire b.Q -> jal.AutoShad\n",
+        "extern jal = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+         b = And()\n\
+         jal.AutoShad <- b.Q\n",
     )
     .unwrap();
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();

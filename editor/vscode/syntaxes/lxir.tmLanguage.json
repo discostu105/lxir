@@ -5,12 +5,12 @@
   "patterns": [
     { "include": "#comment" },
     { "include": "#extern" },
-    { "include": "#block" },
-    { "include": "#wire" },
-    { "include": "#set" },
     { "include": "#let" },
     { "include": "#removed" },
     { "include": "#moved" },
+    { "include": "#block" },
+    { "include": "#wire" },
+    { "include": "#set" },
     { "include": "#string" },
     { "include": "#number" }
   ],
@@ -34,10 +34,6 @@
       "name": "constant.numeric.lxir",
       "match": "\\b-?[0-9]+(\\.[0-9]+)?\\b"
     },
-    "slug": {
-      "name": "variable.other.lxir",
-      "match": "\\b[a-z][a-z0-9_]*\\b"
-    },
     "portref": {
       "match": "([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)",
       "captures": {
@@ -47,73 +43,69 @@
       }
     },
     "extern": {
-      "match": "^\\s*(extern)\\s+([a-z][a-z0-9_]*)\\s*(:)\\s*([A-Za-z][A-Za-z0-9]*)\\s+(match)\\s+(uuid|iname|title)\\b",
+      "match": "^\\s*(extern)\\s+([a-z][a-z0-9_]*)\\s*(=)\\s*([A-Z][A-Za-z0-9]*)\\s*(\\()\\s*(uuid|iname|title)\\s*(:)",
       "captures": {
         "1": { "name": "keyword.control.extern.lxir" },
         "2": { "name": "entity.name.function.lxir" },
-        "3": { "name": "punctuation.separator.lxir" },
+        "3": { "name": "keyword.operator.assignment.lxir" },
         "4": { "name": "entity.name.type.lxir" },
-        "5": { "name": "keyword.control.match.lxir" },
-        "6": { "name": "constant.language.matchkind.lxir" }
+        "5": { "name": "punctuation.definition.arguments.begin.lxir" },
+        "6": { "name": "constant.language.matchkind.lxir" },
+        "7": { "name": "punctuation.separator.lxir" }
       }
     },
     "block": {
-      "begin": "^\\s*(block)\\s+([a-z][a-z0-9_]*)\\s*(:)\\s*([A-Za-z][A-Za-z0-9]*)",
+      "begin": "^\\s*([a-z][a-z0-9_]*)\\s*(=)\\s*([A-Z][A-Za-z0-9]*)\\s*(\\()",
       "beginCaptures": {
-        "1": { "name": "keyword.control.block.lxir" },
-        "2": { "name": "entity.name.function.lxir" },
-        "3": { "name": "punctuation.separator.lxir" },
-        "4": { "name": "entity.name.type.lxir" }
+        "1": { "name": "entity.name.function.lxir" },
+        "2": { "name": "keyword.operator.assignment.lxir" },
+        "3": { "name": "entity.name.type.lxir" },
+        "4": { "name": "punctuation.definition.arguments.begin.lxir" }
       },
-      "end": "(?<=\\})|^(?=\\S)|$(?<!\\{)",
+      "end": "\\)",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.arguments.end.lxir" }
+      },
       "patterns": [
-        { "include": "#string" },
         { "include": "#comment" },
+        { "include": "#string" },
         {
-          "begin": "\\{",
-          "beginCaptures": {
-            "0": { "name": "punctuation.definition.block.begin.lxir" }
-          },
-          "end": "\\}",
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.block.end.lxir" }
-          },
-          "patterns": [
-            { "include": "#comment" },
-            {
-              "match": "^\\s*([A-Za-z][A-Za-z0-9_]*)\\s*(=)",
-              "captures": {
-                "1": { "name": "variable.parameter.lxir" },
-                "2": { "name": "keyword.operator.assignment.lxir" }
-              }
-            },
-            { "include": "#string" },
-            { "include": "#number" }
-          ]
-        }
+          "match": "([A-Za-z][A-Za-z0-9_]*)\\s*(:)\\s*(?=[a-z][a-z0-9_]*\\.)",
+          "captures": {
+            "1": { "name": "variable.parameter.lxir" },
+            "2": { "name": "punctuation.separator.lxir" }
+          }
+        },
+        {
+          "match": "([A-Za-z][A-Za-z0-9_]*)\\s*(:)",
+          "captures": {
+            "1": { "name": "variable.parameter.lxir" },
+            "2": { "name": "punctuation.separator.lxir" }
+          }
+        },
+        { "include": "#portref" },
+        { "include": "#number" }
       ]
     },
     "wire": {
-      "match": "^\\s*(wire)\\s+([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)\\s*(->)\\s*([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)",
+      "match": "^\\s*([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)\\s*(<-)\\s*([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)",
       "captures": {
-        "1": { "name": "keyword.control.wire.lxir" },
-        "2": { "name": "variable.other.lxir" },
-        "3": { "name": "punctuation.accessor.lxir" },
-        "4": { "name": "variable.other.member.lxir" },
-        "5": { "name": "keyword.operator.arrow.lxir" },
-        "6": { "name": "variable.other.lxir" },
-        "7": { "name": "punctuation.accessor.lxir" },
-        "8": { "name": "variable.other.member.lxir" }
+        "1": { "name": "variable.other.lxir" },
+        "2": { "name": "punctuation.accessor.lxir" },
+        "3": { "name": "variable.other.member.lxir" },
+        "4": { "name": "keyword.operator.arrow.lxir" },
+        "5": { "name": "variable.other.lxir" },
+        "6": { "name": "punctuation.accessor.lxir" },
+        "7": { "name": "variable.other.member.lxir" }
       }
     },
     "set": {
-      "match": "^\\s*(set)\\s+([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)\\s*(=)",
+      "match": "^\\s*([a-z][a-z0-9_]*)(\\.)([A-Za-z0-9_]+)\\s*(=)",
       "captures": {
-        "1": { "name": "keyword.control.set.lxir" },
-        "2": { "name": "variable.other.lxir" },
-        "3": { "name": "punctuation.accessor.lxir" },
-        "4": { "name": "variable.other.member.lxir" },
-        "5": { "name": "keyword.operator.assignment.lxir" }
+        "1": { "name": "variable.other.lxir" },
+        "2": { "name": "punctuation.accessor.lxir" },
+        "3": { "name": "variable.other.member.lxir" },
+        "4": { "name": "keyword.operator.assignment.lxir" }
       }
     },
     "let": {

@@ -3,14 +3,15 @@
 //! The compiler owns exactly three kinds of edits and touches nothing else
 //! in the (losslessly parsed) base document:
 //!
-//! 1. **Managed blocks** — `block` declarations are (re)built from scratch on
-//!    every compile, with identity pinned by the lockfile.
-//! 2. **Extern wires** — wires whose sink is an extern port are added to the
-//!    extern's `<Co>`; the lockfile records them so removing the `wire` from
-//!    source removes the `<In>` again without disturbing wires drawn in
-//!    Loxone Config.
-//! 3. **Extern sets** — `set` on an extern port rewrites its `Def=`; the
-//!    pre-set value is remembered and restored when the `set` disappears.
+//! 1. **Managed blocks** — `slug = Type(…)` declarations are (re)built from
+//!    scratch on every compile, with identity pinned by the lockfile.
+//! 2. **Extern wires** — wires whose sink is an extern port
+//!    (`target.Port <- source.Port`) are added to the extern's `<Co>`; the
+//!    lockfile records them so removing the statement removes the `<In>`
+//!    again without disturbing wires drawn in Loxone Config.
+//! 3. **Extern sets** — `target.Port = value` on an extern port rewrites its
+//!    `Def=`; the pre-set value is remembered and restored when the
+//!    statement disappears.
 //!
 //! Everything is deterministic: same base + module + lock + options → the
 //! same output bytes. New UUIDs come from [`crate::uuid::Minter`] (no clock,
@@ -19,7 +20,7 @@
 //!
 //! v0 limitations (documented, checked, erroring — never silent):
 //! - Only block types in [`crate::connectors::builtin`] can be created.
-//! - Wiring or `set`ting an extern port requires that port's `<Co>` to exist
+//! - Wiring or assigning an extern port requires that port's `<Co>` to exist
 //!   in the base config (Loxone omits nothing we have observed, but an
 //!   unverified type could; we refuse to invent port UUIDs for them).
 //! - `And`/`Or` are fixed two-input blocks: wiring `I3`+ is an error. The
@@ -211,9 +212,10 @@ pub fn compile(
         );
     }
 
-    // --- Def values on managed ports come from block params (`set` is for
-    //     extern ports only — enforced by validate). `let` references
-    //     resolve to their literal here.
+    // --- Def values on managed ports come from the blocks' parameter
+    //     bindings (port assignment statements are for extern ports only —
+    //     enforced by validate). `let` references resolve to their literal
+    //     here.
     let resolve = |v: &Value| -> Result<String> { Ok(module.resolve_value(v)?.to_string()) };
     let mut managed_defs: BTreeMap<(String, String), String> = BTreeMap::new();
     for block in module.blocks() {
@@ -258,22 +260,23 @@ pub fn compile(
         page.push_child(el);
     }
 
-    // --- Wires.
-    for w in module.wires() {
+    // --- Wires: block argument bindings (sink = the declaring block) and
+    //     `<-` statements (sink = an extern port), in source order.
+    for (from_ref, to_ref) in module.wire_pairs() {
         let from = resolve_port(
             &doc,
             &managed,
             &extern_uuid,
-            &w.from.slug,
-            &w.from.port,
+            &from_ref.slug,
+            &from_ref.port,
             PortDir::Output,
         )?;
         let to = resolve_port(
             &doc,
             &managed,
             &extern_uuid,
-            &w.to.slug,
-            &w.to.port,
+            &to_ref.slug,
+            &to_ref.port,
             PortDir::Input,
         )?;
         add_wire(&mut doc, &to.owner_uuid, &to.port_uuid, &from.port_uuid)?;
@@ -287,7 +290,8 @@ pub fn compile(
     lock.extern_wires.sort();
     lock.extern_wires.dedup();
 
-    // --- Sets (always extern ports — validate rejects managed targets).
+    // --- Port assignments (always extern ports — validate rejects managed
+    //     targets).
     for s in module.sets() {
         let target = resolve_port(
             &doc,
@@ -372,7 +376,7 @@ fn resolve_externs(
             [] => {
                 return Err(Error::NoMatch {
                     slug: ext.slug.clone(),
-                    spec: format!("{} {}", ext.block_type, ext.match_spec),
+                    spec: format!("{}({})", ext.block_type, ext.match_spec),
                 });
             }
             [only] => {
@@ -395,7 +399,7 @@ fn resolve_externs(
             many => {
                 return Err(Error::AmbiguousMatch {
                     slug: ext.slug.clone(),
-                    spec: format!("{} {}", ext.block_type, ext.match_spec),
+                    spec: format!("{}({})", ext.block_type, ext.match_spec),
                     count: many.len(),
                     candidates: many.iter().map(|o| o.uuid.clone()).collect(),
                 });
@@ -429,7 +433,7 @@ fn resolve_port(
             .unwrap_or(PortDir::Input);
         let ok = match want {
             PortDir::Output => dir == PortDir::Output,
-            // Wire sinks and `set` targets are inputs/params on blocks.
+            // Wire sinks and assignment targets are inputs/params on blocks.
             PortDir::Input | PortDir::Param => dir != PortDir::Output,
         };
         if !ok {

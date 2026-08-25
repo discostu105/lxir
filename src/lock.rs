@@ -44,9 +44,9 @@ pub struct Lockfile {
     /// removed from the config without touching wires owned by Loxone Config.
     #[serde(default)]
     pub extern_wires: Vec<LockedWire>,
-    /// Original `Def=` values of extern ports before the first `set`,
-    /// keyed by port UUID (`None` = the attribute was absent). Restored when
-    /// the `set` disappears from source.
+    /// Original `Def=` values of extern ports before the first assignment
+    /// (`target.Port = value`), keyed by port UUID (`None` = the attribute
+    /// was absent). Restored when the assignment disappears from source.
     #[serde(default)]
     pub set_originals: BTreeMap<String, Option<String>>,
 }

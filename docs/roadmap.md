@@ -60,7 +60,15 @@ types) contradict each other. Results and methodology:
       type/port/direction validation in `lxir check` (no base needed);
       "did you mean" suggestions; `lxir check --json` for structured
       diagnostics.
-- [ ] Composite extern matching (e.g. `match title "Jalousie" room "Büro"`)
+- [x] Language v1 2026-08-25 (D16): constructor syntax. A block's
+      parameters *and* input wires move into its declaration
+      (`slug = Type("Label", Input1: sonne.Q, Input2: 28)`); wires onto
+      extern ports become `target.Port <- source.Port`; `set` becomes
+      plain port assignment (`target.Port = value`). v0 keywords are
+      reserved with migration errors; the v1 example compiles
+      byte-identically to the v0 output ([ir-spec.md](ir-spec.md),
+      design decision D16).
+- [ ] Composite extern matching (e.g. `title: "Jalousie", room: "Büro"`)
       for real houses where titles repeat per room. **Blocked on format
       verification**: how objects reference rooms/categories is not yet a
       validated fact in [loxone-format.md](loxone-format.md) — establish it

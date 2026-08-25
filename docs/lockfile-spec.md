@@ -60,9 +60,9 @@ otherwise — a wrong port UUID silently breaks wire identity.
   ],
 
   "set_originals": {                // extern port uuid → Def value before
-    "<port-uuid>": "100"            // our first `set` (null = attribute
-  }                                 // was absent). Restored when the set
-                                    // leaves the source.
+    "<port-uuid>": "100"            // our first assignment (null = attr
+  }                                 // was absent). Restored when the
+                                    // assignment leaves the source.
 }
 ```
 

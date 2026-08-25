@@ -1,7 +1,7 @@
 //! IR abstract syntax and canonical text emission.
 
 use crate::error::{Error, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -20,13 +20,14 @@ pub enum Item {
     Moved(MovedDecl),
     /// A whole-line `#` comment, stored verbatim (text after the `#`) so
     /// formatting is non-destructive. Statements carry their own trailing
-    /// comments; block bodies carry theirs as [`BodyItem`]s.
+    /// comments; argument lists carry theirs as [`ArgItem`]s.
     Comment(String),
 }
 
-/// A parameter/`set` value. The variant records how the value was written,
-/// so canonical emission never has to guess from the content — a quoted
-/// string stays quoted even when it happens to contain digits and signs.
+/// A parameter/assignment value. The variant records how the value was
+/// written, so canonical emission never has to guess from the content — a
+/// quoted string stays quoted even when it happens to contain digits and
+/// signs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     /// Bare numeric literal, kept exactly as written (e.g. `-2.5`).
@@ -81,7 +82,7 @@ pub(crate) fn is_number_literal(s: &str) -> bool {
     digits(int) && frac.is_none_or(digits)
 }
 
-/// `extern slug: Type match kind "value"` — a reference to an object owned
+/// `extern slug = Type(matcher: "value")` — a reference to an object owned
 /// by Loxone Config (hardware, system blocks, anything unmanaged).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternDecl {
@@ -102,70 +103,113 @@ pub enum MatchSpec {
 impl fmt::Display for MatchSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MatchSpec::Uuid(v) => write!(f, "match uuid {}", quote(v)),
-            MatchSpec::IName(v) => write!(f, "match iname {}", quote(v)),
-            MatchSpec::Title(v) => write!(f, "match title {}", quote(v)),
+            MatchSpec::Uuid(v) => write!(f, "uuid: {}", quote(v)),
+            MatchSpec::IName(v) => write!(f, "iname: {}", quote(v)),
+            MatchSpec::Title(v) => write!(f, "title: {}", quote(v)),
         }
     }
 }
 
-/// `block slug: Type ["Title"] [{ Param = value … }]` — a managed block the
-/// compiler owns end-to-end.
+/// `slug = Type("Label", Port: value, Port: source.Q, …)` — a managed block
+/// the compiler owns end-to-end. The argument list declares the block's
+/// entire input situation in one place: a literal (or constant) binds the
+/// port's `Def=` parameter, a `slug.Port` reference wires that source into
+/// the port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockDecl {
     pub slug: String,
     pub block_type: String,
+    /// The optional leading string argument: the display title
+    /// (defaults to the slug).
     pub title: Option<String>,
-    /// The `{ … }` body: parameters and whole-line comments, in source
-    /// order.
-    pub body: Vec<BodyItem>,
-    /// Trailing `#` comment on the header line (after the `{` when a body
-    /// follows).
+    /// Keyword arguments and whole-line comments, in source order.
+    pub args: Vec<ArgItem>,
+    /// Trailing `#` comment on the header line (after the `(` when the
+    /// call spans lines).
     pub comment: Option<String>,
-    /// Trailing `#` comment on the closing `}` line, verbatim.
+    /// Trailing `#` comment on the closing `)` line, verbatim.
     pub close_comment: Option<String>,
 }
 
 impl BlockDecl {
-    /// The port parameters in the body, emitted as `Def=` on the
+    /// All keyword arguments, in source order.
+    pub fn bindings(&self) -> impl Iterator<Item = &Binding> {
+        self.args.iter().filter_map(|a| match a {
+            ArgItem::Binding(b) => Some(b),
+            ArgItem::Comment(_) => None,
+        })
+    }
+
+    /// The parameter bindings (`Port: value`), emitted as `Def=` on the
     /// corresponding connectors.
     pub fn params(&self) -> impl Iterator<Item = (&str, &Value)> {
-        self.body.iter().filter_map(|i| match i {
-            BodyItem::Param(p) => Some((p.key.as_str(), &p.value)),
-            BodyItem::Comment(_) => None,
+        self.bindings().filter_map(|b| match &b.kind {
+            BindingKind::Param(v) => Some((b.port.as_str(), v)),
+            BindingKind::Wire(_) => None,
+        })
+    }
+
+    /// The wire bindings (`Port: source.Q`) as `(sink_port, source)`.
+    pub fn input_wires(&self) -> impl Iterator<Item = (&str, &PortRef)> {
+        self.bindings().filter_map(|b| match &b.kind {
+            BindingKind::Wire(src) => Some((b.port.as_str(), src)),
+            BindingKind::Param(_) => None,
         })
     }
 }
 
-/// One line of a block body.
+/// One entry of a block's argument list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BodyItem {
-    Param(ParamDecl),
-    /// A whole-line `#` comment inside the body, verbatim.
+pub enum ArgItem {
+    Binding(Binding),
+    /// A whole-line `#` comment inside the argument list, verbatim.
     Comment(String),
 }
 
-/// `Key = value` inside a block body.
+/// `Port: value` (parameter) or `Port: slug.Port` (wire) inside a block's
+/// argument list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParamDecl {
-    pub key: String,
-    pub value: Value,
-    /// Trailing `#` comment on the parameter line, verbatim.
+pub struct Binding {
+    pub port: String,
+    pub kind: BindingKind,
+    /// Trailing `#` comment on the argument line, verbatim.
     pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingKind {
+    /// A literal or constant reference: becomes `Def=` on the port.
+    Param(Value),
+    /// A `slug.Port` source reference: becomes a wire into the port.
+    Wire(PortRef),
+}
+
+impl fmt::Display for BindingKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BindingKind::Param(v) => v.fmt(f),
+            BindingKind::Wire(r) => r.fmt(f),
+        }
+    }
+}
+
+/// `target.Port <- source.Port` — a wire onto an *extern* port (wires into
+/// managed blocks are written in the block's argument list). Recorded in
+/// the lockfile so removing the statement removes the wire again without
+/// touching wires drawn in Loxone Config.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireDecl {
-    pub from: PortRef,
     pub to: PortRef,
+    pub from: PortRef,
     /// Trailing `#` comment on the statement line, verbatim.
     pub comment: Option<String>,
 }
 
-/// `set slug.Port = value` — write a parameter (`Def=`) on an *extern* port;
+/// `target.Port = value` — write a parameter (`Def=`) on an *extern* port;
 /// the original value is preserved in the lockfile and restored when the
-/// `set` is removed from source. On managed blocks, parameters belong in the
-/// block body — `set` on a managed slug is a validation error.
+/// statement is removed from source. On managed blocks, parameters belong
+/// in the argument list — assigning a managed port here is a validation
+/// error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetDecl {
     pub target: PortRef,
@@ -175,8 +219,9 @@ pub struct SetDecl {
 }
 
 /// `let name = value` — a named constant. Referenced by bare identifier in
-/// any value position (block parameters, `set`). Pure substitution: the
-/// compiler resolves references before emitting `Def=` values.
+/// any value position (argument lists, extern assignments). Pure
+/// substitution: the compiler resolves references before emitting `Def=`
+/// values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LetDecl {
     pub name: String,
@@ -263,13 +308,15 @@ impl Module {
         })
     }
 
-    pub fn wires(&self) -> impl Iterator<Item = &WireDecl> {
+    /// The `<-` statements (wires onto extern ports).
+    pub fn extern_wires(&self) -> impl Iterator<Item = &WireDecl> {
         self.items.iter().filter_map(|i| match i {
             Item::Wire(w) => Some(w),
             _ => None,
         })
     }
 
+    /// The `=` port statements (`Def=` writes on extern ports).
     pub fn sets(&self) -> impl Iterator<Item = &SetDecl> {
         self.items.iter().filter_map(|i| match i {
             Item::Set(s) => Some(s),
@@ -296,6 +343,31 @@ impl Module {
             Item::Moved(m) => Some(m),
             _ => None,
         })
+    }
+
+    /// Every wire in the module as `(source, sink)`, in source order: a
+    /// block's wire bindings sink into the block itself; `<-` statements
+    /// sink onto extern ports.
+    pub fn wire_pairs(&self) -> Vec<(PortRef, PortRef)> {
+        let mut out = Vec::new();
+        for item in &self.items {
+            match item {
+                Item::Block(b) => {
+                    for (port, src) in b.input_wires() {
+                        out.push((
+                            src.clone(),
+                            PortRef {
+                                slug: b.slug.clone(),
+                                port: port.to_string(),
+                            },
+                        ));
+                    }
+                }
+                Item::Wire(w) => out.push((w.from.clone(), w.to.clone())),
+                _ => {}
+            }
+        }
+        out
     }
 
     /// Resolve a value to the literal string that becomes `Def=`: literals
@@ -331,6 +403,11 @@ impl Module {
                 return compile_err(format!("duplicate name `{name}`"));
             }
         }
+        let block_type = |slug: &str| -> &str {
+            self.blocks()
+                .find(|b| b.slug == slug)
+                .map_or("…", |b| &b.block_type)
+        };
 
         let object_ref = |r: &PortRef| -> Result<()> {
             match names.get(r.slug.as_str()) {
@@ -369,24 +446,58 @@ impl Module {
         for item in &self.items {
             match item {
                 Item::Block(b) => {
-                    for (_, value) in b.params() {
-                        value_refs(value)?;
+                    let mut params_seen: BTreeSet<&str> = BTreeSet::new();
+                    let mut wires_seen: BTreeSet<(&str, &PortRef)> = BTreeSet::new();
+                    for binding in b.bindings() {
+                        match &binding.kind {
+                            BindingKind::Param(v) => {
+                                value_refs(v)?;
+                                if !params_seen.insert(&binding.port) {
+                                    return compile_err(format!(
+                                        "duplicate parameter `{}` in `{} = {}(…)`",
+                                        binding.port, b.slug, b.block_type
+                                    ));
+                                }
+                            }
+                            BindingKind::Wire(src) => {
+                                object_ref(src)?;
+                                if !wires_seen.insert((&binding.port, src)) {
+                                    return compile_err(format!(
+                                        "duplicate wire `{}: {src}` in `{} = {}(…)`",
+                                        binding.port, b.slug, b.block_type
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
                 Item::Wire(w) => {
-                    object_ref(&w.from)?;
                     object_ref(&w.to)?;
+                    object_ref(&w.from)?;
+                    if names.get(w.to.slug.as_str()) == Some(&NameKind::Block) {
+                        return compile_err(format!(
+                            "`{to} <- {from}` targets managed block `{slug}` — wire it \
+                             in the argument list instead (`{port}: {from}` inside \
+                             `{slug} = {ty}(…)`); `<-` is for extern ports only",
+                            to = w.to,
+                            from = w.from,
+                            slug = w.to.slug,
+                            port = w.to.port,
+                            ty = block_type(&w.to.slug),
+                        ));
+                    }
                 }
                 Item::Set(s) => {
                     object_ref(&s.target)?;
                     if names.get(s.target.slug.as_str()) == Some(&NameKind::Block) {
                         return compile_err(format!(
-                            "`set {}` targets managed block `{slug}` — assign the \
-                             parameter in the block body instead (`{port} = …` inside \
-                             `block {slug}`); `set` is for extern ports only",
-                            s.target,
+                            "`{target} = …` targets managed block `{slug}` — bind the \
+                             parameter in the argument list instead (`{port}: …` inside \
+                             `{slug} = {ty}(…)`); port assignment is for extern ports only",
+                            target = s.target,
                             slug = s.target.slug,
                             port = s.target.port,
+                            ty = block_type(&s.target.slug),
                         ));
                     }
                     value_refs(&s.value)?;
@@ -467,18 +578,22 @@ impl Module {
     pub fn to_text(&self) -> String {
         let mut out = String::new();
         let mut prev: Option<std::mem::Discriminant<Item>> = None;
+        // A multi-line call is visually dense; separate it from the next
+        // item even when the kind does not change.
+        let mut prev_multiline = false;
         for item in &self.items {
             let disc = std::mem::discriminant(item);
-            if prev.is_some_and(|p| p != disc) {
+            if prev.is_some_and(|p| p != disc) || prev_multiline {
                 out.push('\n');
             }
             prev = Some(disc);
+            prev_multiline = false;
             let tail =
                 |c: &Option<String>| c.as_ref().map(|t| format!(" #{t}")).unwrap_or_default();
             match item {
                 Item::Extern(e) => {
                     out.push_str(&format!(
-                        "extern {}: {} {}{}\n",
+                        "extern {} = {}({}){}\n",
                         e.slug,
                         e.block_type,
                         e.match_spec,
@@ -486,47 +601,44 @@ impl Module {
                     ));
                 }
                 Item::Block(b) => {
-                    out.push_str(&format!("block {}: {}", b.slug, b.block_type));
-                    if let Some(t) = &b.title {
-                        out.push_str(&format!(" {}", quote(t)));
-                    }
-                    if b.body.is_empty() {
+                    out.push_str(&format!("{} = {}(", b.slug, b.block_type));
+                    if b.args.is_empty() {
+                        // Single line: `slug = Type()` or `slug = Type("Label")`.
+                        if let Some(t) = &b.title {
+                            out.push_str(&quote(t));
+                        }
+                        out.push(')');
                         out.push_str(&tail(&b.comment));
                     } else {
-                        out.push_str(&format!(" {{{}\n", tail(&b.comment)));
-                        for bi in &b.body {
-                            match bi {
-                                BodyItem::Param(p) => out.push_str(&format!(
-                                    "\t{} = {}{}\n",
-                                    p.key,
-                                    p.value,
-                                    tail(&p.comment)
+                        out.push_str(&tail(&b.comment));
+                        out.push('\n');
+                        if let Some(t) = &b.title {
+                            out.push_str(&format!("\t{},\n", quote(t)));
+                        }
+                        for arg in &b.args {
+                            match arg {
+                                ArgItem::Binding(x) => out.push_str(&format!(
+                                    "\t{}: {},{}\n",
+                                    x.port,
+                                    x.kind,
+                                    tail(&x.comment)
                                 )),
-                                BodyItem::Comment(text) => {
+                                ArgItem::Comment(text) => {
                                     out.push_str(&format!("\t#{text}\n"));
                                 }
                             }
                         }
-                        out.push('}');
+                        out.push(')');
                         out.push_str(&tail(&b.close_comment));
+                        prev_multiline = true;
                     }
                     out.push('\n');
                 }
                 Item::Wire(w) => {
-                    out.push_str(&format!(
-                        "wire {} -> {}{}\n",
-                        w.from,
-                        w.to,
-                        tail(&w.comment)
-                    ));
+                    out.push_str(&format!("{} <- {}{}\n", w.to, w.from, tail(&w.comment)));
                 }
                 Item::Set(s) => {
-                    out.push_str(&format!(
-                        "set {} = {}{}\n",
-                        s.target,
-                        s.value,
-                        tail(&s.comment)
-                    ));
+                    out.push_str(&format!("{} = {}{}\n", s.target, s.value, tail(&s.comment)));
                 }
                 Item::Let(l) => {
                     out.push_str(&format!(

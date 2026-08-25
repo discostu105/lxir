@@ -1,9 +1,11 @@
 //! The decompiler: existing config → IR module.
 //!
 //! Import path for adopting an existing config: objects whose type is in the
-//! managed set become `block` declarations; objects *wired to them* become
-//! `extern` declarations; the wires between them become `wire` statements.
-//! Everything else stays untouched raw XML (counted in the report).
+//! managed set become `slug = Type(…)` declarations — with their `Def=`
+//! values and incoming wires as argument bindings; objects *wired to them*
+//! become `extern` declarations; wires landing on extern ports become
+//! `target.Port <- source.Port` statements. Everything else stays untouched
+//! raw XML (counted in the report).
 //!
 //! Match specs for externs prefer stability over readability:
 //! `iname` when it is unique for the type (INames are locale-stable),
@@ -18,13 +20,14 @@ use crate::connectors::BUILTIN_TYPES;
 use crate::doc::{LoxoneDoc, ports};
 use crate::error::Result;
 use crate::ir::ast::{
-    BlockDecl, BodyItem, ExternDecl, Item, MatchSpec, Module, ParamDecl, PortRef, Value, WireDecl,
+    ArgItem, Binding, BindingKind, BlockDecl, ExternDecl, Item, MatchSpec, Module, PortRef, Value,
+    WireDecl,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
 pub struct DecompileOptions {
-    /// Block types to lift into `block` declarations. Defaults to the
+    /// Block types to lift into managed block declarations. Defaults to the
     /// verified builtin table, so `compile(decompile(doc))` can always
     /// rebuild what was lifted.
     pub managed_types: BTreeSet<String>,
@@ -40,7 +43,7 @@ impl Default for DecompileOptions {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DecompileReport {
-    /// Objects lifted into `block` declarations.
+    /// Objects lifted into managed block declarations.
     pub managed: usize,
     /// Objects referenced by managed wires, lifted into `extern`s.
     pub externs: usize,
@@ -125,19 +128,36 @@ pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, De
         }));
     }
 
-    // Blocks, with `Def=` values as params.
+    // Blocks: per port in connector order, the `Def=` value becomes a
+    // parameter binding, then each incoming wire a wire binding.
     for o in &managed {
         let el = doc.element_at(&o.path).expect("path from objects()");
-        let body = ports(el)
-            .into_iter()
-            .filter_map(|p| {
-                Some(BodyItem::Param(ParamDecl {
-                    key: p.key,
-                    value: Value::from_literal(&p.def?),
+        let mut args = Vec::new();
+        for p in ports(el) {
+            if let Some(def) = &p.def {
+                args.push(ArgItem::Binding(Binding {
+                    port: p.key.clone(),
+                    kind: BindingKind::Param(Value::from_literal(def)),
                     comment: None,
-                }))
-            })
-            .collect();
+                }));
+            }
+            for input in &p.inputs {
+                let Some((src_obj, src_key)) = idx.port_owner.get(input) else {
+                    continue; // dangling <In> — not representable, stays raw
+                };
+                let Some(src_slug) = slug_of.get(src_obj) else {
+                    continue;
+                };
+                args.push(ArgItem::Binding(Binding {
+                    port: p.key.clone(),
+                    kind: BindingKind::Wire(PortRef {
+                        slug: src_slug.clone(),
+                        port: src_key.clone(),
+                    }),
+                    comment: None,
+                }));
+            }
+        }
         let slug = slug_of[&o.uuid].clone();
         items.push(Item::Block(BlockDecl {
             block_type: o.block_type.clone(),
@@ -145,23 +165,28 @@ pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, De
             // dropping it keeps decompile(compile(m)) minimal.
             title: o.title.clone().filter(|t| t != &slug),
             slug,
-            body,
+            args,
             comment: None,
             close_comment: None,
         }));
     }
 
-    // Wires, deduplicated, in document order.
+    // Wires landing on extern ports (`<-` statements), deduplicated, in
+    // document order. Wires into managed blocks were lifted into the
+    // blocks' argument lists above.
     let mut seen = BTreeSet::new();
     for (fo, fk, to, tk) in &touched {
+        if managed_uuids.contains(to.as_str()) {
+            continue;
+        }
         let wire = WireDecl {
-            from: PortRef {
-                slug: slug_of[fo].clone(),
-                port: fk.clone(),
-            },
             to: PortRef {
                 slug: slug_of[to].clone(),
                 port: tk.clone(),
+            },
+            from: PortRef {
+                slug: slug_of[fo].clone(),
+                port: fk.clone(),
             },
             comment: None,
         };
