@@ -599,7 +599,8 @@ fn remove_wire(doc: &mut LoxoneDoc, from_port: &str, to_port: &str) {
 }
 
 /// Keep `Nc` equal to the number of `<In>` children (absent when zero),
-/// in canonical position right after `K`.
+/// in Loxone's canonical position: after `Def`, before `U` (oracle save
+/// 2026-08-25 rewrote a compiler-emitted `K,Nc,Def,U` to `K,Def,Nc,U`).
 fn sync_nc(co: &mut Element) {
     let n = co.child_elements().filter(|c| c.name == "In").count();
     if n == 0 {
@@ -608,7 +609,7 @@ fn sync_nc(co: &mut Element) {
             co.self_closing = true;
         }
     } else {
-        set_attr_ordered(co, "Nc", &n.to_string(), &["Def", "U"]);
+        set_attr_ordered(co, "Nc", &n.to_string(), &["U"]);
     }
 }
 

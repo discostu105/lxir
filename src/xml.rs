@@ -35,7 +35,10 @@ pub struct Element {
     pub attrs: Vec<Attr>,
     pub children: Vec<Node>,
     /// `true` when serialized as `<Name …/>`. Elements with children are
-    /// never self-closing; empty elements in Loxone output always are.
+    /// never self-closing; empty elements in Loxone output usually are,
+    /// but not always — the GUI writes `<IoData></IoData>` even on fresh
+    /// blocks (oracle save 2026-08-25), so the flag must be preserved
+    /// per element, never normalized.
     pub self_closing: bool,
 }
 

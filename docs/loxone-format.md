@@ -12,7 +12,10 @@ the reason the crate's parser is hand-rolled.
 
 - UTF-8 with **BOM**, `<?xml version="1.0" encoding="utf-8"?>` declaration,
   **CRLF** line endings, **tab** indentation, single space between
-  attributes, no space before `/>`. Empty elements are always self-closing.
+  attributes, no space before `/>`. Empty elements are *usually*
+  self-closing, but not always: the GUI writes `<IoData></IoData>` even on
+  freshly created blocks (oracle save 2026-08-25) — preserve the form per
+  element, never normalize.
 - Root: `<ControlList Version="…" NextObj="…" NextConst="…" NextNote="…"
   NextMem="…">`. The `Next*` counters are bumped by Loxone Config on save
   and must never decrease. `NextObj` correlates with auto-titles (`O1415`).
@@ -80,7 +83,8 @@ is rendered inline (`<Key>2B35</Key>`).
 - `Nc` — number of incoming wires (= count of `<In>` children); omitted
   when zero.
 - `Def` — the port's parameter value; omitted at type default.
-- Attribute order: `K, Nc, Def, U`.
+- Attribute order: `K, Def, Nc, U` (an oracle save 2026-08-25 rewrote a
+  compiler-emitted `K, Nc, Def, U` into this order).
 
 ## UUID anatomy
 

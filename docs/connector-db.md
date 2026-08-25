@@ -64,8 +64,13 @@ A type becomes mintable only if **all** hold:
      stays possible, wiring *from* it is refused, and one observed
      counterexample evicts the classification.
 3. **No unresolved key remains.** One undetermined port keeps the whole
-   type out (that is what blocks `PulseAt`, `Memory`, `DayTimer`,
-   `PushButton` today).
+   type out (that is what blocks `PulseAt` and `DayTimer` today).
+
+A fourth path can resolve what the corpus cannot: the **save oracle**
+([oracle-wine.md](oracle-wine.md)). Loxone Config deletes anything
+off-descriptor on save (D8), so a minted minimal instance surviving an
+open+save proves the shape, and a compiled wire sourced from a port
+surviving the save proves that port is an output.
 
 Hardware/IO reference types (sensors, actors, `InputRef`/`OutputRef`,
 Tree/Air/Modbus devices) are **never admitted** regardless of evidence —
@@ -82,9 +87,32 @@ they carry device bindings; lxir references hardware, it does not own it
 | `AnalogThresholdTrigger` | Input, Remanence, On(P), Off(P), PulseTime(P), Q, RisingEdge, FallingEdge | 4 instances; edge outputs from lox-sim agreement |
 | `NotEqual`, `Greater`, `Less`, `LessEqual` | Input1, Input2, Q | comparator family: both dbs agree on the shape shared with live-verified `Equal` |
 
-Kept out, with the blocking key: `Memory` (`Q` — absent from both dbs, no
-corpus wires), `PulseAt` / `PushButton` / `DayTimer` (`OutputAPI`, plus
-`RtD`/`AQm`/`AQmt` on DayTimer).
+Kept out of the first batch, with the blocking key: `Memory` (`Q` —
+absent from both dbs, no corpus wires), `PulseAt` / `PushButton` /
+`DayTimer` (`OutputAPI`, plus `RtD`/`AQm`/`AQmt` on DayTimer).
+
+## Admitted 2026-08-25 via the mint oracle
+
+Minted minimal instances of three of the blocked types survived a Loxone
+Config open+save on the Xvfb rig (evidence and healing details in
+[oracle-wine.md](oracle-wine.md)); `Memory.Q` was proven an output by a
+compiled wire sourced from it surviving the save.
+
+| Type | Ports (index order) | Basis |
+|---|---|---|
+| `Memory` | Input, AQ, Q | 7 corpus instances; `Q` direction from the oracle probe |
+| `PushButton` | InputTrigger, On, Reset, InputDisable, Remanence, Q, Qon, Qoff, OutputAPI | 5 instances; whole shape oracle-survived, `OutputAPI` resolved by the inert-flag rule for this type |
+| `PButtonT` | InputTrigger, Reset, InputDisable, Remanence, Time(P), Q, OutputAPI | 8 instances; same basis as PushButton |
+
+Caveat recorded with the entries: the GUI heals these types with
+visualization children (`IoData`, `Display`, `PSD`, `SpStates`) the
+compiler does not emit — semantically inert save-churn, and adoption of
+GUI-created instances still refuses until those children are modeled.
+
+Still kept out: `PulseAt` and `DayTimer` (no oracle run yet; DayTimer
+additionally has `RtD`/`AQm`/`AQmt` unresolved), and `AutoJalousie`
+(16 instances, uniform Nio=49 — sized, but its `COHist`/`SpStates`
+children need modeling first).
 
 ## Growing the table
 

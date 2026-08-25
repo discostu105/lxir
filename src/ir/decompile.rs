@@ -382,10 +382,14 @@ impl Lift {
         }
 
         // `<-` statements: wires with an extern sink. Wires into managed
-        // blocks were lifted into the blocks' argument lists above.
+        // blocks were lifted into the blocks' argument lists above. The
+        // check is per *instance*, not per type: an excluded managed-type
+        // object (adopt refusal) is an extern here, and its incoming wires
+        // must appear as `<-` statements, not vanish.
+        let is_managed: BTreeSet<usize> = managed.iter().copied().collect();
         let mut wires = Vec::new();
         for (fi, fk, ti, tk) in touched {
-            if opts.managed_types.contains(&objects[ti].block_type) {
+            if is_managed.contains(&ti) {
                 continue;
             }
             wires.push((

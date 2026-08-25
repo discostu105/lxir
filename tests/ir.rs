@@ -420,7 +420,7 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
         .find(|c| c.name == "Co")
         .unwrap()
         .set_attr("Inv", "true");
-    let (_, lock, report) = adopt(&existing).unwrap();
+    let (module, lock, report) = adopt(&existing).unwrap();
     assert_eq!(report.refused.len(), 1);
     assert!(report.refused[0].contains("`Inv`"), "{}", report.refused[0]);
     assert!(
@@ -429,6 +429,14 @@ fn adopt_skips_blocks_the_rebuild_would_not_reproduce() {
         report.refused[0]
     );
     assert!(lock.objects.contains_key("summe"), "Formula still adopts");
+    // The refused block's incoming wire from adopted logic must appear as
+    // a `<-` statement — per-instance exclusion, not per-type (a type-based
+    // filter once made such wires vanish from the view entirely).
+    assert!(
+        module.to_text().contains("heiss.Input1 <- summe.AQ"),
+        "{}",
+        module.to_text()
+    );
 }
 
 #[test]

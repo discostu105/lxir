@@ -83,6 +83,56 @@ loxone-format.md):
   re-emitting a GUI-drawn wire from source (after teardown) reproduces it
   byte-identically.
 
+## The adopt round-trip (D18) — passed
+
+Third oracle session (2026-08-25), directly after `lxir adopt` shipped:
+the whole-config rebuild (adopt the real house config → compile the
+adopted module back onto it) was opened and saved by Loxone Config. The
+adopt rebuild differs from the original in exactly the normalizations the
+compiler applies — Co children re-emitted in spec order, `LtE` dropped,
+managed blocks re-emitted at the end of their page — and none of them had
+ever been GUI-blessed. Result: **semantically empty diff** against the
+original; 14 of 22 adopted blocks byte-identical after the save, the rest
+differing only by the known save fingerprint (`WF` 147456 → 16384, `<In>`
+order rewrite, `NextObj` +2).
+
+New format fact from this run: Loxone writes `<Co>` attributes in the
+order **`K`, `Def`, `Nc`, `U`** — the save moved a compiler-emitted
+`K,Nc,Def,U` into that order. The compiler's `sync_nc` now inserts `Nc`
+after `Def`, before `U`.
+
+## The mint oracle: Memory, PushButton, PButtonT — admitted
+
+Same session, with the rig warm: minted minimal instances of the three
+corpus-blocked types (plus wires from a real `VirtualIn`) onto the real
+base, opened, saved. **All blocks, wires, and `Def` params survived.**
+What the GUI added on save — schema-healing of children the compiler does
+not emit:
+
+- `Memory`: `Tp="0"` attribute, `<IoData></IoData>` (note:
+  **non-self-closing even when empty** — falsifying the assumption that
+  empty elements always serialize as `<X/>`), and a
+  `<Display Unit="&lt;v.1&gt;" StateOnly="true"/>`.
+- `PushButton`: a GUI-minted `SpStates` attribute (three fresh UUIDs whose
+  machine tail matches our serial — the GUI consumes counter space for
+  them), `<IoData Visu="true"/>`, `<PSD .../>`, `<Display Type="1" .../>`.
+- `PButtonT`: `<IoData Visu="true"/>`.
+- `WF` was **dropped entirely** on these types (not rewritten to 16384).
+- Geometry corrected as usual (cosmetic).
+
+Consequence: because compile is teardown/rebuild, every compile deletes
+these GUI-added children and the next GUI save re-adds them — byte churn,
+semantically inert. Documented behavior until the visualization children
+are modeled. Adoption of GUI-created instances of these types still
+**refuses** (they carry `Tp=`/`IoData` the rebuild would not reproduce).
+
+The last blocker was `Memory.Q` — never wired anywhere in the corpus,
+absent from both legacy dbs. Direction probe: compile a wire **sourced**
+from a minted `test_mem.Q` into a `Not.I`. Since a save deletes anything
+off-descriptor (D8, above), survival is decisive — the wire **survived
+the save intact**, so `Q` is an output. All three types are now in
+`connectors::builtin` (see [connector-db.md](connector-db.md)).
+
 ## Crash: minimal synthetic configs
 
 Handing Loxone Config the crate's synthetic `examples/out` file

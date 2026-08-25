@@ -86,6 +86,36 @@ const THRESHOLD: &[PortSpec] = &[
     p("FallingEdge", Output),
 ];
 
+// Admitted 2026-08-25 after the mint-oracle run (docs/oracle-wine.md):
+// real-instance evidence (7×/5×/8× in one config, zero index conflicts),
+// legacy-db agreement on every overlapping port, and a minted minimal
+// instance of each surviving a Loxone Config open+save. These blocks
+// carry visualization children (`<IoData>`; PushButton also `<PSD>`,
+// Memory also `<Display>` and `Tp=`) that the GUI adds on save — the
+// compiler does not emit them, and adoption of GUI-authored instances
+// refuses until they are modeled.
+const MEMORY: &[PortSpec] = &[p("Input", Input), p("AQ", Output), p("Q", Output)];
+const PUSH_BUTTON: &[PortSpec] = &[
+    p("InputTrigger", Input),
+    p("On", Input),
+    p("Reset", Input),
+    p("InputDisable", Input),
+    p("Remanence", Input),
+    p("Q", Output),
+    p("Qon", Output),
+    p("Qoff", Output),
+    p("OutputAPI", Output),
+];
+const PBUTTON_T: &[PortSpec] = &[
+    p("InputTrigger", Input),
+    p("Reset", Input),
+    p("InputDisable", Input),
+    p("Remanence", Input),
+    p("Time", Param),
+    p("Q", Output),
+    p("OutputAPI", Output),
+];
+
 /// Every block type `builtin` knows — the complete mintable set.
 pub const BUILTIN_TYPES: &[&str] = &[
     "And",
@@ -101,6 +131,9 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "Monoflop",
     "PulseGen",
     "AnalogThresholdTrigger",
+    "Memory",
+    "PushButton",
+    "PButtonT",
 ];
 
 /// Element-attribute parameters per block type: logic Loxone stores as an
@@ -127,6 +160,9 @@ pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
         "Monoflop" => Some(MONOFLOP),
         "PulseGen" => Some(PULSE_GEN),
         "AnalogThresholdTrigger" => Some(THRESHOLD),
+        "Memory" => Some(MEMORY),
+        "PushButton" => Some(PUSH_BUTTON),
+        "PButtonT" => Some(PBUTTON_T),
         _ => None,
     }
 }
@@ -367,9 +403,20 @@ mod tests {
         assert_eq!(builtin("AnalogThresholdTrigger").unwrap().len(), 8);
         assert!(
             builtin("PulseAt").is_none(),
-            "OutputAPI direction unresolved — must not be mintable yet"
+            "no oracle evidence yet — must not be mintable"
         );
-        assert!(builtin("Memory").is_none(), "Q direction unresolved");
+        // Mint-oracle verified 2026-08-25 (docs/oracle-wine.md): minted
+        // minimal instances survived a GUI open+save; Memory's never-wired
+        // `Q` proved an output by a compiled wire sourced from it surviving
+        // the save (off-descriptor wires get deleted, D8).
+        let mem = builtin("Memory").unwrap();
+        assert_eq!(mem.len(), 3);
+        assert_eq!((mem[1].key, mem[1].dir), ("AQ", PortDir::Output));
+        assert_eq!((mem[2].key, mem[2].dir), ("Q", PortDir::Output));
+        assert_eq!(builtin("PushButton").unwrap().len(), 9);
+        let pbt = builtin("PButtonT").unwrap();
+        assert_eq!(pbt.len(), 7);
+        assert_eq!((pbt[4].key, pbt[4].dir), ("Time", PortDir::Param));
         for t in BUILTIN_TYPES {
             assert!(builtin(t).is_some(), "BUILTIN_TYPES lists `{t}`");
         }

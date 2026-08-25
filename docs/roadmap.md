@@ -22,9 +22,14 @@ types) contradict each other. Results and methodology:
 - [x] First verified batch fed into `connectors::builtin`: `Formula`,
       `Monoflop`, `PulseGen`, `AnalogThresholdTrigger`, and the comparator
       family (`NotEqual`, `Greater`, `Less`, `LessEqual`).
+- [x] Second admission batch via the mint oracle (2026-08-25): `Memory`,
+      `PushButton`, `PButtonT` — minted instances survived a Loxone
+      Config save; `Memory.Q` proven an output by a surviving sourced
+      wire ([connector-db.md](connector-db.md), [oracle-wine.md](oracle-wine.md)).
 - [ ] Grow the corpus beyond one installation (foreign corpora exercise
       types this house doesn't) and admit the next batch — currently
-      blocked types: `Memory`, `PulseAt`, `PushButton`, `DayTimer`.
+      blocked types: `PulseAt`, `DayTimer`, `AutoJalousie` (sized:
+      Nio=49; needs `COHist`/`SpStates` modeling).
 
 ## Stufe 0 — Hardening the v0 pipeline
 
