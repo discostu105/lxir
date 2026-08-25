@@ -316,6 +316,7 @@ pub fn adopt_one(
                     MatchSpec::Uuid(_) => "uuid",
                     MatchSpec::IName(_) => "iname",
                     MatchSpec::Title(_) => "title",
+                    MatchSpec::Mirrors(_) => "mirrors",
                 }
                 .to_string(),
                 title_at_match: obj.title.clone(),
@@ -425,6 +426,7 @@ fn adopt_lock(doc: &LoxoneDoc, lift: &Lift, refused: Vec<String>) -> (Lockfile, 
                     MatchSpec::Uuid(_) => "uuid",
                     MatchSpec::IName(_) => "iname",
                     MatchSpec::Title(_) => "title",
+                    MatchSpec::Mirrors(_) => "mirrors",
                 }
                 .to_string(),
                 title_at_match: o.title.clone(),

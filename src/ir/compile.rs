@@ -761,19 +761,51 @@ fn resolve_externs(
             .attr(attr)
             .map(str::to_string)
     };
-    let mut out = BTreeMap::new();
-    for ext in module.externs() {
-        // Lock pin wins as long as it still resolves to an object of the
-        // declared type; otherwise fall back to fresh resolution by spec.
-        if let Some(locked) = lock.externals.get(&ext.slug)
-            && objects
-                .iter()
-                .any(|o| o.uuid == locked.uuid && o.block_type == ext.block_type)
-        {
-            out.insert(ext.slug.clone(), locked.uuid.clone());
-            continue;
+    // `mirrors:` disambiguation is positional page governance (D32): the
+    // `page` statement in force at the extern's declaration site (D28).
+    let mut page_of_extern: BTreeMap<&str, &str> = BTreeMap::new();
+    {
+        let mut current: Option<&str> = None;
+        for item in &module.items {
+            match item {
+                Item::Page(p) => current = Some(p.title.as_str()),
+                Item::Extern(e) => {
+                    if let Some(t) = current {
+                        page_of_extern.insert(e.slug.as_str(), t);
+                    }
+                }
+                _ => {}
+            }
         }
-        let matches: Vec<_> = objects
+    }
+    // Pages with their tree paths: a candidate's page is the longest
+    // `Page` path that prefixes its own.
+    let pages: Vec<(&[usize], Option<&str>)> = objects
+        .iter()
+        .filter(|o| o.block_type == "Page")
+        .map(|o| (o.path.as_slice(), o.title.as_deref()))
+        .collect();
+    let page_title_of = |path: &[usize]| -> Option<&str> {
+        pages
+            .iter()
+            .filter(|(p, _)| path.len() > p.len() && path.starts_with(p))
+            .max_by_key(|(p, _)| p.len())
+            .and_then(|(_, t)| *t)
+    };
+    let ref_attr =
+        |o: &crate::doc::ObjectSummary| -> Option<&str> { doc.element_at(&o.path)?.attr("Ref") };
+    let kind = |m: &MatchSpec| match m {
+        MatchSpec::Uuid(_) => "uuid",
+        MatchSpec::IName(_) => "iname",
+        MatchSpec::Title(_) => "title",
+        MatchSpec::Mirrors(_) => "mirrors",
+    };
+    // The declared matcher, evaluated fresh. For `mirrors:` the target's
+    // uuid is resolved by the caller (it needs the phase order below).
+    let matches_of = |ext: &crate::ir::ast::ExternDecl,
+                      mirror_uuid: Option<&str>|
+     -> Vec<&crate::doc::ObjectSummary> {
+        let mut v: Vec<_> = objects
             .iter()
             .filter(|o| {
                 o.block_type == ext.block_type
@@ -781,6 +813,9 @@ fn resolve_externs(
                         MatchSpec::Uuid(u) => &o.uuid == u,
                         MatchSpec::IName(v) => o.iname.as_deref() == Some(v),
                         MatchSpec::Title(v) => o.title.as_deref() == Some(v),
+                        MatchSpec::Mirrors(_) => {
+                            mirror_uuid.is_some() && ref_attr(o) == mirror_uuid
+                        }
                     }
                     && ext.room.as_ref().is_none_or(|want| {
                         iodata_ref(o, "Pr")
@@ -794,6 +829,96 @@ fn resolve_externs(
                     })
             })
             .collect();
+        // Page narrowing, `mirrors:` only (D32): several refs of the same
+        // target usually sit on different pages — the declaring file's
+        // page picks its own. Narrowing never widens: if no candidate is
+        // on the declared page, the ambiguity stands and is reported.
+        if v.len() > 1
+            && matches!(ext.match_spec, MatchSpec::Mirrors(_))
+            && let Some(want) = page_of_extern.get(ext.slug.as_str())
+        {
+            let narrowed: Vec<_> = v
+                .iter()
+                .copied()
+                .filter(|o| page_title_of(&o.path) == Some(want))
+                .collect();
+            if !narrowed.is_empty() {
+                v = narrowed;
+            }
+        }
+        v
+    };
+    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    // Two phases: plain matchers first, then `mirrors:` — whose target may
+    // be any managed block with a locked identity or any plain-matched
+    // extern, regardless of declaration order. (A mirror of a mirror is
+    // refused; so is a mirror of a block minted this very compile — such a
+    // block cannot have a ref in the base yet.)
+    let (plain, mirrored): (Vec<_>, Vec<_>) = module
+        .externs()
+        .partition(|e| !matches!(e.match_spec, MatchSpec::Mirrors(_)));
+    for ext in plain.into_iter().chain(mirrored) {
+        let mirror_uuid: Option<String> = match &ext.match_spec {
+            MatchSpec::Mirrors(target) => {
+                if !matches!(ext.block_type.as_str(), "InputRef" | "OutputRef") {
+                    return Err(Error::Compile(format!(
+                        "extern `{}`: `mirrors:` applies to InputRef/OutputRef only, \
+                         not {}",
+                        ext.slug, ext.block_type
+                    )));
+                }
+                Some(
+                    lock.objects
+                        .get(target)
+                        .map(|o| o.uuid.clone())
+                        .or_else(|| out.get(target).cloned())
+                        .ok_or_else(|| {
+                            Error::Compile(format!(
+                                "extern `{}` mirrors `{target}`, but `{target}` is neither \
+                                 a managed block with a locked identity nor a plain-matched \
+                                 extern of this module",
+                                ext.slug
+                            ))
+                        })?,
+                )
+            }
+            _ => None,
+        };
+        // Lock pin wins as long as it still resolves to an object of the
+        // declared type; otherwise fall back to fresh resolution by spec.
+        // If the matcher *kind* changed in source, the new matcher must
+        // confirm the pinned object before the pin is kept — a matcher
+        // that contradicts its pin is a source bug, not drift to tolerate.
+        // A `mirrors:` matcher re-confirms on every compile: unlike a
+        // title (whose drift the pin deliberately tolerates), the claim
+        // "this ref mirrors X" must stay true, or the source lies — and a
+        // ref the GUI re-pointed elsewhere is drift worth stopping on.
+        if let Some(locked) = lock.externals.get_mut(&ext.slug)
+            && objects
+                .iter()
+                .any(|o| o.uuid == locked.uuid && o.block_type == ext.block_type)
+        {
+            if locked.matched_by != kind(&ext.match_spec)
+                || matches!(ext.match_spec, MatchSpec::Mirrors(_))
+            {
+                let confirms = matches_of(ext, mirror_uuid.as_deref());
+                if !confirms.iter().any(|o| o.uuid == locked.uuid) {
+                    return Err(Error::Compile(format!(
+                        "extern `{}`: matcher changed to {}({}), which does not match \
+                         the locked object {} — fix the matcher, or drop the lock \
+                         entry to accept a new identity",
+                        ext.slug,
+                        ext.block_type,
+                        ext.spec(),
+                        locked.uuid
+                    )));
+                }
+                locked.matched_by = kind(&ext.match_spec).to_string();
+            }
+            out.insert(ext.slug.clone(), locked.uuid.clone());
+            continue;
+        }
+        let matches = matches_of(ext, mirror_uuid.as_deref());
         match matches.as_slice() {
             [] => {
                 return Err(Error::NoMatch {
@@ -806,12 +931,7 @@ fn resolve_externs(
                     ext.slug.clone(),
                     LockedExternal {
                         uuid: only.uuid.clone(),
-                        matched_by: match &ext.match_spec {
-                            MatchSpec::Uuid(_) => "uuid",
-                            MatchSpec::IName(_) => "iname",
-                            MatchSpec::Title(_) => "title",
-                        }
-                        .to_string(),
+                        matched_by: kind(&ext.match_spec).to_string(),
                         title_at_match: only.title.clone(),
                         iname_at_match: only.iname.clone(),
                     },

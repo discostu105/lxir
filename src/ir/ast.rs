@@ -237,6 +237,13 @@ pub enum MatchSpec {
     Uuid(String),
     IName(String),
     Title(String),
+    /// `mirrors: <slug>` (D32) — for `InputRef`/`OutputRef` externs only:
+    /// matches the ref object whose `Ref=` attribute names the object the
+    /// given slug resolves to (a managed block, or another extern of the
+    /// module). Where a page holds several refs of the same target, the
+    /// declaring file's `page` statement narrows the candidates; a still
+    /// ambiguous match is refused (keep `uuid:` for those).
+    Mirrors(String),
 }
 
 impl fmt::Display for MatchSpec {
@@ -245,6 +252,7 @@ impl fmt::Display for MatchSpec {
             MatchSpec::Uuid(v) => write!(f, "uuid: {}", quote(v)),
             MatchSpec::IName(v) => write!(f, "iname: {}", quote(v)),
             MatchSpec::Title(v) => write!(f, "title: {}", quote(v)),
+            MatchSpec::Mirrors(v) => write!(f, "mirrors: {v}"),
         }
     }
 }

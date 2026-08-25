@@ -83,8 +83,9 @@ rule today; the rest of the config never notices. See
   it drew onto extern ports, and the `Def=` values it assigned there —
   everything else round-trips untouched through a byte-faithful XML layer.
 - **Identity is UUID, not title.** Titles are locale-volatile (one observed
-  save renamed 111 built-ins). Externs match by `uuid` > `iname` > `title`;
-  once resolved, the lockfile pins the UUID — object *and* every port.
+  save renamed 111 built-ins). Externs match by `uuid` > `iname` > `title`,
+  or a ref by its target (`mirrors: <slug>`, D32); once resolved, the
+  lockfile pins the UUID — object *and* every port.
 - **Determinism.** Same base + module + lock + options → same output bytes.
   New UUIDs come from a deterministic minter (no clock, no RNG), are
   recorded in the lock, and never change again. Recompiling the compiler's

@@ -23,10 +23,11 @@ line       = comment | let | extern | block-head | arg-line
 
 comment    = "#" any-text ;                        (* whole line *)
 let        = "let" slug "=" ( number | string ) [ comment ] ;
-extern     = "extern" slug "=" type "(" matcher ":" string
+extern     = "extern" slug "=" type "(" matcher
              { "," constraint ":" string } ")" [ comment ] ;
-matcher    = "uuid" | "iname" | "title" ;
-constraint = "room" | "category" ;      (* not with "uuid"; each at most once *)
+matcher    = ( "uuid" | "iname" | "title" ) ":" string
+           | "mirrors" ":" slug ;
+constraint = "room" | "category" ;  (* not with "uuid"/"mirrors"; each at most once *)
 
 block-head = slug "=" type "(" [ args ] [ ")" ] [ comment ] ;
 arg-line   = args [ ")" ] [ comment ] | comment ;  (* only inside an open call *)
@@ -127,6 +128,7 @@ extern sonne = VirtualIn(iname: "VI3")
 extern jal_sued = AutoJalousie(title: "Beschattung Süd")
 extern boiler = Switch(uuid: "1d844a67-0333-5301-ffffed57184a04d2")
 extern licht_buero = LightController2(title: "Deckenlicht", room: "Büro")
+extern status_alarm_ref = InputRef(mirrors: status_alarm)
 ```
 
 Declares a slug for an existing object in the base config. The compiler
@@ -149,6 +151,22 @@ Choosing a matcher: `uuid` pins exactly; `iname` (the `IName=` attribute,
 e.g. `VI1`, `AI3`) is locale-stable and preferred for built-in I/O
 objects; `title` is human-friendly but locale-volatile — use it only for
 objects you named yourself.
+
+**`mirrors:` — match a ref by what it mirrors (D32).** For
+`InputRef`/`OutputRef` externs only: `mirrors: <slug>` (a bare slug, no
+quotes) matches the ref object whose `Ref=` attribute names the object
+that slug resolves to — a managed block with a locked identity, or a
+plain-matched extern of the module
+([loxone-format.md](loxone-format.md) documents `Ref=`). Where several
+refs mirror the same target, the file's `page` statement narrows the
+candidates to the declaring page; a still-ambiguous match is refused —
+keep `uuid:` for, say, two refs of one flag on the same page. Unlike the
+other matchers, a pinned `mirrors:` re-confirms on every compile: the
+claim "this ref mirrors X" must stay true, so a ref the GUI re-pointed
+elsewhere stops the compile instead of being quietly tolerated.
+`room:`/`category:` never combine with it. `decompile`/`adopt` emit
+`mirrors:` on their own where the target has a slug in the module and
+the match is unique.
 
 **Time functions and other singletons.** The periphery's time sources
 (the GUI's *Zeitfunktionen* folder: `DayOfWeek`, `Time`, `Hour`,

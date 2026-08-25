@@ -429,19 +429,24 @@ pub fn parse(src: &str) -> Result<Module> {
                     Tok::RParen,
                 ] => {
                     // `kind: "value"` pairs, comma-separated: one primary
-                    // matcher (uuid|iname|title) first, then optional
-                    // `room:` / `category:` constraints.
+                    // matcher (uuid|iname|title|mirrors) first, then
+                    // optional `room:` / `category:` constraints. Only
+                    // `mirrors:` takes a bare slug; everything else is a
+                    // quoted string.
                     let mut pairs = Vec::new();
                     let mut it = rest.iter();
                     loop {
                         match (it.next(), it.next(), it.next()) {
                             (Some(Tok::Ident(k)), Some(Tok::Colon), Some(Tok::Str(v))) => {
-                                pairs.push((k.as_str(), v.clone()));
+                                pairs.push((k.as_str(), v.clone(), false));
+                            }
+                            (Some(Tok::Ident(k)), Some(Tok::Colon), Some(Tok::Ident(v))) => {
+                                pairs.push((k.as_str(), v.clone(), true));
                             }
                             _ => {
                                 return Err(err(
-                                    "expected `extern <slug> = <Type>(uuid|iname|title: \"…\"\
-                                     [, room: \"…\"] [, category: \"…\"])`"
+                                    "expected `extern <slug> = <Type>(uuid|iname|title: \"…\" \
+                                     | mirrors: <slug>[, room: \"…\"] [, category: \"…\"])`"
                                         .into(),
                                 ));
                             }
@@ -456,19 +461,31 @@ pub fn parse(src: &str) -> Result<Module> {
                     }
                     let mut pairs = pairs.into_iter();
                     let match_spec = match pairs.next() {
-                        Some(("uuid", v)) => MatchSpec::Uuid(v),
-                        Some(("iname", v)) => MatchSpec::IName(v),
-                        Some(("title", v)) => MatchSpec::Title(v),
-                        Some((other, _)) => {
+                        Some(("mirrors", v, true)) => MatchSpec::Mirrors(check_slug(&v, lineno)?),
+                        Some(("mirrors", _, false)) => {
+                            return Err(err("`mirrors:` names a slug, not a string — write \
+                                 `mirrors: status_alarm` without quotes"
+                                .into()));
+                        }
+                        Some((k, _, true)) => {
+                            return Err(err(format!("`{k}:` takes a quoted string")));
+                        }
+                        Some(("uuid", v, _)) => MatchSpec::Uuid(v),
+                        Some(("iname", v, _)) => MatchSpec::IName(v),
+                        Some(("title", v, _)) => MatchSpec::Title(v),
+                        Some((other, _, _)) => {
                             return Err(err(format!(
-                                "unknown matcher `{other}` (expected uuid, iname, or title \
-                                 first; room/category only narrow it)"
+                                "unknown matcher `{other}` (expected uuid, iname, title, or \
+                                 mirrors first; room/category only narrow it)"
                             )));
                         }
                         None => return Err(err("empty matcher list".into())),
                     };
                     let (mut room, mut category) = (None, None);
-                    for (k, v) in pairs {
+                    for (k, v, is_ident) in pairs {
+                        if is_ident {
+                            return Err(err(format!("`{k}:` takes a quoted string")));
+                        }
                         let slot = match k {
                             "room" => &mut room,
                             "category" => &mut category,
@@ -488,6 +505,15 @@ pub fn parse(src: &str) -> Result<Module> {
                         return Err(err("`uuid:` pins exactly — room/category constraints are \
                              redundant and not allowed with it"
                             .into()));
+                    }
+                    if matches!(match_spec, MatchSpec::Mirrors(_))
+                        && (room.is_some() || category.is_some())
+                    {
+                        return Err(err(
+                            "`mirrors:` is narrowed by the file's `page` statement — \
+                             room/category constraints are not allowed with it"
+                                .into(),
+                        ));
                     }
                     items.push(Item::Extern(ExternDecl {
                         slug: check_slug(slug, lineno)?,

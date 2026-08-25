@@ -132,6 +132,13 @@ types) contradict each other. Results and methodology:
       cascade through unmanaged, double-driving the alarm input); the
       window is now a committable lock fixpoint. `lxir drift` names
       pending removals instead of blaming another writer.
+- [x] `mirrors:` ref matcher 2026-08-25 (D32): `extern x =
+      InputRef(mirrors: status_alarm)` resolves a ref through its
+      `Ref=` attribute (format fact: it names the mirrored object's
+      UUID) instead of a uuid pin; page statements narrow duplicates,
+      ambiguity is refused, pin conversions are verified, and a pinned
+      `mirrors:` re-confirms every compile. Decompile/adopt emit it
+      where the target has a slug and the match is unique.
 - [x] Composite extern matching 2026-08-25: `extern x = Type(title:
       "Deckenlicht", room: "Büro")` — `room:`/`category:` narrow an
       iname/title match via the object's `<IoData Pr=/Cr=>` reference

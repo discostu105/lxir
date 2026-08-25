@@ -840,9 +840,12 @@ fn full_view_folds_ref_plumbing_and_sorts_extern_wires() {
     regen.push_child(q);
     out.element_at_mut(&caption).unwrap().push_child(regen);
 
-    // …page refs, the OutputRef first in document order. Its wire from
-    // the And block is logic (kept); the InputRef's wire from the
-    // Regensensor is the plumbing its `Ref=` already states (folded).
+    // …page refs, the OutputRef first in document order. Its `Ref=`
+    // names the managed And block, so its wire from the block is
+    // plumbing (folded) and the extern says `mirrors: beschatten`
+    // (D32). The InputRef mirrors unlifted periphery — its plumbing
+    // folds too, but the matcher stays conventional with a `# mirrors`
+    // note.
     let page = out
         .objects()
         .iter()
@@ -856,6 +859,7 @@ fn full_view_folds_ref_plumbing_and_sorts_extern_wires() {
     zeta.set_attr("V", "175");
     zeta.set_attr("U", "20000095-0000-0950-ffff504f94112233");
     zeta.set_attr("Title", "Zeta Ref");
+    zeta.set_attr("Ref", &lock.objects["beschatten"].uuid);
     let mut i = Element::new("Co");
     i.set_attr("K", "I");
     i.set_attr("U", "20000095-0000-0951-00ffaaaaaaaa0095");
@@ -889,22 +893,171 @@ fn full_view_folds_ref_plumbing_and_sorts_extern_wires() {
     page_el.push_child(alpha);
 
     let (m, report) = decompile(&out, &DecompileOptions::default()).unwrap();
-    assert_eq!(report.ref_wires_folded, 1);
+    assert_eq!(report.ref_wires_folded, 2);
     // The ref extern names what it mirrors instead of showing plumbing.
     let alpha = m.externs().find(|e| e.slug == "alpha_ref").unwrap();
     assert_eq!(
         alpha.comment.as_deref(),
         Some(" mirrors VirtualIn \"Regensensor\"")
     );
+    // The ref of the managed block gets the semantic matcher, no note.
+    let zeta = m.externs().find(|e| e.slug == "zeta_ref").unwrap();
+    assert_eq!(
+        zeta.match_spec,
+        lxir::ir::MatchSpec::Mirrors("beschatten".into())
+    );
+    assert_eq!(zeta.comment, None);
     // The Regensensor's only connection was plumbing — it is not lifted.
     assert!(m.externs().all(|e| e.slug != "regensensor"));
-    // The kept `<-` wires are sorted by sink, reversing document order
-    // (the OutputRef was added first).
+    // Only the InputRef's off-page source wire survives the fold.
     let pile: Vec<String> = m.extern_wires().map(|w| w.to.to_string()).collect();
-    assert_eq!(pile, ["alpha_ref.AI", "zeta_ref.I"]);
+    assert_eq!(pile, ["alpha_ref.AI"]);
     // Still canonical, parseable text.
     let text = m.to_text();
     assert_eq!(Module::parse(&text).unwrap(), m);
+}
+
+/// D32: `mirrors: <slug>` matches an `InputRef`/`OutputRef` by its
+/// `Ref=` attribute — the object it mirrors — instead of a uuid pin.
+/// The declaring file's `page` statement narrows duplicate refs; a
+/// matcher-kind upgrade re-verifies against the pin; and a pinned
+/// `mirrors:` re-confirms every compile, so a source claim that stopped
+/// being true is an error, not tolerated drift.
+#[test]
+fn mirrors_matcher_resolves_refs_by_their_target() {
+    // Deploy once, then hand the page an InputRef whose `Ref=` names the
+    // managed And block — the GUI's way of mirroring it elsewhere.
+    let mut lock0 = Lockfile::new();
+    let mut deployed = compile(&base(), &module(), &mut lock0, &opts()).unwrap();
+    let and_uuid = lock0.objects["beschatten"].uuid.clone();
+    let page = deployed
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "Page")
+        .unwrap()
+        .path
+        .clone();
+    let mut spiegel = Element::new("C");
+    spiegel.set_attr("Type", "InputRef");
+    spiegel.set_attr("V", "175");
+    spiegel.set_attr("U", "200000a0-0000-0a00-ffff504f94112233");
+    spiegel.set_attr("Title", "Beschatten Spiegel");
+    spiegel.set_attr("Ref", &and_uuid);
+    deployed.element_at_mut(&page).unwrap().push_child(spiegel);
+
+    let src_of = |matcher: &str| {
+        format!(
+            "{}extern beschatten_ref = InputRef({matcher})\n",
+            std::fs::read_to_string("examples/ir/beschattung.lxir").unwrap()
+        )
+    };
+
+    // Fresh resolution finds the ref through its target.
+    let mirrors = Module::parse(&src_of("mirrors: beschatten")).unwrap();
+    let mut lock = lock0.clone();
+    compile(&deployed, &mirrors, &mut lock, &opts()).unwrap();
+    let pin = &lock.externals["beschatten_ref"];
+    assert_eq!(pin.uuid, "200000a0-0000-0a00-ffff504f94112233");
+    assert_eq!(pin.matched_by, "mirrors");
+    assert_eq!(pin.title_at_match.as_deref(), Some("Beschatten Spiegel"));
+
+    // Upgrading a uuid pin to `mirrors:` keeps the identity, records the
+    // new kind, and changes nothing in the output.
+    let pinned = Module::parse(&src_of("uuid: \"200000a0-0000-0a00-ffff504f94112233\"")).unwrap();
+    let mut lock_a = lock0.clone();
+    let out_a = compile(&deployed, &pinned, &mut lock_a, &opts()).unwrap();
+    assert_eq!(lock_a.externals["beschatten_ref"].matched_by, "uuid");
+    let mut lock_b = lock_a.clone();
+    let out_b = compile(&deployed, &mirrors, &mut lock_b, &opts()).unwrap();
+    assert_eq!(lock_b.externals["beschatten_ref"].matched_by, "mirrors");
+    assert_eq!(
+        lock_b.externals["beschatten_ref"].uuid,
+        lock_a.externals["beschatten_ref"].uuid
+    );
+    assert_eq!(out_a.to_bytes(), out_b.to_bytes());
+
+    // A pinned `mirrors:` whose claim stopped being true is refused —
+    // here the source suddenly claims the ref mirrors `sonne`.
+    let lying = Module::parse(&src_of("mirrors: sonne")).unwrap();
+    let err = compile(&deployed, &lying, &mut lock_b.clone(), &opts())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not match the locked object"), "{err}");
+
+    // A second ref of the same target on another page: ambiguous without
+    // governance, resolved by the declaring file's `page` statement.
+    let mut two_pages = deployed.clone();
+    let doc_path = two_pages
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "Document")
+        .unwrap()
+        .path
+        .clone();
+    let mut werkstatt = Element::new("C");
+    werkstatt.set_attr("Type", "Page");
+    werkstatt.set_attr("V", "175");
+    werkstatt.set_attr("U", "200000a1-0000-0a10-ffff504f94112233");
+    werkstatt.set_attr("Title", "Werkstatt");
+    let mut spiegel2 = Element::new("C");
+    spiegel2.set_attr("Type", "InputRef");
+    spiegel2.set_attr("V", "175");
+    spiegel2.set_attr("U", "200000a2-0000-0a20-ffff504f94112233");
+    spiegel2.set_attr("Title", "Beschatten Spiegel Werkstatt");
+    spiegel2.set_attr("Ref", &and_uuid);
+    werkstatt.push_child(spiegel2);
+    two_pages
+        .element_at_mut(&doc_path)
+        .unwrap()
+        .push_child(werkstatt);
+
+    // Declared above the first `page` statement, nothing narrows the two
+    // candidates — refused. (The fixture's own `page "Beschattung"`
+    // governs everything appended below it, including `mirrors` above.)
+    let ungoverned = Module::parse(&format!(
+        "extern beschatten_ref = InputRef(mirrors: beschatten)\n\n{}",
+        std::fs::read_to_string("examples/ir/beschattung.lxir").unwrap()
+    ))
+    .unwrap();
+    let err = compile(&two_pages, &ungoverned, &mut lock0.clone(), &opts())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("beschatten_ref"), "{err}");
+    let governed = Module::parse(&format!(
+        "{}\npage \"Werkstatt\"\n\nextern beschatten_ref = InputRef(mirrors: beschatten)\n",
+        std::fs::read_to_string("examples/ir/beschattung.lxir").unwrap()
+    ))
+    .unwrap();
+    let mut lock_c = lock0.clone();
+    compile(&two_pages, &governed, &mut lock_c, &opts()).unwrap();
+    assert_eq!(
+        lock_c.externals["beschatten_ref"].uuid,
+        "200000a2-0000-0a20-ffff504f94112233"
+    );
+
+    // Unknown target and non-ref extern types are refused outright.
+    let err = compile(
+        &deployed,
+        &Module::parse(&src_of("mirrors: nixda")).unwrap(),
+        &mut lock0.clone(),
+        &opts(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("neither a managed block"), "{err}");
+    let err = compile(
+        &deployed,
+        &Module::parse(&format!(
+            "{}extern kaputt = VirtualIn(mirrors: beschatten)\n",
+            std::fs::read_to_string("examples/ir/beschattung.lxir").unwrap()
+        ))
+        .unwrap(),
+        &mut lock0.clone(),
+        &opts(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("InputRef/OutputRef only"), "{err}");
 }
 
 /// D30: the full view elides a parameter whose value equals the

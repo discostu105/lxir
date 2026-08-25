@@ -118,6 +118,27 @@ is rendered inline (`<Key>2B35</Key>`).
   lxir (design decision D20): carried verbatim, refused as a source-
   declared wire/value target.
 
+## Refs: `<C Type="InputRef"/"OutputRef" Ref=…>`
+
+A ref is the GUI's page-local mirror of an object living elsewhere — a
+periphery device port folder, a system flag, or another page's block.
+Evidence (r50 house config, 2026-08-25: all 113 uuid-pinned ref externs
+resolved):
+
+- `Ref` names the mirrored **object's UUID** (not a port): a
+  `LoxAIRsensor`/`LoxAIRactor` subdevice, a `VirtualIn`, a flag object,
+  or a managed block.
+- The signal path is ordinary wiring on top: an `InputRef` carries an
+  `<In>` from the mirrored object's output port into its own `AI`
+  connector (`ref.AI <- source.AQ` in IR terms), and consumers wire from
+  the ref's `Q`/`AQ`. `Ref=` is the GUI's display link; the wires are
+  the semantics. Decompile folds these plumbing wires (D29); the
+  `mirrors:` matcher resolves through `Ref=` (D32).
+- `LinkRefType` — a small integer alongside `Ref=` (observed: 71, 172,
+  173, 174), plausibly encoding the mirrored object's kind/direction;
+  `Analog="true"` marks analog refs. Both are GUI-owned display state:
+  carried verbatim, never synthesized — lxir does not mint refs.
+
 ## Rooms and categories: `<IoData Cr=… Pr=…>`
 
 Rooms are `<C Type="Place">` elements under the `PlaceCaption` folder,

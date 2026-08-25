@@ -66,7 +66,7 @@ otherwise — a wrong port UUID silently breaks wire identity.
   "externals": {                    // resolved externs: slug → pin
     "sonne": {
       "uuid": "20000003-0000-0030-ffff504f94112233",
-      "matched_by": "iname",        // "uuid" | "iname" | "title"
+      "matched_by": "iname",        // "uuid" | "iname" | "title" | "mirrors"
       "title_at_match": "Sonnenschein",   // for humans reading diffs
       "iname_at_match": "VI3"
     }

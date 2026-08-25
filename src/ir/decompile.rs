@@ -339,9 +339,27 @@ impl Lift {
         }
 
         // Match specs for every lifted object (managed ones may be needed
-        // as foreign externs in the per-page view).
+        // as foreign externs in the per-page view). A ref whose `Ref=`
+        // target has a slug in this module says so semantically (D32,
+        // `mirrors:`) — but only when it is the sole ref of its type on
+        // that target, so resolution cannot need more than the slug.
         let match_spec = |i: usize| -> MatchSpec {
             let obj = &objects[i];
+            if let Some(&target) = mirror_target.get(&i)
+                && let Some(slug) = slug_of.get(target)
+                // …and the target is not itself a ref: a mirror of a
+                // mirror is not resolvable (compile refuses it).
+                && obj_index
+                    .get(target)
+                    .is_some_and(|mi| !mirror_target.contains_key(mi))
+                && mirror_target
+                    .iter()
+                    .filter(|(j, t)| **t == target && objects[**j].block_type == obj.block_type)
+                    .count()
+                    == 1
+            {
+                return MatchSpec::Mirrors(slug.clone());
+            }
             let unique = |get: fn(&ObjectSummary) -> Option<&str>| {
                 get(obj).filter(|v| {
                     objects
@@ -383,7 +401,12 @@ impl Lift {
                         slug: slug_of[&objects[i].uuid].clone(),
                         block_type: objects[i].block_type.clone(),
                         match_spec: match_specs[&i].clone(),
-                        comment: mirror_note(i),
+                        // A `mirrors:` matcher already says what the ref
+                        // mirrors — the note is for the other match kinds.
+                        comment: match &match_specs[&i] {
+                            MatchSpec::Mirrors(_) => None,
+                            _ => mirror_note(i),
+                        },
                     },
                 )
             })

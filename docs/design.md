@@ -616,3 +616,29 @@ Anything unverified is an error, not a heuristic:
   keeps its orphan semantics (no tombstone) as the deliberate escape
   hatch. Lockfile format bumped to v2 so pre-tombstone binaries refuse
   the new locks instead of silently dropping the tombstones.
+- **D32 — `mirrors:` — a ref matched by what it mirrors** (2026-08-25).
+  The r50 slug cure surfaced 113 uuid-pinned `InputRef`/`OutputRef`
+  externs whose pins say nothing a reader can check. Resolving every one
+  against the live base yielded the format fact that makes a semantic
+  matcher possible: a ref's `Ref=` attribute names the mirrored
+  *object's* UUID (a periphery subdevice, a flag, or a managed block),
+  with the actual signal carried by ordinary plumbing wires on top
+  ([loxone-format.md](loxone-format.md)). So `extern status_alarm_ref =
+  InputRef(mirrors: status_alarm)` finds the ref through its target —
+  where the target is nameable: a managed block with a locked identity
+  or a plain-matched extern. Duplicate refs of one target usually sit on
+  different pages, so the declaring file's `page` statement (D28)
+  narrows candidates; a still-ambiguous match is refused per
+  refuse-never-guess (two mirrors of one flag on one page keep their
+  `uuid:` pins). Two deliberate asymmetries against the other matchers:
+  a matcher-*kind* change on a pinned extern must confirm the pinned
+  object before the lock records the new kind (converting a pin to
+  `mirrors:` is thereby *verified*, not taken on faith), and a pinned
+  `mirrors:` re-confirms on every compile — a title may drift under its
+  pin, but "this ref mirrors X" is a source claim that must stay true,
+  and a ref the GUI re-pointed elsewhere is drift worth stopping on.
+  Decompile/adopt emit `mirrors:` where the target has a slug in the
+  module and the ref is its target's only mirror of that type (the
+  `# mirrors …` note stays for periphery targets no slug can name).
+  lxir still never *mints* refs — that write stays blocked on oracle
+  verification.
