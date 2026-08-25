@@ -28,9 +28,10 @@ types) contradict each other. Results and methodology:
       wire ([connector-db.md](connector-db.md), [oracle-wine.md](oracle-wine.md)).
 - [x] AutoJalousie admitted (2026-08-25): 49 connectors in the uniform
       house element order; `OutputAPI` bidirectionally evidenced →
-      new `PortDir::Api`. 12 of the house's 16 instances adopt (4 carry
-      Miniserver-created `FLG=` wire flags — refused until understood).
-      Details: [connector-db.md](connector-db.md).
+      new `PortDir::Api`. All 16 house instances adopt — the 4 carrying
+      Miniserver-created `FLG=` wire flags were unblocked the same day by
+      the oracle probe that proved the flag inert (carried as D19 wire
+      residue). Details: [connector-db.md](connector-db.md).
 - [ ] Grow the corpus beyond one installation (foreign corpora exercise
       types this house doesn't) and admit the next batch — currently
       blocked types: `PulseAt`, `DayTimer`.
@@ -163,12 +164,13 @@ haus/
       (`Formula:`) with it.
 - [x] GUI-owned residue carried forward (D19, 2026-08-25): rebuilds
       re-emit display attributes (`Cl`/`LtE`/`WF`, `Tp=`, `Sun=`,
-      `SpStates=`, `NDOC=`, `Stats*=`) and visualization children
-      (`IoData`/`Display`/`PSD`/`COHist`) verbatim from the base, and
-      adoption accepts them. Real-config coverage went from 22 to 37 of
-      43 managed-type blocks (the rest are genuine `Inv=` inversions);
-      the rebuild is a semantic no-op with **zero** changed lines
-      (position-only diff).
+      `SpStates=`, `NDOC=`, `Stats*=`), visualization children
+      (`IoData`/`Display`/`PSD`/`COHist`), and `FLG=` wire flags
+      verbatim from the base, and adoption accepts them. Real-config
+      coverage went from 22 to 53 of 59 managed-type blocks (the rest
+      are genuine `Inv=` inversions); the rebuild is a semantic no-op
+      with **zero** changed lines (position-only diff), oracle-blessed
+      by a Loxone Config open+save.
 - [ ] `adopt` (incremental form): `lxir adopt <uuid> --as
       beschattung.vorhandener_block` — adopting a single block into an
       *existing* module/lock pair.

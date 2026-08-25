@@ -68,6 +68,13 @@ struct Residue {
     attrs: Vec<(String, String)>,
     /// [`GUI_OWNED_CHILDREN`] subtrees in element order.
     children: Vec<Element>,
+    /// `FLG=` wire flags, keyed by (sink port UUID, source port UUID).
+    /// Miniserver/app-created wire metadata: the oracle probe (2026-08-25)
+    /// showed Loxone Config round-trips the flag verbatim, never
+    /// regenerates it, and accepts its absence — so it is carried exactly
+    /// like the element residue. A wire whose source changed no longer
+    /// matches its key and is emitted plain, which the GUI accepts.
+    wire_flags: BTreeMap<(String, String), String>,
 }
 
 fn harvest_residue(el: &Element) -> Residue {
@@ -85,6 +92,21 @@ fn harvest_residue(el: &Element) -> Residue {
             .child_elements()
             .filter(|c| GUI_OWNED_CHILDREN.contains(&c.name.as_str()))
             .cloned()
+            .collect(),
+        wire_flags: el
+            .child_elements()
+            .filter(|c| c.name == "Co")
+            .filter_map(|co| Some((co.attr("U")?.to_string(), co)))
+            .flat_map(|(port, co)| {
+                co.child_elements()
+                    .filter(|i| i.name == "In")
+                    .filter_map(move |i| {
+                        Some((
+                            (port.clone(), i.attr("Input")?.to_string()),
+                            i.attr("FLG")?.to_string(),
+                        ))
+                    })
+            })
             .collect(),
     }
 }
@@ -400,7 +422,17 @@ pub fn compile(
             &to_ref.port,
             PortDir::Input,
         )?;
-        add_wire(&mut doc, &to.owner_uuid, &to.port_uuid, &from.port_uuid)?;
+        let flg = residue.get(&to.owner_uuid).and_then(|r| {
+            r.wire_flags
+                .get(&(to.port_uuid.clone(), from.port_uuid.clone()))
+        });
+        add_wire(
+            &mut doc,
+            &to.owner_uuid,
+            &to.port_uuid,
+            &from.port_uuid,
+            flg.map(String::as_str),
+        )?;
         if to.is_extern {
             lock.extern_wires.push(LockedWire {
                 from: from.port_uuid,
@@ -638,7 +670,14 @@ fn find_co_mut<'a>(el: &'a mut Element, port_uuid: &str) -> Option<&'a mut Eleme
 }
 
 /// Append `<In Input=from/>` under the sink `<Co>` and maintain `Nc`.
-fn add_wire(doc: &mut LoxoneDoc, owner_uuid: &str, to_port: &str, from_port: &str) -> Result<()> {
+/// `flg` re-emits a harvested `FLG=` wire flag verbatim (D19 residue).
+fn add_wire(
+    doc: &mut LoxoneDoc,
+    owner_uuid: &str,
+    to_port: &str,
+    from_port: &str,
+    flg: Option<&str>,
+) -> Result<()> {
     let owner = find_c_mut(&mut doc.xml.root, owner_uuid)
         .ok_or_else(|| Error::Compile(format!("wire sink object `{owner_uuid}` not found")))?;
     let co = owner
@@ -651,6 +690,9 @@ fn add_wire(doc: &mut LoxoneDoc, owner_uuid: &str, to_port: &str, from_port: &st
     if !duplicate {
         let mut input = Element::new("In");
         input.set_attr("Input", from_port);
+        if let Some(v) = flg {
+            input.set_attr_raw("FLG", v);
+        }
         co.push_child(input);
     }
     sync_nc(co);

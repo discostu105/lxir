@@ -325,3 +325,14 @@ Anything unverified is an error, not a heuristic:
     still refuses adoption. Unknown attributes/children likewise still
     refuse (refuse, never guess); growing the allowlist takes evidence,
     not pattern-matching.
+  - **`FLG=` on `<In>` wires joined the carried set** (2026-08-25, same
+    day): Miniserver/app-created wire metadata (113 of the house's 880
+    wires, mostly API-connector and central-alarm distributions). The
+    oracle probe — strip the flag from two wires, open + save — showed
+    Loxone Config treats it as inert stored state: it round-trips the
+    flag verbatim, never regenerates it, and accepts its absence without
+    repair or wire loss. It passes the faithfulness test because it
+    decorates a wire the source *does* declare (unlike `Inv=`, which
+    contradicts one); it is keyed by (sink port, source port), so a wire
+    whose source changes in the module is emitted plain — exactly the
+    state the probe validated. Evidence: [oracle-wine.md](oracle-wine.md).

@@ -85,6 +85,12 @@ is rendered inline (`<Key>2B35</Key>`).
 - `Def` — the port's parameter value; omitted at type default.
 - Attribute order: `K, Def, Nc, U` (an oracle save 2026-08-25 rewrote a
   compiler-emitted `K, Nc, Def, U` into this order).
+- An `<In>` may carry `FLG="1"` (rarely `"2"`) — Miniserver/app-created
+  wire metadata, concentrated on API-connector and central-alarm wires.
+  An oracle probe (2026-08-25) showed Loxone Config treats it as inert
+  stored state: round-tripped verbatim, never regenerated, and a
+  stripped flag is accepted without repair or wire loss
+  ([oracle-wine.md](oracle-wine.md)).
 
 ## UUID anatomy
 

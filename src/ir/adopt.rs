@@ -212,7 +212,15 @@ fn verify_rebuildable(el: &Element, o: &ObjectSummary) -> std::result::Result<()
         for child in &co.children {
             match child {
                 Node::Element(i) if i.name == "In" => {
-                    if let Some(a) = i.attrs.iter().find(|a| a.name != "Input") {
+                    // `FLG=` is Miniserver/app-created wire metadata; the
+                    // oracle probe showed Loxone Config round-trips it
+                    // verbatim and accepts its absence, so the rebuild
+                    // carries it per (sink, source) pair (D19 residue).
+                    if let Some(a) = i
+                        .attrs
+                        .iter()
+                        .find(|a| !matches!(a.name.as_str(), "Input" | "FLG"))
+                    {
                         return Err(format!(
                             "connector `{key}`: wire attribute `{}` is not understood",
                             a.name

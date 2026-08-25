@@ -153,6 +153,38 @@ migration stamping `TId=` template ids onto 62 hardware-device
 elements, the known AutopilotRule re-layout, the `NextObj` +2 burn,
 and a one-pixel `Py2` nudge on an unmanaged Text note.
 
+## The FLG wire-flag probe — inert, and now carried
+
+Fifth run (2026-08-25, warm rig). 113 of the house's 880 wires carry
+`FLG="1"` (one `FLG="2"`) on their `<In>` — Miniserver/app-created wire
+metadata concentrated on API-connector distributions (`OutputRef` blocks
+titled "API Connector" with port `K="AI"`, `SmokeAlarm.OutSilent`,
+`Alarm.Q1`, the AutoPilot input). It blocked adoption of 4 AutoJalousie
+instances: the rebuild could not reproduce the flag.
+
+Probe: strip `FLG="1"` from two of those wires in a copy of the
+GUI-saved base, open + save. Result — the GUI treats the flag as
+**inert stored state**: the stripped wires survived the save *plain*
+(neither deleted nor re-flagged), the 111 remaining flags round-tripped
+verbatim, and the only other changes were the known fingerprint
+(`NextObj` +2, three more `WF` flips).
+
+Consequence, shipped the same day as a D19 extension: `FLG=` is
+GUI-owned residue on wires — harvested at teardown keyed by (sink port,
+source port) and re-emitted verbatim; a wire whose source changes in the
+module drops the flag, which is exactly the state the probe validated.
+Adoption accepts it, taking the real config from 49 to **53 of 59**
+managed-type blocks (all 16 AutoJalousie; the 6 remaining refusals are
+genuine `Inv=` inversions).
+
+Confirmation run: the full 53-block rebuild — with compiler-emitted
+`FLG=` wires — opened and saved. Semantically empty diff in both
+directions; all 113 flags intact; the byte delta was exclusively the
+fingerprint (`NextObj` +2, ~30 `WF` rewrites *in both directions* on
+mostly unmanaged blocks — settling beyond doubt that `WF` is freely
+recomputed view-state — plus one unmanaged Text-note geometry nudge and
+`<In>` order rewrites).
+
 ## Crash: minimal synthetic configs
 
 Handing Loxone Config the crate's synthetic `examples/out` file

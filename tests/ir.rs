@@ -527,6 +527,43 @@ fn adopt_carries_gui_owned_residue_verbatim() {
 }
 
 #[test]
+fn adopt_carries_wire_flags_verbatim() {
+    // FLG= is Miniserver/app-created wire metadata the oracle probe showed
+    // to be inert stored state: dress a managed block's incoming wire with
+    // it and the round-trip must reproduce it byte for byte.
+    let mut existing = adopted_config();
+    let path = existing
+        .objects()
+        .iter()
+        .find(|o| o.block_type == "GreaterEqual")
+        .unwrap()
+        .path
+        .clone();
+    existing
+        .element_at_mut(&path)
+        .unwrap()
+        .child_elements_mut()
+        .find(|c| c.name == "Co" && c.attr("Nc").is_some())
+        .expect("the fixture wires into the GreaterEqual")
+        .child_elements_mut()
+        .find(|i| i.name == "In")
+        .unwrap()
+        .set_attr("FLG", "1");
+
+    let (module, lock, report) = adopt(&existing).unwrap();
+    assert!(
+        report.refused.iter().all(|r| r.contains("AutoJalousie")),
+        "{:?}",
+        report.refused
+    );
+    let out = compile(&existing, &module, &mut lock.clone(), &opts()).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.to_bytes()),
+        String::from_utf8_lossy(&existing.to_bytes())
+    );
+}
+
+#[test]
 fn wire_direction_is_checked_on_managed_blocks() {
     let m = Module::parse("a = And()\nb = And(I2: a.I1)\n").unwrap();
     let err = compile(&base(), &m, &mut Lockfile::new(), &opts()).unwrap_err();

@@ -136,10 +136,13 @@ valid as wire source *and* sink, never a `Def=` target. (PushButton/
 PButtonT keep `OutputAPI` as Output — zero sink evidence there; one
 observed counterexample flips them to Api.)
 
-Known limitation: 4 house instances carry `FLG="1"` on their incoming
-API wires (Miniserver/app-created wire metadata of unknown meaning) —
-the rebuild cannot reproduce the flag, so those instances refuse
-adoption. Resolving what `FLG` means is a future oracle experiment.
+4 house instances initially refused adoption over `FLG="1"` on their
+incoming API wires (Miniserver/app-created wire metadata). The oracle
+probe — strip the flag, open + save — showed Loxone Config treats it as
+inert stored state: round-tripped verbatim, never regenerated, absence
+accepted. Since then `FLG=` is carried forward per (sink, source) pair
+as D19 wire residue and **all 16 house instances adopt**
+([oracle-wine.md](oracle-wine.md)).
 
 ## Growing the table
 
