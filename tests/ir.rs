@@ -1456,9 +1456,15 @@ fn removed_statement_authorizes_scoped_removal() {
     assert!(!lock.objects.contains_key("beschatten"));
     assert!(lock.objects.contains_key("temp_hoch"), "others survive");
 
-    // The stale `removed` is a no-op: recompiling is still a fixpoint.
+    // The `removed` is tolerated while its tombstone is pending (D31):
+    // recompiling against the caught-up base is still a fixpoint, and the
+    // sweep retires the tombstone.
     let again = compile(&out, &without, &mut lock, &opts()).unwrap();
     assert_eq!(out.to_bytes(), again.to_bytes());
+    assert!(
+        lock.removed.is_empty(),
+        "tombstone retired by caught-up base"
+    );
 
     // A `removed` authorizes exactly its slug — another vanished slug still
     // refuses, and the error suggests the statement.
@@ -1468,6 +1474,90 @@ fn removed_statement_authorizes_scoped_removal() {
     let err = compile(&base, &only_one, &mut lock2, &opts()).unwrap_err();
     assert!(err.to_string().contains("`temp_hoch`"), "{err}");
     assert!(err.to_string().contains("removed temp_hoch"), "{err}");
+}
+
+#[test]
+fn removal_tombstone_bridges_the_compile_to_push_window() {
+    // The r50 field scenario (D31): a removal is compiled but the output
+    // has not been pushed yet, so the base still contains the old block.
+    // Without tombstones a recompile from the updated lock passed the
+    // orphaned object through unmanaged — a wrong artifact with the old
+    // and new logic side by side.
+    let base = base();
+    let mut lock = Lockfile::new();
+    let deployed = compile(&base, &module(), &mut lock, &opts()).unwrap();
+
+    let without = Module::parse(
+        "extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+         temp_hoch = GreaterEqual(\n\
+         \t\"Temp \u{fc}ber 28\",\n\
+         \tInput1: aussentemp.Q,\n\
+         \tInput2: 28,\n\
+         )\n\
+         removed beschatten\n",
+    )
+    .unwrap();
+
+    // Transition compile: block deleted, tombstone minted.
+    let out1 = compile(&deployed, &without, &mut lock, &opts()).unwrap();
+    assert!(!out1.objects().iter().any(|o| o.block_type == "And"));
+    assert!(!lock.objects.contains_key("beschatten"));
+    let (uuid, tomb) = lock.removed.iter().next().expect("tombstone minted");
+    assert_eq!(tomb.slug, "beschatten");
+    assert_eq!(tomb.block_type, "And");
+    assert!(
+        deployed.objects().iter().any(|o| &o.uuid == uuid),
+        "tombstone remembers the deployed object's UUID"
+    );
+    // The withdrawn extern wires (AutoShade/Safety) and the withdrawn
+    // TargetPos write tombstone too — without them, recompiles against the
+    // old base would pass the wires through and keep our Def value.
+    assert_eq!(lock.removed_wires.len(), 2, "withdrawn wires tombstoned");
+    let retired = lock.removed_sets.values().next().expect("withdrawn set");
+    assert_eq!(retired.written, "70");
+    assert_eq!(retired.original.as_deref(), Some("100"));
+    let lock1_json = lock.to_json();
+
+    // The window: recompile against the OLD base from the updated lock.
+    // The tombstone keeps deleting the object — output and lock are both
+    // exact fixpoints, so the state is committable before the push.
+    let out2 = compile(&deployed, &without, &mut lock, &opts()).unwrap();
+    assert_eq!(out1.to_bytes(), out2.to_bytes(), "output fixpoint");
+    assert_eq!(
+        lock.to_json(),
+        lock1_json,
+        "lock fixpoint incl. fingerprint"
+    );
+
+    // The statement may also be dropped right after the transition — the
+    // tombstone alone carries the intent through the window.
+    let without_stmt = Module::parse(
+        "extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+         temp_hoch = GreaterEqual(\n\
+         \t\"Temp \u{fc}ber 28\",\n\
+         \tInput1: aussentemp.Q,\n\
+         \tInput2: 28,\n\
+         )\n",
+    )
+    .unwrap();
+    let out3 = compile(&deployed, &without_stmt, &mut lock.clone(), &opts()).unwrap();
+    assert_eq!(out1.to_bytes(), out3.to_bytes());
+
+    // Base caught up (the output was pushed): every tombstone retires.
+    compile(&out1, &without_stmt, &mut lock, &opts()).unwrap();
+    assert!(lock.removed.is_empty(), "object tombstone retired");
+    assert!(lock.removed_wires.is_empty(), "wire tombstones retired");
+    assert!(lock.removed_sets.is_empty(), "set tombstone retired");
+
+    // A lingering `removed` after that is a hard error — the ratchet that
+    // gets the transient statement cleaned up.
+    let err = compile(&out1, &without, &mut lock, &opts()).unwrap_err();
+    assert!(err.to_string().contains("removal is complete"), "{err}");
+
+    // And a `removed` that never named anything errors immediately.
+    let typo = Module::parse("removed nie_da\n").unwrap();
+    let err = compile(&base, &typo, &mut Lockfile::new(), &opts()).unwrap_err();
+    assert!(err.to_string().contains("nie_da"), "{err}");
 }
 
 #[test]

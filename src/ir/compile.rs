@@ -52,10 +52,11 @@ pub struct CompileOptions {
     /// hard error by default (protection against accidental deletion).
     /// The preferred authorization is a `removed <slug>` statement in the
     /// module — scoped and reviewable. `allow_removals` is the blunt
-    /// alternative: *every* vanished block is deleted from the config and
-    /// dropped from the lock. The third option,
-    /// [`Lockfile::remove_object`], *forgets* the block, leaving its XML
-    /// in the config as an unmanaged orphan.
+    /// alternative: *every* vanished block is deleted from the config.
+    /// Either way the block leaves a lockfile tombstone (D31) that keeps
+    /// deleting it from bases predating the deployment. The third option,
+    /// [`Lockfile::remove_object`], *forgets* the block without a
+    /// tombstone, leaving its XML in the config as an unmanaged orphan.
     pub allow_removals: bool,
     /// Explicit acceptance of a base whose `ConfigVersion` differs from
     /// the lock's pin (i.e. a new Loxone Config release). Must equal the
@@ -213,6 +214,21 @@ pub fn compile(
     //     blocks — editing the expression IS the removal authorization).
     let src_slugs: BTreeSet<String> = module.blocks().map(|b| b.slug.clone()).collect();
     let removed_slugs: BTreeSet<&str> = module.removed().map(|r| r.slug.as_str()).collect();
+    // A `removed` statement must name a block the lock still knows — as a
+    // managed object (the removal happens now) or as a tombstone (D31, the
+    // removal is compiled but not yet seen deployed). Once the tombstone
+    // clears, a lingering statement is a hard error: the removal is done,
+    // delete the line (or it never named anything — a typo).
+    for r in module.removed() {
+        if !lock.objects.contains_key(&r.slug) && !lock.removed.values().any(|t| t.slug == r.slug) {
+            return Err(Error::Compile(format!(
+                "`removed {slug}`: no managed block or pending removal with \
+                 this slug in the lockfile — the removal is complete (delete \
+                 the `removed` line) or the slug never existed",
+                slug = r.slug
+            )));
+        }
+    }
     if !opts.allow_removals
         && let Some(slug) = lock.objects.iter().find_map(|(s, o)| {
             (!src_slugs.contains(s) && !removed_slugs.contains(s.as_str()) && !o.expr_owned)
@@ -243,15 +259,68 @@ pub fn compile(
             residue.insert(obj.uuid.clone(), harvest_residue(&el));
         }
     }
-    // Vanished slugs (authorized via `removed` or allow_removals) are now
-    // deleted from the config; drop their identity too.
+    // Tombstone sweep (D31): a pending removal whose object still exists
+    // in this base is deleted again (the base predates the deployment of
+    // the removal); one the base no longer contains has reached the
+    // Miniserver — its tombstone is done.
+    lock.removed
+        .retain(|uuid, _| doc.remove_by_uuid(uuid).is_some());
+    // Vanished slugs (authorized via `removed`, allow_removals, or
+    // expression ownership) are deleted from this output and leave a
+    // tombstone so every later compile against an older base deletes them
+    // too instead of passing them through unmanaged. Only blocks this base
+    // actually contained (their teardown harvested residue) are
+    // tombstoned — one minted and dropped between deployments was never
+    // in any config a tombstone could still meet.
+    for (slug, o) in &lock.objects {
+        if !src_slugs.contains(slug) && residue.contains_key(&o.uuid) {
+            lock.removed.insert(
+                o.uuid.clone(),
+                crate::lock::Tombstone {
+                    slug: slug.clone(),
+                    block_type: o.block_type.clone(),
+                },
+            );
+        }
+    }
     lock.objects.retain(|slug, _| src_slugs.contains(slug));
+    // Withdrawn-wire sweep (D31): same lifecycle as object tombstones —
+    // still in this base → delete again and keep; gone → retired.
+    lock.removed_wires
+        .retain(|w| remove_wire(&mut doc, &w.from, &w.to));
+    // Withdrawn-set sweep (D31): a port still carrying the value we wrote
+    // predates the deployment — restore the original again. A port already
+    // showing the original is deployed; any third value means another
+    // writer took the port over (drift will surface it). Both retire.
+    lock.removed_sets.retain(|port_uuid, rs| {
+        let def = current_def(&mut doc, port_uuid);
+        if def == rs.original {
+            return false;
+        }
+        if def.as_deref() == Some(rs.written.as_str()) {
+            restore_def(&mut doc, port_uuid, rs.original.as_deref());
+            return true;
+        }
+        false
+    });
     let old_wires = std::mem::take(&mut lock.extern_wires);
+    // Remember which of our wires this base actually carried — only those
+    // can leave a tombstone if they vanish from source (the rebuild below
+    // re-records the ones that stay).
+    let mut wires_present: BTreeSet<LockedWire> = BTreeSet::new();
     for w in &old_wires {
-        remove_wire(&mut doc, &w.from, &w.to);
+        if remove_wire(&mut doc, &w.from, &w.to) {
+            wires_present.insert(w.clone());
+        }
     }
     let old_originals = std::mem::take(&mut lock.set_originals);
+    // Same for Def writes: capture what each port carried before the
+    // restore — the "written" marker of a potential tombstone.
+    let mut defs_written: BTreeMap<String, String> = BTreeMap::new();
     for (port_uuid, original) in &old_originals {
+        if let Some(v) = current_def(&mut doc, port_uuid) {
+            defs_written.insert(port_uuid.clone(), v);
+        }
         restore_def(&mut doc, port_uuid, original.as_deref());
     }
 
@@ -586,6 +655,14 @@ pub fn compile(
     }
     lock.extern_wires.sort();
     lock.extern_wires.dedup();
+    // A wire this base carried that the source no longer draws was
+    // withdrawn — tombstone it (D31) so pre-deployment bases keep losing
+    // it instead of passing it through.
+    for w in &old_wires {
+        if wires_present.contains(w) && !lock.extern_wires.contains(w) {
+            lock.removed_wires.insert(w.clone());
+        }
+    }
 
     // --- Port assignments (always extern ports — validate rejects managed
     //     targets).
@@ -603,6 +680,24 @@ pub fn compile(
         lock.set_originals
             .entry(target.port_uuid)
             .or_insert(original);
+    }
+    // A Def write that vanished from source was withdrawn — tombstone it
+    // (D31) unless it never changed the port's bytes in the first place.
+    for (port_uuid, original) in &old_originals {
+        if lock.set_originals.contains_key(port_uuid) {
+            continue; // still set from source
+        }
+        if let Some(written) = defs_written.get(port_uuid)
+            && original.as_deref() != Some(written.as_str())
+        {
+            lock.removed_sets.insert(
+                port_uuid.clone(),
+                crate::lock::RetiredSet {
+                    original: original.clone(),
+                    written: written.clone(),
+                },
+            );
+        }
     }
 
     // --- Counters and target metadata.
@@ -893,14 +988,29 @@ fn add_wire(
 
 /// Remove `<In Input=from/>` from the sink `<Co>` (used to tear down wires
 /// the previous compile owned).
-fn remove_wire(doc: &mut LoxoneDoc, from_port: &str, to_port: &str) {
+/// Returns whether a wire was actually present (and thus removed) — the
+/// tombstone lifecycle (D31) keys on this.
+fn remove_wire(doc: &mut LoxoneDoc, from_port: &str, to_port: &str) -> bool {
     if let Some(co) = find_co_mut(&mut doc.xml.root, to_port) {
+        let before = co.children.len();
         co.children.retain(|n| {
             !matches!(n, crate::xml::Node::Element(e)
                 if e.name == "In" && e.attr("Input") == Some(from_port))
         });
-        sync_nc(co);
+        let removed = co.children.len() != before;
+        if removed {
+            sync_nc(co);
+        }
+        removed
+    } else {
+        false
     }
+}
+
+/// The current (decoded) `Def=` of an extern port, if any.
+fn current_def(doc: &mut LoxoneDoc, port_uuid: &str) -> Option<String> {
+    find_co_mut(&mut doc.xml.root, port_uuid)
+        .and_then(|co| co.attr_decoded("Def").map(|v| v.into_owned()))
 }
 
 /// Keep `Nc` equal to the number of `<In>` children (absent when zero),

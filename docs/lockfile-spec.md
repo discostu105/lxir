@@ -1,4 +1,4 @@
-# Lockfile specification (v1)
+# Lockfile specification (v2)
 
 The lockfile is the persistent identity between IR source and compiled
 config — the analogue of `terraform.tfstate` / `package-lock.json`.
@@ -13,13 +13,15 @@ otherwise — a wrong port UUID silently breaks wire identity.
 
 ```jsonc
 {
-  "lockfile_version": 1,
+  "lockfile_version": 2,
 
   "target": {                       // informational metadata (nullable)
     "config_version": "17010727",   // ConfigVersion of the last base
     "miniserver_serial": "504F94112233",  // machine id minted into UUIDs;
                                     // also the CLI's --serial fallback
-    "source_config_sha256": "…"     // sha256 of the last base's bytes
+    "source_config_sha256": "…",    // sha256 of the last base's bytes
+    "semantic_fingerprint": "…"     // fingerprint of the last output —
+                                    // the drift baseline (`lxir drift`)
   },
 
   "counters": {                     // ControlList Next* counters, monotone
@@ -77,8 +79,31 @@ otherwise — a wrong port UUID silently breaks wire identity.
 
   "set_originals": {                // extern port uuid → Def value before
     "<port-uuid>": "100"            // our first assignment (null = attr
-  }                                 // was absent). Restored when the
+  },                                // was absent). Restored when the
                                     // assignment leaves the source.
+
+  // Removal tombstones (D31, v2): everything the compiler *withdrew*
+  // stays remembered until a compile sees a base that no longer carries
+  // it — so recompiling against a base from before the withdrawal was
+  // pushed still produces the correct output (a lock fixpoint), instead
+  // of passing the withdrawn object/wire/value through unmanaged.
+  "removed": {                      // deleted blocks, keyed by object UUID
+    "<object-uuid>": {              // (a slug may be reused while its old
+      "slug": "beschatten",         // removal is still pending)
+      "type": "And"
+    }
+  },
+  "removed_wires": [                // withdrawn extern wires; a base still
+    { "from": "<port-uuid>",        // carrying one loses it again, a base
+      "to":   "<port-uuid>" }       // without it retires the entry
+  ],
+  "removed_sets": {                 // withdrawn Def writes: port uuid →
+    "<port-uuid>": {
+      "original": "100",           // what to restore (null = attr absent)
+      "written": "70"              // the value we had written — the marker
+    }                              // by which a pre-push base is
+  }                                // recognized; any third value means
+                                   // another writer took over (retires)
 }
 ```
 
@@ -101,6 +126,13 @@ byte-for-byte, so lockfile diffs in review always mean something.
 5. `externals` entries are dropped when the extern leaves the source;
    `extern_wires` and `set_originals` are rebuilt each compile from what the
    source actually declares (teardown first, so nothing leaks).
+6. Withdrawals leave tombstones (D31): a block, extern wire, or Def write
+   the compiler stops managing moves to `removed` / `removed_wires` /
+   `removed_sets` (if the base actually carried it) and keeps being
+   deleted/restored on every compile until a base without it is seen —
+   then the entry retires on its own. The compile → push → download
+   window is therefore a lock **fixpoint**: the committed state recompiles
+   byte-identically before and after the push.
 
 ## Operations
 
@@ -119,3 +151,8 @@ naturally: it only saves the lock after a successful compile.)
 
 `lockfile_version` is checked on load; unknown versions are rejected rather
 than reinterpreted. Schema changes bump the version and ship a migration.
+
+History: **v2** (2026-08-25) added the removal tombstones (`removed`,
+`removed_wires`, `removed_sets`). v1 files load as v2 with empty tombstone
+maps; saving always writes the current version, so a v1-only binary refuses
+a v2 lock instead of silently dropping tombstones it does not understand.

@@ -535,11 +535,14 @@ pub struct LetDecl {
 }
 
 /// `removed slug` — declares that a managed block's absence from source is
-/// intentional: the next compile deletes it from the config and drops it
-/// from the lockfile. Scoped to one slug and reviewable in the diff (the
-/// in-language counterpart of Terraform's `removed` block). A stale
-/// `removed` whose slug is no longer in the lockfile is a no-op, so the
-/// statement can be kept (or deleted) after it has been applied.
+/// intentional: the next compile deletes it from the config and moves its
+/// lockfile entry to a removal tombstone (D31), which keeps deleting the
+/// object from bases predating the deployment. Scoped to one slug and
+/// reviewable in the diff (the in-language counterpart of Terraform's
+/// `removed` block). The statement may be deleted right after the compile
+/// that applies it (the tombstone carries the intent from there) and is
+/// tolerated while the tombstone is pending; once the removal has reached
+/// the deployed config, a lingering statement is a compile error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemovedDecl {
     pub slug: String,

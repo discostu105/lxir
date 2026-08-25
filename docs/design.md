@@ -587,3 +587,32 @@ Anything unverified is an error, not a heuristic:
   486 parameters elided; with D28+D29 the full view halved, 2667 → 1332
   lines. Minted blocks already write no `Def=` for unbound parameters,
   so the two conventions agree: absence means default, on both sides.
+- **D31 — Removal tombstones: withdrawals survive until the base catches
+  up** (2026-08-25, found in the field). A removal used to *forget*: the
+  transition compile deleted the block and dropped its lock entry — and
+  from that moment, any recompile against the still-undeployed base
+  treated the physical object as foreign and passed it through unmanaged.
+  Observed on the real house config: the recompiled artifact carried both
+  the old gate cascade and its expression-owned replacement, with the
+  alarm input double-driven — an artifact that must never be pushed, in
+  exactly the window where CI recompiles it. The same hole existed for
+  the other two withdrawal kinds: an extern wire gone from source
+  (`extern_wires` forgets it, the old base still has it) and a `set`
+  gone from source (`set_originals` restores once, then forgets; the old
+  base still carries our written value). The fix is one rule applied to
+  all three: **everything the compiler withdraws leaves a lockfile
+  tombstone** (`removed` by object UUID, `removed_wires`, `removed_sets`
+  with the original *and* the written value as the recognition marker) —
+  provided the base actually carried it. Every compile re-applies pending
+  withdrawals (delete the object, delete the wire, restore the original)
+  and retires a tombstone the moment a base without the withdrawn
+  artifact is seen — deployment is *witnessed*, never assumed. A
+  `removed_sets` port showing a third value means another writer took the
+  port over: the tombstone retires and drift surfaces it. Consequences:
+  the compile → push → download window is a lock fixpoint (committable,
+  CI-green, byte-reproducible); a lingering `removed` statement flips
+  from tolerated to hard error once its tombstone retires — the ratchet
+  that gets the transient statement cleaned up; `Lockfile::remove_object`
+  keeps its orphan semantics (no tombstone) as the deliberate escape
+  hatch. Lockfile format bumped to v2 so pre-tombstone binaries refuse
+  the new locks instead of silently dropping the tombstones.

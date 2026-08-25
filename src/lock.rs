@@ -17,14 +17,23 @@
 //!    [`Lockfile::remove_object`] (the `terraform state rm` analogue) /
 //!    [`Lockfile::rename_object`].
 //! 4. Counters never decrease.
+//! 5. An authorized removal leaves a tombstone (D31) until a compile sees
+//!    a base without the object — so recompiles against a base from before
+//!    the removal was deployed still delete it instead of passing it
+//!    through as an unmanaged orphan, and the compile stays a lock
+//!    fixpoint through the whole compile → push → download window.
 
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const LOCKFILE_VERSION: u32 = 1;
+/// v2 adds the `removed` tombstone map (D31). v1 locks load fine (the map
+/// defaults to empty); saving always writes the current version, so an old
+/// binary — whose version check refuses v2 — can never silently drop
+/// tombstones it does not know about.
+pub const LOCKFILE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lockfile {
@@ -49,6 +58,26 @@ pub struct Lockfile {
     /// was absent). Restored when the assignment disappears from source.
     #[serde(default)]
     pub set_originals: BTreeMap<String, Option<String>>,
+    /// Removal tombstones (D31), keyed by object UUID. A block whose
+    /// removal was authorized (`removed <slug>`, `allow_removals`, or an
+    /// expression-owned block vanishing) moves here instead of being
+    /// forgotten: every compile deletes the object from the base if it is
+    /// still present, and drops the tombstone once a compile sees a base
+    /// without it (the removal reached the Miniserver). Keyed by UUID so a
+    /// slug can be reused while its old removal is still pending.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed: BTreeMap<String, Tombstone>,
+    /// Extern wires the compiler withdrew (D31): a wire that vanished from
+    /// source stays here so compiles against bases that still carry it
+    /// keep deleting it; a base without the wire retires the entry.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub removed_wires: BTreeSet<LockedWire>,
+    /// Withdrawn `Def=` writes on extern ports (D31), keyed by port UUID.
+    /// A base whose port still carries the written value predates the
+    /// deployment — the original is restored again; a base already showing
+    /// the original (or a third writer's value) retires the entry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed_sets: BTreeMap<String, RetiredSet>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +136,24 @@ pub struct LockedObject {
     pub expr_owned: bool,
 }
 
+/// What a removal tombstone remembers: enough to recognize the object in
+/// an old base (the map key is its UUID) and to talk about it in messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tombstone {
+    pub slug: String,
+    #[serde(rename = "type")]
+    pub block_type: String,
+}
+
+/// A withdrawn `Def=` write (D31): what to restore, and what the compiler
+/// had written — the marker by which a pre-deployment base is recognized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetiredSet {
+    /// The pre-`set` value to restore (`None` = the attribute was absent).
+    pub original: Option<String>,
+    pub written: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Layout {
     pub px: i64,
@@ -140,13 +187,17 @@ impl Lockfile {
 
     pub fn load(path: &Path) -> Result<Self> {
         let bytes = std::fs::read(path)?;
-        let lock: Lockfile = serde_json::from_slice(&bytes)?;
-        if lock.lockfile_version != LOCKFILE_VERSION {
+        let mut lock: Lockfile = serde_json::from_slice(&bytes)?;
+        if !(1..=LOCKFILE_VERSION).contains(&lock.lockfile_version) {
             return Err(Error::Lock(format!(
-                "unsupported lockfile_version {} (expected {LOCKFILE_VERSION})",
+                "unsupported lockfile_version {} (expected 1..={LOCKFILE_VERSION})",
                 lock.lockfile_version
             )));
         }
+        // Saving always writes the current version — a v1 lock upgrades on
+        // its next save, and old binaries refuse the result instead of
+        // silently dropping fields they do not know.
+        lock.lockfile_version = LOCKFILE_VERSION;
         Ok(lock)
     }
 

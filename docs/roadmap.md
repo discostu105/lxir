@@ -124,6 +124,14 @@ types) contradict each other. Results and methodology:
       src/observed_defaults.rs). `--all-params` shows everything, the
       report counts elisions, `--managed-only` never elides. With D29
       the real config's full view halved: 2667 → 1332 lines.
+- [x] Removal tombstones 2026-08-25 (D31, lockfile v2): every withdrawal
+      (block, extern wire, Def write) leaves a tombstone that keeps
+      re-applying it against pre-deployment bases and retires when a
+      base without it is witnessed. Closes the compile → push window
+      hole found on the real config (recompile passed the removed
+      cascade through unmanaged, double-driving the alarm input); the
+      window is now a committable lock fixpoint. `lxir drift` names
+      pending removals instead of blaming another writer.
 - [x] Composite extern matching 2026-08-25: `extern x = Type(title:
       "Deckenlicht", room: "Büro")` — `room:`/`category:` narrow an
       iname/title match via the object's `<IoData Pr=/Cr=>` reference

@@ -881,12 +881,34 @@ fn cmd_drift(args: &[&str]) -> Result<ExitCode, AnyError> {
         println!("in sync: {config} matches the fingerprint in {lock_path}");
         Ok(ExitCode::SUCCESS)
     } else {
-        println!(
-            "drift: {config} no longer matches the fingerprint recorded in \
-             {lock_path} — another writer changed something since the last \
-             adopt/compile; run `lxir diff <last-compiled.Loxone> {config}` \
-             to see what"
-        );
+        // Distinguish "another writer changed something" from "the last
+        // compile removed blocks and its output has not been pushed yet"
+        // (D31): pending tombstones whose objects the config still holds
+        // are expected during the compile → push window.
+        let present: std::collections::BTreeSet<String> =
+            doc.objects().into_iter().map(|o| o.uuid).collect();
+        let pending: Vec<&str> = lock
+            .removed
+            .iter()
+            .filter(|(uuid, _)| present.contains(*uuid))
+            .map(|(_, t)| t.slug.as_str())
+            .collect();
+        if pending.is_empty() {
+            println!(
+                "drift: {config} no longer matches the fingerprint recorded in \
+                 {lock_path} — another writer changed something since the last \
+                 adopt/compile; run `lxir diff <last-compiled.Loxone> {config}` \
+                 to see what"
+            );
+        } else {
+            println!(
+                "drift: {config} no longer matches the fingerprint recorded in \
+                 {lock_path} — pending removal of {} not yet deployed (push the \
+                 compiled output, then download); if the config also changed \
+                 elsewhere, `lxir diff <last-compiled.Loxone> {config}` shows it",
+                pending.join(", ")
+            );
+        }
         Ok(ExitCode::FAILURE)
     }
 }

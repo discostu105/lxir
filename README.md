@@ -192,7 +192,7 @@ which are the intended consumers of this crate.
 | [docs/vision.md](docs/vision.md) | Why config-as-code for Loxone; the Terraform analogy; the two-masters workflow |
 | [docs/design.md](docs/design.md) | Architecture, ownership model, compile strategy, decisions D1–D30 |
 | [docs/ir-spec.md](docs/ir-spec.md) | Normative spec of the `.lxir` language (v0) |
-| [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v1) and its invariants |
+| [docs/lockfile-spec.md](docs/lockfile-spec.md) | The lockfile format (v2) and its invariants |
 | [docs/loxone-format.md](docs/loxone-format.md) | Validated reverse-engineering notes on the `.Loxone` format |
 | [docs/implementation.md](docs/implementation.md) | Module map, testing strategy, how to extend |
 | [docs/connector-db.md](docs/connector-db.md) | The consolidated connector database: methodology, findings, admission rules |

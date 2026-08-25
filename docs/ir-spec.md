@@ -274,11 +274,15 @@ removed temp_hoch
 ```
 
 Declares that `temp_hoch`'s absence from source is intentional: the next
-compile deletes the block from the config and drops it from the lockfile.
-Scoped to exactly one slug and reviewable in the diff — prefer it over the
-global `--allow-removals` flag. Once applied (the slug is no longer in the
-lock), the statement is a no-op and can be deleted. Declaring a slug and
-`removed`-ing it in the same module is an error.
+compile deletes the block from the config and moves its lockfile entry to
+a removal tombstone (D31), which keeps deleting the object from bases that
+predate the deployment of that compile's output. Scoped to exactly one
+slug and reviewable in the diff — prefer it over the global
+`--allow-removals` flag. The statement may be deleted right after the
+compile that applies it (the tombstone carries the intent from there); it
+is tolerated while the tombstone is pending, and once the removal has
+reached the deployed config a lingering statement is a compile error.
+Declaring a slug and `removed`-ing it in the same module is an error.
 
 ### `moved` — rename a managed block, keeping identity
 
