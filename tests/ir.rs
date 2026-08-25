@@ -758,11 +758,12 @@ fn full_view_decompile_shows_every_page_block_and_wire() {
     // Every wire sinks on a lifted block now — nothing needs `<-`.
     assert_eq!(m.extern_wires().count(), 0);
     assert_eq!(m.wire_pairs().len(), 5);
-    // Output is grouped into page sections.
+    // Output is grouped into page sections headed by real `page`
+    // statements (D28); the periphery keeps its comment.
     assert!(
         m.items
             .iter()
-            .any(|i| matches!(i, Item::Comment(c) if c.contains("page: Beschattung")))
+            .any(|i| matches!(i, Item::Page(p) if p.title == "Beschattung"))
     );
     assert!(
         m.items
@@ -787,6 +788,8 @@ fn per_page_decompile_produces_self_contained_modules() {
     // Self-contained: the periphery VirtualIns the page references are
     // declared as foreign externs with an origin note.
     let m = &p.module;
+    // The module opens with its own placement (D28).
+    assert!(matches!(&m.items[0], Item::Page(pg) if pg.title == "Beschattung"));
     assert_eq!(m.blocks().count(), 3);
     assert_eq!(m.externs().count(), 3);
     assert_eq!(
@@ -799,6 +802,72 @@ fn per_page_decompile_produces_self_contained_modules() {
     // Each page module is canonical, parseable language text.
     let text = m.to_text();
     assert_eq!(&Module::parse(&text).unwrap(), m);
+}
+
+/// D28: `page "Title"` statements govern placement of the blocks that
+/// follow them — authoritatively, so editing the statement moves a block
+/// already pinned elsewhere, and a title the base does not carry is an
+/// error. Blocks above the first statement keep the options' page.
+#[test]
+fn page_statements_place_and_move_blocks() {
+    // haus.Loxone with a second, empty page beside "Beschattung".
+    fn base_with_page(title: &str) -> LoxoneDoc {
+        let mut doc = base();
+        let doc_path = doc
+            .objects()
+            .iter()
+            .find(|o| o.block_type == "Document")
+            .unwrap()
+            .path
+            .clone();
+        let mut page = Element::new("C");
+        page.set_attr("Type", "Page");
+        page.set_attr("V", "175");
+        page.set_attr("U", "20000098-0000-0980-ffff504f94112233");
+        page.set_attr("Title", title);
+        doc.element_at_mut(&doc_path).unwrap().push_child(page);
+        doc
+    }
+    let page_of = |doc: &LoxoneDoc, lock: &Lockfile, slug: &str| {
+        let objs = doc.objects();
+        let block_uuid = &lock.objects[slug].uuid;
+        let block = objs.iter().find(|o| &o.uuid == block_uuid).unwrap();
+        let page = objs
+            .iter()
+            .filter(|o| o.block_type == "Page" && block.path.starts_with(&o.path))
+            .max_by_key(|o| o.path.len())
+            .unwrap();
+        assert_eq!(
+            lock.objects[slug].page_uuid.as_deref(),
+            Some(&*page.uuid),
+            "lock pin and document placement agree"
+        );
+        page.title.clone().unwrap()
+    };
+
+    let src = "extern wind = VirtualIn(iname: \"VI2\")\n\n\
+               vor = Or(I1: wind.Q)\n\n\
+               page \"Regeln\"\n\n\
+               danach = Not(I: wind.Q)\n";
+    let module = Module::parse(src).unwrap();
+    let mut lock = Lockfile::new();
+    let out = compile(&base_with_page("Regeln"), &module, &mut lock, &opts()).unwrap();
+    assert_eq!(page_of(&out, &lock, "vor"), "Beschattung");
+    assert_eq!(page_of(&out, &lock, "danach"), "Regeln");
+
+    // Moving the statement's title re-pins the governed block in place.
+    let moved = Module::parse(&src.replace("page \"Regeln\"", "page \"Beschattung\"")).unwrap();
+    let out = compile(&base_with_page("Regeln"), &moved, &mut lock, &opts()).unwrap();
+    assert_eq!(page_of(&out, &lock, "danach"), "Beschattung");
+
+    // A title no page in the base carries is a compile error.
+    let bad = Module::parse(&src.replace("page \"Regeln\"", "page \"Nirgendwo\"")).unwrap();
+    let e = compile(&base_with_page("Regeln"), &bad, &mut lock.clone(), &opts()).unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("no <C Type=\"Page\"> titled `Nirgendwo`"),
+        "{e}"
+    );
 }
 
 /// A module exercising everything adoption must preserve: a Formula with

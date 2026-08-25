@@ -18,7 +18,8 @@ errors.
 ```ebnf
 module     = { line } ;
 line       = comment | let | extern | block-head | arg-line
-           | wire | set | removed | moved | template | instance | blank ;
+           | wire | set | removed | moved | template | instance
+           | page | blank ;
 
 comment    = "#" any-text ;                        (* whole line *)
 let        = "let" slug "=" ( number | string ) [ comment ] ;
@@ -51,6 +52,7 @@ cmp-op     = ">=" | ">" | "<=" | "<" | "==" | "!=" ;
 operand    = slug "." port | number [ unit ] | const-ref ;
 removed    = "removed" slug [ comment ] ;
 moved      = "moved" slug "->" slug [ comment ] ;
+page       = "page" string [ comment ] ;           (* placement (D28) *)
 
 template   = "template" slug "(" [ params ] ")" [ comment ]
              { comment | block-head | arg-line | wire | set }
@@ -96,9 +98,9 @@ Notes:
   through `fmt`. An unknown suffix is a parse error. A *quoted* `"40s"`
   stays a string — two spellings, two meanings.
 - The keywords `let`, `extern`, `removed`, `moved`, `template`, `end`,
-  and the expression operators `and`, `or`, `not` are reserved, as are
-  v0's `block`, `wire`, `set`, and `use` (migration errors) — none can
-  be declared as a name.
+  `page`, and the expression operators `and`, `or`, `not` are reserved,
+  as are v0's `block`, `wire`, `set`, and `use` (migration errors) —
+  none can be declared as a name.
 - An instantiation is distinguished from a block declaration by the case
   of the callee: `sued = fassade(…)` (lowercase = template name) vs
   `hoch = GreaterEqual(…)` (PascalCase = block type).
@@ -292,6 +294,37 @@ deleted. It is an error when neither slug is in the lockfile (typo guard),
 when the old slug is still declared, or when moves are chained
 (`a -> b`, `b -> c`).
 
+### `page` — place the following blocks on a named page
+
+```text
+page "Beschattung"
+
+wp_ein = And(
+	I1: soll.AQ >= 1.5h,
+)
+```
+
+Names the `<C Type="Page">` (by display title, as in the base config) that
+the block declarations after it are built on — until the next `page`
+statement. Blocks above the first `page` statement keep the default page
+(`--page`, the project file, or the document's first page). Placement is
+positional, so the synthetic blocks of an expression land on the page the
+expression is written under.
+
+The statement is **authoritative**: on every compile a governed block is
+pinned to a base page with the declared title. A pin that still matches a
+page so titled is kept — titles need not be unique, and adopted blocks
+never move behind your back — any other pin is re-pinned to the first
+matching page in document order (the block visibly moves in Loxone
+Config), and a title no page carries is a compile error. Creating pages
+stays with Loxone Config; the statement only places blocks on pages that
+exist.
+
+`page` is not allowed inside a template body — placement belongs to the
+module. The decompiler emits `page` statements as section headers (the
+periphery, which is not a page, keeps a `# periphery` comment), so a
+decompiled or adopted module records its placement in reviewable source.
+
 ### `template` — a reusable, parameterized body
 
 ```text
@@ -409,8 +442,12 @@ in a sibling file. The split carries no semantics: one namespace, one
 lockfile, and **no `import` statement** (decision D25 — an import would
 name a dependency that has no semantic consequence). It is source
 ergonomics, with one file per page as the convention (`_periphery.lxir`
-for the externs). Dot-entries (`.git`, editor caches) are skipped; merge
-order affects nothing but determinism.
+for the externs). Dot-entries (`.git`, editor caches) are skipped. One
+statement is positional across the merge: a `page` statement (D28)
+governs following blocks until the next one, fragment boundaries
+included — so open every fragment that declares blocks with its `page`
+statement (the decompiler and adopt do). Beyond that, merge order
+affects nothing but determinism.
 
 A directory with a `lox.toml` is a **project** — one deployment target:
 

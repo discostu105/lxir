@@ -7,8 +7,9 @@
 //! page object with connectors becomes an `extern` declaration, and every
 //! wire between lifted objects is shown (wires into managed blocks in the
 //! argument list, wires onto extern ports as `target.Port <- source.Port`).
-//! Output is grouped by logic page: `# page: …` sections in the
-//! single-module view, one module per page from [`decompile_pages`].
+//! Output is grouped by logic page: `page "Title"` statements head the
+//! sections of the single-module view (D28), one module per page from
+//! [`decompile_pages`]; the periphery keeps a `# periphery` comment.
 //!
 //! The full view is for reading, not compiling: compiling it against the
 //! same base would mint duplicates of the managed blocks and claim
@@ -31,8 +32,8 @@ use crate::connectors::{BUILTIN_TYPES, attr_params};
 use crate::doc::{LoxoneDoc, ObjectSummary, ports};
 use crate::error::Result;
 use crate::ir::ast::{
-    ArgItem, Binding, BindingKind, BlockDecl, ExternDecl, Item, MatchSpec, Module, PortRef, Value,
-    WireDecl,
+    ArgItem, Binding, BindingKind, BlockDecl, ExternDecl, Item, MatchSpec, Module, PageDecl,
+    PortRef, Value, WireDecl,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -94,14 +95,15 @@ pub struct PageModule {
     /// Slugified file-name stem, unique across the document's pages
     /// (`eg_buero` for "EG Büro").
     pub slug: String,
-    /// A self-contained module: objects the page references but does not
-    /// contain are declared as externs with a `# page: …` / `# periphery`
-    /// origin comment.
+    /// A self-contained module opening with its `page` statement (D28);
+    /// objects the page references but does not contain are declared as
+    /// externs with a `# page: …` / `# periphery` origin comment.
     pub module: Module,
 }
 
-/// The whole config as one module, grouped into `# page: …` sections
-/// (objects not on any logic page lead in a `# periphery` section).
+/// The whole config as one module, grouped into sections headed by
+/// `page "Title"` statements (objects not on any logic page lead in a
+/// `# periphery` section).
 pub fn decompile(doc: &LoxoneDoc, opts: &DecompileOptions) -> Result<(Module, DecompileReport)> {
     let lift = Lift::build(doc, opts);
     let module = lift.single_module();
@@ -476,10 +478,15 @@ impl Lift {
     }
 
     fn bucket_items(&self, page: Option<usize>, b: &Bucket) -> Vec<Item> {
-        let mut items = vec![Item::Comment(match page {
-            Some(p) => format!(" page: {}", self.page_titles[p]),
-            None => " periphery (not placed on a page)".to_string(),
-        })];
+        // A real `page` statement (D28) — placement is part of the source.
+        // The periphery is not a page, so its section stays a comment.
+        let mut items = vec![match page {
+            Some(p) => Item::Page(PageDecl {
+                title: self.page_titles[p].clone(),
+                comment: None,
+            }),
+            None => Item::Comment(" periphery (not placed on a page)".to_string()),
+        }];
         for &i in &b.externs {
             items.push(Item::Extern(self.extern_decls[&i].clone()));
         }
@@ -535,11 +542,15 @@ impl Lift {
                 // modules that reference them.
                 continue;
             };
-            let mut items: Vec<Item> = b
-                .externs
-                .iter()
-                .map(|&i| Item::Extern(self.extern_decls[&i].clone()))
-                .collect();
+            let mut items: Vec<Item> = vec![Item::Page(PageDecl {
+                title: self.page_titles[p].clone(),
+                comment: None,
+            })];
+            items.extend(
+                b.externs
+                    .iter()
+                    .map(|&i| Item::Extern(self.extern_decls[&i].clone())),
+            );
 
             // Referenced objects the page does not contain become foreign
             // externs, annotated with where they live.
@@ -642,8 +653,8 @@ fn is_ident(s: &str) -> bool {
 /// meaning of the line or expression it appears in, so [`SlugTable`] never
 /// hands them out and the parser refuses them as names.
 pub(super) const RESERVED: &[&str] = &[
-    "let", "extern", "removed", "moved", "template", "end", "use", "block", "wire", "set", "and",
-    "or", "not",
+    "let", "extern", "removed", "moved", "template", "end", "use", "page", "block", "wire", "set",
+    "and", "or", "not",
 ];
 
 /// Slug generation with umlaut transliteration and `_2`-style

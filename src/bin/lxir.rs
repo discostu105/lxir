@@ -45,7 +45,8 @@ USAGE:
         --time defaults to now (only affects newly minted UUIDs — the
         lockfile pins everything minted before);
         --page defaults to the project file, then to the document's
-        first page.
+        first page; a `page \"<Title>\"` statement in the module overrides
+        it for the blocks that follow.
         A module directory stands for a multi-file module: all *.lxir
         files inside — subdirectories included — merged in path order
         (one file per page is the convention; a fragment may reference
@@ -55,8 +56,8 @@ USAGE:
         (one oracle open+save run), --accept-version <v> re-pins it.
 
   lxir decompile [--managed-only] [--out-dir <dir>] <cfg.Loxone>
-        Print the IR view of a config, grouped into `# page:` sections
-        (report on stderr). The default full view shows every page block
+        Print the IR view of a config, grouped into sections headed by
+        `page \"<Title>\"` statements (report on stderr). The default full view shows every page block
         and wire — it is for reading, not compiling. --managed-only
         restricts it to managed-type blocks and what they touch (the
         adoption subset). --out-dir writes one module per logic page
@@ -726,7 +727,15 @@ fn cmd_adopt_one(
     };
     let mut text = std::fs::read_to_string(&target).unwrap_or_default();
     if text.is_empty() {
-        text = format!("# page: {}\n", adopted.page_title);
+        // A fresh page file opens with its `page` statement (D28), so the
+        // adopted blocks stay pinned to the page they were drawn on.
+        text = Module {
+            items: vec![lxir::ir::Item::Page(lxir::ir::PageDecl {
+                title: adopted.page_title.clone(),
+                comment: None,
+            })],
+        }
+        .to_text();
     }
     if !text.ends_with('\n') {
         text.push('\n');

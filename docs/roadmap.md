@@ -223,6 +223,15 @@ haus/
       the file, and `check`/`fmt`/`drift` default to the project's
       module and lock. The sketch's ConfigVersion pin lives in the
       lockfile instead (D22), where qualification state belongs.
+- [x] `page "Title"` placement statements 2026-08-25 (D28): which page
+      a block is drawn on is source, not just a lock pin. Positional
+      (governs the block declarations that follow; expression blocks
+      land under their expression), authoritative on every compile (a
+      pin still matching the declared title is kept — adopted blocks
+      never move behind your back — any other moves to the first
+      matching page, a missing title errors), and emitted by
+      decompile/adopt as real section headers in place of the old
+      `# page:` comments. Corpus adoption fidelity unchanged.
 - [x] `adopt` (whole-config form) 2026-08-25 (D18): `lxir adopt <cfg>`
       moves every managed-type block under source control — the
       managed-only module plus a lockfile pinning existing object/port

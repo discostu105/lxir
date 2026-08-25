@@ -30,7 +30,7 @@
 use crate::connectors::{PortDir, attr_params, builtin};
 use crate::doc::{Counters, GUI_OWNED_ATTRS, GUI_OWNED_CHILDREN, LoxoneDoc, ports};
 use crate::error::{Error, Result};
-use crate::ir::ast::{MatchSpec, Module, Value};
+use crate::ir::ast::{Item, MatchSpec, Module, Value};
 use crate::ir::validate::{suggest, validate_ports};
 use crate::lock::{Layout, LockedExternal, LockedObject, LockedWire, Lockfile, sha256_hex};
 use crate::uuid::{Minter, entity_for_slug};
@@ -266,6 +266,37 @@ pub fn compile(
                 .and_then(|el| el.attr("U"))
                 .map(String::from)
         });
+    // `page "Title"` statements govern the blocks that follow them (D28).
+    // The statement is authoritative: the named page must exist in the
+    // base, and a governed block whose pin no longer matches a page with
+    // that title moves. Placement is positional, so synthetic expression
+    // blocks land on the page their expression is written under.
+    let mut declared_page: BTreeMap<&str, &str> = BTreeMap::new();
+    {
+        let mut current: Option<&str> = None;
+        for item in &module.items {
+            match item {
+                Item::Page(p) => current = Some(p.title.as_str()),
+                Item::Block(b) => {
+                    if let Some(t) = current {
+                        declared_page.insert(b.slug.as_str(), t);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // Title → page UUIDs in document order. Titles need not be unique; a
+    // kept pin only has to match one of them.
+    let mut pages_by_title: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for o in doc.objects() {
+        if o.block_type == "Page" {
+            pages_by_title
+                .entry(o.title.clone().unwrap_or_default())
+                .or_default()
+                .push(o.uuid);
+        }
+    }
     let mut minter = Minter::new(opts.machine, opts.mint_time_unix);
     // Never reuse a (time, sequence) pair a previous compile session
     // handed out: seed past the recorded high-water mark and every locked
@@ -324,19 +355,43 @@ pub fn compile(
             entry.uuid = minter.mint_object().to_string();
             lock.counters.next_obj += 1;
         }
-        let page_uuid = match &entry.page_uuid {
-            Some(u) => u.clone(),
-            None => {
-                let u = default_page_uuid.clone().ok_or_else(|| {
-                    Error::Compile(match &opts.page_title {
-                        Some(t) => format!("no <C Type=\"Page\"> titled `{t}` in the base config"),
-                        None => "the base config has no <C Type=\"Page\"> to place blocks on"
-                            .to_string(),
-                    })
-                })?;
-                entry.page_uuid = Some(u.clone());
-                u
+        let page_uuid = match declared_page.get(block.slug.as_str()) {
+            // Governed by a `page` statement (D28): keep a pin that still
+            // matches a page with the declared title, otherwise (re)pin to
+            // the first matching page in document order.
+            Some(&title) => {
+                let candidates = pages_by_title.get(title).map_or(&[][..], Vec::as_slice);
+                match &entry.page_uuid {
+                    Some(u) if candidates.contains(u) => u.clone(),
+                    _ => {
+                        let u = candidates.first().cloned().ok_or_else(|| {
+                            Error::Compile(format!(
+                                "block `{}` is placed with `page \"{title}\"`, but the \
+                                 base config has no <C Type=\"Page\"> titled `{title}`",
+                                block.slug
+                            ))
+                        })?;
+                        entry.page_uuid = Some(u.clone());
+                        u
+                    }
+                }
             }
+            None => match &entry.page_uuid {
+                Some(u) => u.clone(),
+                None => {
+                    let u = default_page_uuid.clone().ok_or_else(|| {
+                        Error::Compile(match &opts.page_title {
+                            Some(t) => {
+                                format!("no <C Type=\"Page\"> titled `{t}` in the base config")
+                            }
+                            None => "the base config has no <C Type=\"Page\"> to place blocks on"
+                                .to_string(),
+                        })
+                    })?;
+                    entry.page_uuid = Some(u.clone());
+                    u
+                }
+            },
         };
         let height = BLOCK_H_BASE + PORT_H * (keys.len() as i64 - 2).max(0);
         let layout = *entry.layout.get_or_insert_with(|| {

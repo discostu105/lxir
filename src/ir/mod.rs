@@ -16,6 +16,8 @@
 //! <slug>.<Port> = <value>                      (Def write on an extern port)
 //! removed <slug>                               (authorize deleting a managed block)
 //! moved   <old_slug> -> <new_slug>             (rename keeping identity)
+//! page    "<Title>"                            (D28: place the following blocks
+//!                                               on that base-config page)
 //! template <name>(<param>: <Type> | <param> = <default>, …)
 //!     …blocks, wires, sets…                    (reusable body; D23)
 //! end
@@ -45,7 +47,7 @@ mod validate;
 pub use adopt::{AdoptReport, AdoptedBlock, PageFragments, adopt, adopt_one, adopt_pages};
 pub use ast::{
     ArgItem, Binding, BindingKind, BlockDecl, CmpOp, Expr, ExprWireDecl, ExternDecl, Item, LetDecl,
-    MatchSpec, Module, MovedDecl, Operand, PortRef, RemovedDecl, SetDecl, TemplateDecl,
+    MatchSpec, Module, MovedDecl, Operand, PageDecl, PortRef, RemovedDecl, SetDecl, TemplateDecl,
     TemplateParam, Value, WireDecl,
 };
 pub use compile::{CompileOptions, compile};

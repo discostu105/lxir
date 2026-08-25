@@ -314,7 +314,7 @@ pub fn parse(src: &str) -> Result<Module> {
 
         if open_template.is_some()
             && let Tok::Ident(kw) = &toks[0]
-            && matches!(kw.as_str(), "let" | "extern" | "removed" | "moved")
+            && matches!(kw.as_str(), "let" | "extern" | "removed" | "moved" | "page")
         {
             return Err(err(format!(
                 "`{kw}` is not allowed inside a template body — only block \
@@ -522,6 +522,21 @@ pub fn parse(src: &str) -> Result<Module> {
                     }));
                 }
                 _ => return Err(err("expected `moved <old_slug> -> <new_slug>`".into())),
+            },
+            Tok::Ident(kw) if kw == "page" => match toks.as_slice() {
+                [_, Tok::Str(title)] => {
+                    items.push(Item::Page(PageDecl {
+                        title: title.clone(),
+                        comment,
+                    }));
+                }
+                _ => {
+                    return Err(err(
+                        "expected `page \"<Title>\"` — the quoted display title of a \
+                         page in the base config (D28)"
+                            .into(),
+                    ));
+                }
             },
             // v0 keywords: reserved, with migration guidance.
             Tok::Ident(kw) if kw == "block" => {
@@ -1385,5 +1400,38 @@ sonne.Qm = 30 # override
     fn undeclared_reference_is_rejected() {
         let e = Module::parse("a.Q <- b.I\n").unwrap_err();
         assert!(e.to_string().contains("undeclared slug"), "{e}");
+    }
+
+    #[test]
+    fn page_statements_parse_and_roundtrip() {
+        let src = "extern wind = VirtualIn(iname: \"VI2\")\n\n\
+                   page \"Beschattung\" # Süd\n\n\
+                   gate = Not(\n\tI: wind.Q,\n)\n\n\
+                   page \"Regeln\"\n\n\
+                   halt = Or(\n\tI1: gate.Q,\n)\n";
+        let m = Module::parse(src).unwrap();
+        assert_eq!(m.to_text(), src);
+        let pages: Vec<_> = m
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Page(p) => Some(p.title.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pages, ["Beschattung", "Regeln"]);
+
+        // The title is a quoted string — a bare identifier is guided.
+        let e = Module::parse("page Regeln\n").unwrap_err();
+        assert!(e.to_string().contains("page \"<Title>\""), "{e}");
+        // Placement is per-module, not per-template.
+        let e = Module::parse("template t(a: VirtualIn)\n\tpage \"X\"\nend\n").unwrap_err();
+        assert!(
+            e.to_string().contains("not allowed inside a template"),
+            "{e}"
+        );
+        // An empty title names no page.
+        let e = Module::parse("page \"\"\n").unwrap_err();
+        assert!(e.to_string().contains("must not be empty"), "{e}");
     }
 }

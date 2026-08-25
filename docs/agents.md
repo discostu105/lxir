@@ -34,7 +34,7 @@ Loxone logic through this toolchain. The IR exists so you never have to edit
 
 ```sh
 # 0. Orientation: what does the config contain, what is already managed?
-lxir decompile current.Loxone            # full IR view, `# page:` sections
+lxir decompile current.Loxone            # full IR view, `page` sections
 lxir decompile --out-dir view/ current.Loxone   # one module per page
 lxir observe current.Loxone              # port evidence per block type
 

@@ -522,3 +522,26 @@ Anything unverified is an error, not a heuristic:
   the checking entry. A quoted string that looks like a unit value
   (`"40s"`) stays a string; decompile keeps lifting plain numbers (it
   cannot know a port's unit without that same evidence).
+- **D28 — `page "Title"`: placement is source, and it is authoritative**
+  (2026-08-25). Which page a block is drawn on was the one piece of a
+  block's fate invisible in the language — a compile option plus a
+  lockfile pin, reviewable in neither. A `page` statement names the base
+  page (by display title) for the block declarations that follow it,
+  until the next `page` statement; blocks above the first one keep the
+  `--page`/project default, so existing modules compile unchanged.
+  Semantics are positional — expression-desugared blocks land on the
+  page their expression is written under, template-expanded blocks on
+  the page of their instantiation (`page` itself is not allowed in
+  template bodies: placement belongs to the module). The statement is
+  authoritative on every compile: a pin that still matches a page with
+  the declared title is kept (titles need not be unique — this is what
+  keeps adopted output byte-faithful, verified across the corpus), any
+  other pin moves to the first matching page in document order, and a
+  missing title is an error. Creating pages stays with Loxone Config.
+  The decompiler now emits real `page` statements as section headers
+  (per-page modules and fragments open with theirs; the periphery, not
+  being a page, keeps its comment), so decompile/adopt output states
+  its placement instead of hinting at it. This makes fragment
+  concatenation order observable for the first time — documented in the
+  spec with the convention (every fragment opens with its `page`
+  statement) that neutralizes it.

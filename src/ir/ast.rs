@@ -32,6 +32,11 @@ pub enum Item {
     /// result is wired onto the extern port. A bare `slug.Port` RHS is a
     /// plain [`Item::Wire`], not an expression.
     ExprWire(ExprWireDecl),
+    /// `page "Title"` — the base-config page the following block
+    /// declarations are placed on (D28). Positional: governs every block
+    /// after it, until the next `page` statement; blocks above the first
+    /// `page` statement keep the compile options' default page.
+    Page(PageDecl),
     /// A whole-line `#` comment, stored verbatim (text after the `#`) so
     /// formatting is non-destructive. Statements carry their own trailing
     /// comments; argument lists carry theirs as [`ArgItem`]s.
@@ -538,6 +543,20 @@ pub struct LetDecl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemovedDecl {
     pub slug: String,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
+}
+
+/// `page "<Title>"` — names the `<C Type="Page">` the block declarations
+/// after it are (re)built on (D28). Authoritative: on every compile a
+/// governed block is pinned to a base page with this title — a pin that
+/// still matches a page so titled is kept (titles need not be unique), any
+/// other moves to the first matching page in document order, and a title no
+/// page carries is a compile error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageDecl {
+    /// Display title of a `<C Type="Page">` in the base config.
+    pub title: String,
     /// Trailing `#` comment on the statement line, verbatim.
     pub comment: Option<String>,
 }
@@ -1054,6 +1073,11 @@ impl Module {
                         }
                     }
                 }
+                Item::Page(p) => {
+                    if p.title.is_empty() {
+                        return compile_err("`page \"\"`: the page title must not be empty".into());
+                    }
+                }
                 _ => {}
             }
         }
@@ -1142,6 +1166,9 @@ impl Module {
                 Item::Template(_) => 7,
                 Item::Instance(_) => 8,
                 Item::Comment(_) => 9,
+                // A `page` statement heads a placement section — the blank
+                // line on both sides comes from the family change.
+                Item::Page(_) => 10,
             }
         }
         let mut out = String::new();
@@ -1257,6 +1284,9 @@ impl Module {
                     }
                     out.push_str(&format!("end{}\n", tail(&t.end_comment)));
                     prev_multiline = true;
+                }
+                Item::Page(p) => {
+                    out.push_str(&format!("page {}{}\n", quote(&p.title), tail(&p.comment)));
                 }
                 Item::Comment(text) => {
                     out.push_str(&format!("#{text}\n"));
