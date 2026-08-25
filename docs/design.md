@@ -423,6 +423,20 @@ Anything unverified is an error, not a heuristic:
     block-declaration form — one call syntax, distinguished by case.
     Nested templates and template-local `let`/`extern` are deferred,
     not rejected.
+  - Port forwarding (2026-08-25): a call-site binding naming no template
+    parameter forwards verbatim as a port binding onto the body's single
+    block — the instance call reads exactly like a block declaration
+    with the shared parameters factored away, which is what "an instance
+    *is* a composite block" promises. Needed because per-instance feeds
+    are heterogeneous in the corpus (r50's AutoJalousie rows carry 0–2
+    `EndUp` sources of mixed types plus reverse-recorded `OutputAPI`
+    entries), so neither typed object parameters nor module-level wires
+    (`<-` targets extern ports only) can express them. Forwards may
+    repeat like block feeds; validation of the refs happens on the
+    expanded module (the fragment loader now validates the expanded
+    view, matching compile — pre-expansion validation wrongly rejected
+    references to expanded names). Multi-block bodies take no forwards;
+    a qualified `<body_slug>.<Port>` form is deferred.
   - Title interpolation (2026-08-25): body titles may embed `{param}`
     placeholders that substitute a string value parameter at expansion —
     without this, every instance of a template shares one app-visible

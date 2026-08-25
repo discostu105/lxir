@@ -248,7 +248,13 @@ fn load_module(path: &str) -> Result<Module, (String, lxir::Error)> {
             );
         }
         let module = Module { items };
-        module.validate().map_err(|e| (path.to_string(), e))?;
+        // Validate the expanded view: module-level statements may reference
+        // an instance's blocks by their expanded names (D23), which only
+        // exist after template expansion — mirroring what compile checks.
+        module
+            .expand()
+            .and_then(|x| x.validate())
+            .map_err(|e| (path.to_string(), e))?;
         Ok(module)
     } else {
         let src =
@@ -564,8 +570,11 @@ fn cmd_rename(args: &[&str]) -> Result<ExitCode, AnyError> {
         items: frags.iter().flat_map(|(_, _, m)| m.items.clone()).collect(),
     };
     let merged_old = merge(&fragments);
+    // Validate the expanded view — expanded instance names are legal
+    // reference targets at module level (D23).
     merged_old
-        .validate()
+        .expand()
+        .and_then(|x| x.validate())
         .map_err(|e| format!("{}: {e}", project.module.display()))?;
 
     let declares = |m: &Module, name: &str| {

@@ -382,6 +382,28 @@ body mints only what is new in each instance; `removed` and `moved` apply
 per expanded slug (`removed sued_hoch`). Reference an instance's blocks by
 their expanded names.
 
+A call-site binding that names no template parameter forwards as a
+**port binding** onto the body's single block — an instance is a
+composite block, so its call reads exactly like a block declaration
+with the shared parameters factored away:
+
+```text
+fenster = jalousie(
+	titel: "Fenster Jalousie Bastian",
+	zeit_hoch: 20,
+	EndUp: touch_bastian_i2.Q,
+	EndUp: touch_bastian_tuer_i2.Q,
+	EndDown: touch_bastian_i5.Q,
+)
+```
+
+Forwarded feeds may repeat, exactly as in a block's argument list, and
+resolve in module scope (never against the template's parameters). The
+expanded block re-validates them, so a typo surfaces as an unknown
+port with the block's known ports listed. A template whose body
+declares more than one block takes no forwards (a qualified form is
+deferred with D23's other extensions).
+
 A block title in the body may interpolate value parameters:
 `"{titel} (scharf)"` substitutes the parameter's string at expansion, so
 each instance carries its own app-visible title. The placeholder must

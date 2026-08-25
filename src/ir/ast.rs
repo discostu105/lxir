@@ -1047,23 +1047,41 @@ impl Module {
                         ));
                     }
                     let mut seen: BTreeSet<&str> = BTreeSet::new();
+                    let body_blocks = t
+                        .body
+                        .iter()
+                        .filter(|i| matches!(i, Item::Block(_)))
+                        .count();
                     for binding in call.bindings() {
+                        let Some(p) = t.params.iter().find(|p| p.name() == binding.port) else {
+                            // A binding naming no parameter forwards as a
+                            // port binding onto the body's single block
+                            // (D23); like a block's feeds it may repeat, and
+                            // the expanded module re-validates its refs.
+                            if body_blocks == 1 {
+                                if let BindingKind::Param(v) = &binding.kind {
+                                    value_refs(v)?;
+                                }
+                                continue;
+                            }
+                            let hint = super::validate::suggest(
+                                &binding.port,
+                                t.params.iter().map(|p| p.name()),
+                            );
+                            return compile_err(format!(
+                                "`{} = {}(…)`: `{}` names no parameter of `{}`, and \
+                                 port bindings forward only when the template body \
+                                 declares exactly one block (this one declares \
+                                 {body_blocks}){hint}",
+                                call.slug, call.block_type, binding.port, call.block_type
+                            ));
+                        };
                         if !seen.insert(&binding.port) {
                             return compile_err(format!(
                                 "`{} = {}(…)`: duplicate argument `{}`",
                                 call.slug, call.block_type, binding.port
                             ));
                         }
-                        let Some(p) = t.params.iter().find(|p| p.name() == binding.port) else {
-                            let hint = super::validate::suggest(
-                                &binding.port,
-                                t.params.iter().map(|p| p.name()),
-                            );
-                            return compile_err(format!(
-                                "`{} = {}(…)`: unknown parameter `{}`{hint}",
-                                call.slug, call.block_type, binding.port
-                            ));
-                        };
                         match (p, &binding.kind) {
                             (TemplateParam::Object { .. }, BindingKind::Param(Value::Ref(_))) => {}
                             (TemplateParam::Object { name, .. }, _) => {

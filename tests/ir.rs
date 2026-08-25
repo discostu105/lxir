@@ -716,6 +716,57 @@ b = melder(quelle: vi_b, titel: name_b)\n";
 }
 
 #[test]
+fn instance_calls_forward_port_bindings_to_the_single_body_block() {
+    let src = "\
+extern vi_a = VirtualIn(iname: \"VI1\")\n\
+extern vi_b = VirtualIn(iname: \"VI2\")\n\
+\n\
+template melder(schwelle = 1)\n\
+\talarm = GreaterEqual(Input2: schwelle)\n\
+end\n\
+\n\
+a = melder(schwelle: 3, Input1: vi_a.Q, Input1: vi_b.Q)\n";
+    let module = Module::parse(src).unwrap();
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module, &mut lock, &opts()).unwrap();
+    assert!(lock.objects.contains_key("a_alarm"));
+    let objs = out.objects();
+    let o = objs
+        .iter()
+        .find(|o| o.block_type == "GreaterEqual")
+        .unwrap();
+    let ports = lxir::doc::ports(out.element_at(&o.path).unwrap());
+    // Both repeated forwards landed as feeds; the value param still binds.
+    assert_eq!(
+        ports
+            .iter()
+            .find(|p| p.key == "Input1")
+            .unwrap()
+            .inputs
+            .len(),
+        2
+    );
+    assert_eq!(
+        ports
+            .iter()
+            .find(|p| p.key == "Input2")
+            .unwrap()
+            .def
+            .as_deref(),
+        Some("3")
+    );
+
+    // A body with several blocks cannot take forwards (qualified form is
+    // deferred): the unknown binding reports the constraint.
+    let multi = src.replace(
+        "\talarm = GreaterEqual(Input2: schwelle)\n",
+        "\talarm = GreaterEqual(Input2: schwelle)\n\tinvers = Not(I: alarm.Q)\n",
+    );
+    let err = Module::parse(&multi).unwrap_err();
+    assert!(err.to_string().contains("exactly one block"), "{err}");
+}
+
+#[test]
 fn template_misuse_is_reported() {
     let fails = |src: &str, needle: &str| {
         let err = match Module::parse(src) {
@@ -731,9 +782,11 @@ fn template_misuse_is_reported() {
 
     fails("a = nirgends(x: 1)\n", "unknown template `nirgends`");
     fails(&format!("{tmpl}a = t()\n"), "`x` must be given");
+    // An unknown name on a single-block template forwards as a port
+    // binding (D23) and surfaces as an unknown port downstream.
     fails(
         &format!("{vi}{tmpl}a = t(x: vi, oops: 2)\n"),
-        "unknown parameter `oops`",
+        "unknown port `oops`",
     );
     fails(
         &format!("{vi}{tmpl}a = t(x: vi, x: vi)\n"),

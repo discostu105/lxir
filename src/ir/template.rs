@@ -104,9 +104,36 @@ impl Module {
                 TemplateParam::Object { .. } => None,
             })
             .collect();
+        // A call-site binding that names no template parameter forwards as a
+        // port binding onto the body's single block — an instance is a
+        // composite block, so its call reads like a block declaration with
+        // the shared parameters factored away (feeds may repeat, exactly as
+        // in a block's argument list). Bodies with several blocks cannot
+        // take forwards yet (a qualified form is deferred with D23's other
+        // extensions).
+        let mut forwards: Vec<Binding> = Vec::new();
         for binding in call.bindings() {
             let Some(p) = t.params.iter().find(|p| p.name() == binding.port) else {
-                return Err(fail(format!("unknown parameter `{}`", binding.port)));
+                let body_blocks: Vec<&str> = t
+                    .body
+                    .iter()
+                    .filter_map(|i| match i {
+                        Item::Block(b) => Some(b.slug.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                if body_blocks.len() == 1 {
+                    forwards.push(binding.clone());
+                    continue;
+                }
+                return Err(fail(format!(
+                    "`{}` names no parameter of `{}`, and port bindings forward \
+                     only when the template body declares exactly one block \
+                     (this one declares {})",
+                    binding.port,
+                    t.name,
+                    body_blocks.len()
+                )));
             };
             match (p, &binding.kind) {
                 (TemplateParam::Object { name, block_type }, BindingKind::Param(Value::Ref(s))) => {
@@ -263,6 +290,11 @@ impl Module {
                             ArgItem::Comment(c) => args.push(ArgItem::Comment(c.clone())),
                         }
                     }
+                    // Forwarded port bindings pass through verbatim — they
+                    // are written in module scope at the call site, not in
+                    // the template's parameter scope. Only reachable when
+                    // the body declares exactly one block.
+                    args.extend(forwards.iter().cloned().map(ArgItem::Binding));
                     out.push(Item::Block(BlockDecl {
                         slug: format!("{}_{}", call.slug, b.slug),
                         block_type: b.block_type.clone(),
