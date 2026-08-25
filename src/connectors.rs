@@ -109,7 +109,10 @@ const PUSH_BUTTON: &[PortSpec] = &[
     p("Q", Output),
     p("Qon", Output),
     p("Qoff", Output),
-    p("OutputAPI", Output),
+    // Bidirectionally evidenced by the 2026-08-25 web corpus (2 sink /
+    // 2 source wires) — the counterexample that evicted the original
+    // Output classification.
+    p("OutputAPI", Api),
 ];
 const PBUTTON_T: &[PortSpec] = &[
     p("InputTrigger", Input),
@@ -118,7 +121,11 @@ const PBUTTON_T: &[PortSpec] = &[
     p("Remanence", Input),
     p("Time", Param),
     p("Q", Output),
-    p("OutputAPI", Output),
+    // Inert across the whole corpus (20 occurrences, no wire, no Def,
+    // absent from both legacy dbs) → Input by the inert-flag rule. The
+    // original Output classification was a name-prior the rule never
+    // supported; PushButton's flip to Api exposed it (docs/connector-db.md).
+    p("OutputAPI", Input),
 ];
 
 // Admitted 2026-08-25 from the strongest evidence base yet: 78 corpus
@@ -183,6 +190,45 @@ const AUTO_JALOUSIE: &[PortSpec] = &[
     p("OutputAPI", Api),
 ];
 
+// Admitted 2026-08-25 from the web-grown corpus (149 configs — official
+// Loxone samples, LoxWiki attachments, GitHub projects; see
+// docs/connector-db.md). PulseAt: 16 modern instances (V254–V273,
+// including the house) share this exact element order; Q corpus-source
+// ×23, Time carries Def on every instance with connector-map agreeing
+// P, the rest are inert-flag Inputs.
+const PULSE_AT: &[PortSpec] = &[
+    p("InputDisable", Input),
+    p("Remanence", Input),
+    p("Time", Param),
+    p("Q", Output),
+    p("OutputAPI", Input),
+];
+// DayTimer: 13 modern instances. The element order is the V259+ one —
+// the V259 schema migration MOVED `PulseTime` from position 6 to 3
+// while keeping its port UUID (index byte 06 at element position 3 in
+// the house), the strongest confirmation yet that element order, not
+// the UUID index byte, is canonical. Directions: InputTrigger/Reset
+// corpus-sink; AQ/Qon/Qoff corpus-source; AQm/AQmt both legacy dbs
+// Output with zero corpus contradiction; Manual/Mode/PulseTime
+// connector-map Param (sim agrees input-like); RtD/Remanence/OutputAPI
+// inert-flag Inputs. GUI-authored schedule entries (`<Entry>`) are
+// D19 residue, carried forward verbatim.
+const DAY_TIMER: &[PortSpec] = &[
+    p("InputTrigger", Input),
+    p("Reset", Input),
+    p("RtD", Input),
+    p("PulseTime", Param),
+    p("Remanence", Input),
+    p("Manual", Param),
+    p("Mode", Param),
+    p("AQ", Output),
+    p("Qon", Output),
+    p("Qoff", Output),
+    p("AQm", Output),
+    p("AQmt", Output),
+    p("OutputAPI", Input),
+];
+
 /// Every block type `builtin` knows — the complete mintable set.
 pub const BUILTIN_TYPES: &[&str] = &[
     "And",
@@ -202,6 +248,8 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "PushButton",
     "PButtonT",
     "AutoJalousie",
+    "PulseAt",
+    "DayTimer",
 ];
 
 /// Element-attribute parameters per block type: logic Loxone stores as an
@@ -232,6 +280,8 @@ pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
         "PushButton" => Some(PUSH_BUTTON),
         "PButtonT" => Some(PBUTTON_T),
         "AutoJalousie" => Some(AUTO_JALOUSIE),
+        "PulseAt" => Some(PULSE_AT),
+        "DayTimer" => Some(DAY_TIMER),
         _ => None,
     }
 }
@@ -480,10 +530,21 @@ mod tests {
         assert_eq!((mono[4].key, mono[4].dir), ("Q", PortDir::Output));
         assert_eq!(builtin("Less").unwrap().len(), 3);
         assert_eq!(builtin("AnalogThresholdTrigger").unwrap().len(), 8);
-        assert!(
-            builtin("PulseAt").is_none(),
-            "no oracle evidence yet — must not be mintable"
-        );
+        // Admitted 2026-08-25 from the web-grown corpus: 16 uniform
+        // modern instances; OutputAPI inert-flag Input.
+        let pa = builtin("PulseAt").unwrap();
+        assert_eq!(pa.len(), 5);
+        assert_eq!((pa[2].key, pa[2].dir), ("Time", PortDir::Param));
+        assert_eq!((pa[3].key, pa[3].dir), ("Q", PortDir::Output));
+        assert_eq!((pa[4].key, pa[4].dir), ("OutputAPI", PortDir::Input));
+        // DayTimer: the V259+ element order (PulseTime moved to index 3
+        // by a schema migration that kept its port UUID).
+        let dt = builtin("DayTimer").unwrap();
+        assert_eq!(dt.len(), 13);
+        assert_eq!((dt[3].key, dt[3].dir), ("PulseTime", PortDir::Param));
+        assert_eq!((dt[7].key, dt[7].dir), ("AQ", PortDir::Output));
+        assert_eq!((dt[11].key, dt[11].dir), ("AQmt", PortDir::Output));
+        assert_eq!((dt[12].key, dt[12].dir), ("OutputAPI", PortDir::Input));
         // Mint-oracle verified 2026-08-25 (docs/oracle-wine.md): minted
         // minimal instances survived a GUI open+save; Memory's never-wired
         // `Q` proved an output by a compiled wire sourced from it surviving
@@ -492,10 +553,17 @@ mod tests {
         assert_eq!(mem.len(), 3);
         assert_eq!((mem[1].key, mem[1].dir), ("AQ", PortDir::Output));
         assert_eq!((mem[2].key, mem[2].dir), ("Q", PortDir::Output));
-        assert_eq!(builtin("PushButton").unwrap().len(), 9);
+        let pb = builtin("PushButton").unwrap();
+        assert_eq!(pb.len(), 9);
+        // Flipped Output -> Api by the 2026-08-25 web corpus (2 sink /
+        // 2 source wires).
+        assert_eq!((pb[8].key, pb[8].dir), ("OutputAPI", PortDir::Api));
         let pbt = builtin("PButtonT").unwrap();
         assert_eq!(pbt.len(), 7);
         assert_eq!((pbt[4].key, pbt[4].dir), ("Time", PortDir::Param));
+        // Zero evidence anywhere -> inert-flag Input (corrected from the
+        // unsupported Output name-prior).
+        assert_eq!((pbt[6].key, pbt[6].dir), ("OutputAPI", PortDir::Input));
         for t in BUILTIN_TYPES {
             assert!(builtin(t).is_some(), "BUILTIN_TYPES lists `{t}`");
         }

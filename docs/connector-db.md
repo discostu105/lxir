@@ -112,8 +112,9 @@ and adoption accepts it, so GUI-created instances adopt cleanly (the
 only remaining refusals in the real config are genuine `Inv=` input
 inversions).
 
-Still kept out: `PulseAt` and `DayTimer` (no oracle run yet; DayTimer
-additionally has `RtD`/`AQm`/`AQmt` unresolved).
+`PulseAt` and `DayTimer` stayed out of this batch (each had unresolved
+keys) — both were admitted later the same day when the web corpus
+resolved them (below).
 
 ## AutoJalousie, admitted 2026-08-25
 
@@ -143,6 +144,61 @@ inert stored state: round-tripped verbatim, never regenerated, absence
 accepted. Since then `FLG=` is carried forward per (sink, source) pair
 as D19 wire residue and **all 16 house instances adopt**
 ([oracle-wine.md](oracle-wine.md)).
+
+## The web corpus (2026-08-25): 149 configs, 214 types observed
+
+The corpus grew from one installation to ~110 downloaded public configs
+plus the house's three generations, spanning `ControlList` Version
+74–273: official Loxone KB sample files (25 zips, one per block domain),
+LoxWiki attachments (41 community configs — Modbus, irrigation, Sonos,
+heat pumps, ...), and GitHub projects (~50 files: university coursework
+houses, an empty-project baseline, the ONOKOM template collection,
+lox-cli's golden configs). [`tools/fetch-corpus.py`](../tools/fetch-corpus.py)
+reproduces the download; the files themselves stay **local and
+gitignored** — most carry no license (one file, attribute-reordered by a
+third-party tool, is quarantined as non-evidence). Untapped leads:
+loxforum.com attachments and the official Loxone Library, both behind
+free-account logins.
+
+Type coverage doubled (102 → 214). Consequences applied:
+
+- **`PushButton.OutputAPI` flipped Output → `Api`**: the corpus now
+  shows 2 sink + 2 source wires — the predicted counterexample. The
+  original Output classification (batch 2) was a name-prior the
+  admission rules never supported.
+- **`PButtonT.OutputAPI` corrected Output → Input**: still zero evidence
+  in any direction (20 occurrences) and absent from both legacy dbs —
+  the inert-flag rule classifies exactly this as Input. Same for the
+  zero-evidence `OutputAPI` of the two new types below.
+
+## PulseAt and DayTimer, admitted 2026-08-25 (web corpus)
+
+| Type | Ports (element order) | Basis |
+|---|---|---|
+| `PulseAt` | InputDisable, Remanence, Time(P), Q, OutputAPI | 16 modern instances (V254–V273, incl. the house) with an identical element order; `Q` corpus-source ×23; `Time` carries `Def=` on every instance, connector-map agrees `P` |
+| `DayTimer` | InputTrigger, Reset, RtD, PulseTime(P), Remanence, Manual(P), Mode(P), AQ, Qon, Qoff, AQm, AQmt, OutputAPI | 13 modern instances; InputTrigger/Reset corpus-sink, AQ/Qon/Qoff corpus-source; AQm/AQmt both legacy dbs Output, zero contradiction; Manual/Mode/PulseTime connector-map `P`; RtD/Remanence inert-flag |
+
+The DayTimer order is the **V259+ order**: the V259 schema migration
+moved `PulseTime` from element position 6 to 3 while keeping its port
+UUID (the house instance has index byte `06` at element position 3) —
+the strongest confirmation yet that element order, not the UUID index
+byte, is canonical. Compiling against a pre-V259 base would need the
+roadmap's ConfigVersion pin policy.
+
+Both types keep GUI-authored logic in element attributes and children
+that the IR cannot express; per D19 it is carried forward verbatim:
+`Sec=`/`Typ=`/`AutP=` (PulseAt fire time and mode), the `<Entry>`
+schedule children with their `N=` count, `Analog=`/`DefValue=`/`On=`/
+`Off=` output behavior, `Modes=`/`UserModes=` operating-mode gating,
+`Desc=`. Decoding `Sec=` (seconds since midnight) far enough to author
+it as an attribute parameter is future work. A fresh **mint** of either
+type has not been oracle-proven yet — the adopted rebuilds are
+byte-identical to GUI-authored content, so only minting needs the
+Stufe-0 gate before first use.
+
+With this batch the real config adopts **56 of 64** managed-type blocks;
+all 8 remaining refusals are genuine `Inv=` input inversions (five
+PushButton, one PulseGen, both DayTimers).
 
 ## Growing the table
 

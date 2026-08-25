@@ -56,15 +56,46 @@ pub struct WireView {
 /// added here if re-emitting it verbatim cannot contradict what the
 /// source expresses (which is why `Inv=`, input inversion, must never
 /// appear here).
-pub const GUI_OWNED_ATTRS: &[&str] =
-    &["Tp", "Sun", "SpStates", "NDOC", "StatsType", "StatsAutoDel"];
+pub const GUI_OWNED_ATTRS: &[&str] = &[
+    "Tp",
+    "Sun",
+    "SpStates",
+    "NDOC",
+    "StatsType",
+    "StatsAutoDel",
+    // PulseAt trigger config (2026-08-25 corpus): `Sec=` fire time in
+    // seconds since midnight, `Typ=`/`AutP=` mode flags. Understood well
+    // enough to carry, not yet to author — a future probe can promote
+    // `Sec` to an attribute parameter.
+    "Sec",
+    "Typ",
+    "AutP",
+    // DayTimer schedule config: `Analog=`/`DefValue=`/`On=`/`Off=`
+    // output behavior, `N=` count of `<Entry>` children (carried
+    // together with them), `Modes=`/`UserModes=` operating-mode UUID
+    // gating, `Desc=` description text. Like the `<Entry>` schedule
+    // itself: GUI-authored logic the IR cannot express, gating *when*
+    // the block runs — never modifying what a declared wire or param
+    // means.
+    "Analog",
+    "DefValue",
+    "N",
+    "Modes",
+    "On",
+    "Off",
+    "UserModes",
+    "Desc",
+];
 
 /// GUI-owned child elements of block elements (D19), same contract as
 /// [`GUI_OWNED_ATTRS`]; they follow the `<Co>` children in element order.
 /// `<IoData>` carries the visualization/room/category binding (`Visu=`,
 /// `Pr=` place, `Cr=` category), `<Display>`/`<PSD>` visualization
-/// settings, `<COHist>` AutoJalousie history settings.
-pub const GUI_OWNED_CHILDREN: &[&str] = &["IoData", "Display", "PSD", "COHist"];
+/// settings, `<COHist>` AutoJalousie history settings, `<Entry>` the
+/// DayTimer schedule entries (authored in the GUI's schedule editor —
+/// real logic the IR cannot express, owned by the GUI like a room
+/// binding).
+pub const GUI_OWNED_CHILDREN: &[&str] = &["IoData", "Display", "PSD", "COHist", "Entry"];
 
 /// Lookup tables built in one pass over the document.
 #[derive(Debug, Default)]

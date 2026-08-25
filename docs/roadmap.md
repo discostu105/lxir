@@ -32,9 +32,15 @@ types) contradict each other. Results and methodology:
       Miniserver-created `FLG=` wire flags were unblocked the same day by
       the oracle probe that proved the flag inert (carried as D19 wire
       residue). Details: [connector-db.md](connector-db.md).
-- [ ] Grow the corpus beyond one installation (foreign corpora exercise
-      types this house doesn't) and admit the next batch — currently
-      blocked types: `PulseAt`, `DayTimer`.
+- [x] Corpus grown beyond one installation (2026-08-25): ~110 public
+      configs downloaded via [`tools/fetch-corpus.py`](../tools/fetch-corpus.py)
+      (official Loxone samples, LoxWiki, GitHub; local/gitignored —
+      unclear licenses), V74–V273, 214 types observed. Admitted
+      `PulseAt` and `DayTimer`; flipped `PushButton.OutputAPI` to `Api`
+      on new counterexample evidence. Real config: 56 of 64
+      managed-type blocks adopt; all 8 refusals are `Inv=`.
+      Remaining leads: loxforum.com and the Loxone Library (both need
+      free-account logins).
 
 ## Stufe 0 — Hardening the v0 pipeline
 

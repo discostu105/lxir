@@ -60,10 +60,21 @@ is rendered inline (`<Key>2B35</Key>`).
 - `Nio` — connector count. Matches the number of `<Co>` children: Loxone
   emits **all** connectors, including unwired outputs and inputs without
   values.
-- `WF` — flags (observed `147456`, `16384`; semantics unknown).
+- `WF` — view flags. Freely recomputed by the GUI: oracle saves rewrote
+  it in *both* directions (`147456` ↔ `16384`, plus other values) and
+  drop it entirely on some types — pure view-state, never identity.
 - Complex blocks carry extra attributes (`LtE=`, `SpStates=`, `rec=`,
   UUID-list attributes…). All of it round-trips untouched through the
-  lossless tree.
+  lossless tree. Some of it is **block logic stored outside connectors**:
+  `PulseAt` keeps its fire time in `Sec=` (seconds since midnight, with
+  `Typ=`/`AutP=` mode flags); `DayTimer` keeps its schedule as `<Entry>`
+  child elements after the `<Co>` list (`N=` holds their count) with
+  `Analog=`/`DefValue=`/`On=`/`Off=` output behavior and `Modes=`/
+  `UserModes=` operating-mode gating.
+- Element order of `<Co>` children is the **canonical connector order**;
+  the UUID index byte is historical. Proof: the V259 schema migration
+  moved DayTimer's `PulseTime` from element position 6 to 3 while its
+  port UUID kept index byte `06`.
 
 ## Connectors and wires: `<Co>` / `<In>`
 
