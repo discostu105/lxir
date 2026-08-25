@@ -90,6 +90,12 @@ fn minted_ref_carries_the_mirror_identity() {
     assert_eq!(attr(&el, "LinkRefType").as_deref(), Some("71"), "{el}");
     assert_eq!(attr(&el, "Nio").as_deref(), Some("4"), "{el}");
     assert_eq!(attr(&el, "Analog"), None, "VirtualIn mirrors are digital");
+    // The GUI derives a ref's title from its target (oracle session 11):
+    // the compiler emits VI1's title, not the slug.
+    assert!(
+        attr(&el, "Title").unwrap().contains("entemperatur"),
+        "ref title must be the target's: {el}"
+    );
     // Deterministic: an unchanged recompile reproduces the output.
     let before = std::fs::read(dir.join("out.Loxone")).unwrap();
     assert!(lxir(&dir, &["compile"]).status.success());
@@ -129,6 +135,8 @@ fn minted_ref_may_mirror_a_managed_block() {
     let mem_at = xml.find("<C Type=\"Memory\"").expect("minted Memory");
     let mem_uuid = attr(&xml[mem_at..mem_at + 400], "U").unwrap();
     assert_eq!(attr(&el, "Ref").as_deref(), Some(mem_uuid.as_str()), "{el}");
+    // Managed target without a label: the derived title is its slug.
+    assert_eq!(attr(&el, "Title").as_deref(), Some("zustand"), "{el}");
 }
 
 #[test]
@@ -175,6 +183,22 @@ fn mirror_refusals() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(err.contains("not a literal"), "{err}");
+
+    // An explicit label contradicts the GUI-derived title.
+    let dir = make_project(
+        "mirrors-label",
+        "extern quelle = VirtualIn(iname: \"VI1\")\n\
+         extern senke = VirtualIn(iname: \"VI3\")\n\
+         spiegel = InputRef(\n\
+         \t\"Eigener Name\",\n\
+         \tmirrors: quelle,\n\
+         )\n\
+         senke.Qm <- spiegel.Q\n",
+    );
+    let out = lxir(&dir, &["compile"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(err.contains("derived from its `mirrors:` target"), "{err}");
 
     // A target type without a verified LinkRefType code refuses the mint.
     let dir = make_project(

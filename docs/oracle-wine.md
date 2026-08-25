@@ -294,6 +294,41 @@ row exist and save fine but cannot be scrolled into view without
 interaction that recomputes the extent. Read the XML instead of
 fighting the viewport.
 
+## Minted mirrors (session 11, D33) — passed, with three heals
+
+Ran 2026-08-25, fresh rig (isolated `wine-oracle` prefix on Xvfb `:5`).
+The gate for eliminating ref plumbing from source: does a
+compiler-*minted* `InputRef`/`OutputRef` survive open+save? Three probes
+compiled onto a copy of the freshest live download, on page Testing: a
+full InputRef mirror of a real `VirtualIn` (feed wires `AI:`/`I:` from
+the target's ports, `And` consumer), a *naked* InputRef mirror (no feed
+wires at all), and an OutputRef mirror of a real `Actor` fed by the
+gate.
+
+- **All three survived** — `Ref=`, `LinkRefType=`, and every connector
+  byte-preserved. Minted refs are legal.
+- **The GUI healed, not rejected, what was missing.** Three heals, each
+  now encoded in the compiler: (1) every ref's `Title=` was rewritten to
+  the *mirrored object's* title — a ref's title is derived state, so the
+  compiler now emits the target's title and `validate` refuses a label
+  on ref blocks; (2) the naked ref got both feed wires drawn by the GUI
+  itself (target connector index 0 → `AI`, index 1 → `I` — matching the
+  corpus pattern across all device types); (3) ref geometry was redrawn
+  to the flat 2112×192 tag footprint, now the mint default.
+- **The OutputRef → actor distribution wire was *not* healed** — the
+  corpus wires all 154 `OutputRef.AQ` ports into their actors
+  explicitly, and the GUI leaves a dangling mirror dangling. That wire
+  stays source-drawn.
+- Confirmation cycle: recompile (fixed compiler, feed wires everywhere)
+  against the GUI-saved file → **semantic no-op**; second open+save →
+  **empty semantic diff in both directions**, refs byte-identical except
+  the known geometry snap on identities minted before the footprint fix.
+
+Corpus fact from the same session: `LinkRefType=` is a deterministic
+type-registry code of the mirrored object's XML type (VirtualIn 71,
+Actor 63, Memory 320, …) with `Analog=` following the target type —
+learned into `connectors::ref_link_type`, unknown types refuse the mint.
+
 ## The rig
 
 - Prefix: `~/.local/share/loxone-config/wine`, exe under

@@ -662,5 +662,14 @@ Anything unverified is an error, not a heuristic:
   ordinary explicit wires for now; drawing them automatically is the
   auto-routing step. Port shape verified across 189 InputRef +
   154 OutputRef in the house config: `AI`/`I` in, `AQ`/`Q` out
-  (OutputRef: `AI` in, `AQ` out). Oracle status: minted refs await
-  their open+save verdict — session pending.
+  (OutputRef: `AI` in, `AQ` out). Oracle-blessed same day (session 11):
+  minted refs survive open+save; the GUI *heals* a missing piece rather
+  than rejecting it, and each heal is encoded — a ref's `Title=` is
+  derived from its target (compiler emits the target's title, a label
+  on a ref block is refused), feed wires follow target connector
+  index 0 → `AI` / 1 → `I` (the GUI draws them itself if absent — the
+  compiler still requires them in source so rebuilds converge), and
+  refs draw as flat 2112×192 tags (the mint footprint). The
+  OutputRef → actor distribution wire is *not* healed and stays
+  source-drawn. Confirmation cycle: recompile onto the GUI-saved file
+  is a semantic no-op, second save empty in both directions.

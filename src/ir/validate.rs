@@ -61,13 +61,24 @@ pub fn validate_ports(module: &Module) -> Result<()> {
             }
             known_port(module, &block.slug, key)?;
         }
-        if is_ref_type(&block.block_type) && mirrors.is_none() {
-            return Err(Error::Compile(format!(
-                "block `{}`: a minted {} mirrors another object — declare the \
-                 target with `mirrors: <name>` (to reference an existing ref \
-                 in the base instead, use `extern`)",
-                block.slug, block.block_type
-            )));
+        if is_ref_type(&block.block_type) {
+            if mirrors.is_none() {
+                return Err(Error::Compile(format!(
+                    "block `{}`: a minted {} mirrors another object — declare the \
+                     target with `mirrors: <name>` (to reference an existing ref \
+                     in the base instead, use `extern`)",
+                    block.slug, block.block_type
+                )));
+            }
+            // Oracle session 11: a save rewrites a ref's Title= to the
+            // mirrored object's title — a label of our own would be a lie.
+            if block.title.is_some() {
+                return Err(Error::Compile(format!(
+                    "block `{}`: a {}'s title is derived from its `mirrors:` \
+                     target by Loxone Config — remove the label",
+                    block.slug, block.block_type
+                )));
+            }
         }
     }
 

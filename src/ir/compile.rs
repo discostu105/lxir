@@ -138,6 +138,9 @@ const BLOCK_W: i64 = 1344;
 const BLOCK_H_BASE: i64 = 504;
 const PORT_H: i64 = 192;
 const GAP: i64 = 192;
+/// `InputRef`/`OutputRef` tag width — the GUI redraws refs 2112 wide and
+/// one port-row tall (oracle session 11).
+const REF_W: i64 = 2112;
 
 pub fn compile(
     base: &LoxoneDoc,
@@ -248,12 +251,12 @@ pub fn compile(
 
     // --- Resolve externs (against the untouched base).
     let extern_uuid = resolve_externs(&doc, module, lock)?;
-    // XML type per object, for `mirrors:` targets (D33) — taken before
-    // teardown so it covers everything the base knows.
-    let type_by_uuid: BTreeMap<String, String> = doc
+    // XML type and title per object, for `mirrors:` targets (D33) — taken
+    // before teardown so it covers everything the base knows.
+    let type_by_uuid: BTreeMap<String, (String, Option<String>)> = doc
         .objects()
         .iter()
-        .map(|o| (o.uuid.clone(), o.block_type.clone()))
+        .map(|o| (o.uuid.clone(), (o.block_type.clone(), o.title.clone())))
         .collect();
 
     // --- Tear down our previous output: managed objects, extern wires,
@@ -469,12 +472,21 @@ pub fn compile(
                 }
             },
         };
-        let height = BLOCK_H_BASE + PORT_H * (keys.len() as i64 - 2).max(0);
+        // Refs draw as a flat tag, not a block — the GUI's own footprint
+        // (oracle session 11: a save corrects anything else to this).
+        let (width, height) = if is_ref_type(&block.block_type) {
+            (REF_W, PORT_H)
+        } else {
+            (
+                BLOCK_W,
+                BLOCK_H_BASE + PORT_H * (keys.len() as i64 - 2).max(0),
+            )
+        };
         let layout = *entry.layout.get_or_insert_with(|| {
             let l = Layout {
                 px: BLOCK_X,
                 py: py_cursor,
-                px2: BLOCK_X + BLOCK_W,
+                px2: BLOCK_X + width,
                 py2: py_cursor + height,
             };
             py_cursor = l.py2 + GAP;
@@ -529,7 +541,16 @@ pub fn compile(
     //     this module (a block minted this very compile included — the ref
     //     is ours to create) or any resolved extern; the target's XML type
     //     picks the GUI's type-registry code.
-    let mut mirror_of: BTreeMap<String, (String, u32, bool)> = BTreeMap::new();
+    struct Mirror {
+        ref_uuid: String,
+        link_type: u32,
+        analog: bool,
+        /// The GUI derives a ref's `Title=` from its target (oracle
+        /// session 11: a save rewrites whatever else stands there) — the
+        /// compiler emits the derived title so the file converges.
+        title: String,
+    }
+    let mut mirror_of: BTreeMap<String, Mirror> = BTreeMap::new();
     for block in module.blocks() {
         if !is_ref_type(&block.block_type) {
             continue;
@@ -541,17 +562,22 @@ pub fn compile(
                 _ => None,
             })
             .expect("validate_ports requires mirrors: on ref blocks");
-        let (uuid, target_type) = if let Some(plan) = managed.get(target) {
-            (plan.uuid.clone(), plan.block_type.clone())
+        let (uuid, target_type, target_title) = if let Some(plan) = managed.get(target) {
+            let title = module
+                .blocks()
+                .find(|b| b.slug == target)
+                .and_then(|b| b.title.clone())
+                .unwrap_or_else(|| target.to_string());
+            (plan.uuid.clone(), plan.block_type.clone(), title)
         } else if let Some(u) = extern_uuid.get(target) {
-            let t = type_by_uuid.get(u).cloned().ok_or_else(|| {
+            let (t, title) = type_by_uuid.get(u).cloned().ok_or_else(|| {
                 Error::Compile(format!(
                     "block `{}` mirrors extern `{target}`, whose resolved object \
                      {u} is not in the base config",
                     block.slug
                 ))
             })?;
-            (u.clone(), t)
+            (u.clone(), t, title.unwrap_or_else(|| target.to_string()))
         } else {
             return Err(Error::Compile(format!(
                 "block `{}` mirrors `{target}`, but `{target}` is neither a \
@@ -568,7 +594,15 @@ pub fn compile(
                 block.slug
             ))
         })?;
-        mirror_of.insert(block.slug.clone(), (uuid, code, analog));
+        mirror_of.insert(
+            block.slug.clone(),
+            Mirror {
+                ref_uuid: uuid,
+                link_type: code,
+                analog,
+                title: target_title,
+            },
+        );
     }
 
     // --- Build the managed <C> elements and append each to its pinned
@@ -581,7 +615,13 @@ pub fn compile(
         el.set_attr("Type", &block.block_type);
         el.set_attr("V", "175");
         el.set_attr("U", &plan.uuid);
-        el.set_attr("Title", block.title.as_deref().unwrap_or(&block.slug));
+        // A ref block's title is GUI-derived from its mirror target
+        // (oracle session 11) — emit the derived value so a save is a
+        // no-op; validate refuses an explicit label on ref blocks.
+        match mirror_of.get(&block.slug) {
+            Some(m) => el.set_attr("Title", &m.title),
+            None => el.set_attr("Title", block.title.as_deref().unwrap_or(&block.slug)),
+        }
         el.set_attr("Px", &plan.layout.px.to_string());
         el.set_attr("Py", &plan.layout.py.to_string());
         el.set_attr("Px2", &plan.layout.px2.to_string());
@@ -602,8 +642,8 @@ pub fn compile(
         el.set_attr("Nio", &plan.keys.len().to_string());
         // Minted-ref identity (D33), in the GUI's observed attribute
         // order: `Ref=` after `Nio=`, `Analog=`/`LinkRefType=` after `WF=`.
-        if let Some((ref_uuid, _, _)) = mirror_of.get(&block.slug) {
-            el.set_attr("Ref", ref_uuid);
+        if let Some(m) = mirror_of.get(&block.slug) {
+            el.set_attr("Ref", &m.ref_uuid);
         }
         if let Some(v) = carried("LtE") {
             el.set_attr_raw("LtE", v);
@@ -613,11 +653,11 @@ pub fn compile(
             (Some(_), None) => {}
             (None, _) => el.set_attr("WF", "147456"),
         }
-        if let Some((_, code, analog)) = mirror_of.get(&block.slug) {
-            if *analog {
+        if let Some(m) = mirror_of.get(&block.slug) {
+            if m.analog {
                 el.set_attr("Analog", "true");
             }
-            el.set_attr("LinkRefType", &code.to_string());
+            el.set_attr("LinkRefType", &m.link_type.to_string());
         }
         for name in attr_params(&block.block_type) {
             if let Some(v) = managed_attrs.get(&(block.slug.clone(), (*name).to_string())) {
