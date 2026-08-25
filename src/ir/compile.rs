@@ -733,10 +733,112 @@ pub fn compile(
         page.push_child(el);
     }
 
+    // --- Mirror routing (D34): a wire may name the mirrored object
+    //     directly; when the consumer's *own page* carries a ref of it fed
+    //     from exactly that port, the wire is drawn through the ref — an
+    //     `AI`-fed mirror serves `AQ`, an `I`-fed mirror serves `Q`.
+    //     Reuse-only and page-local: no same-page ref, no rerouting (a
+    //     direct wire is legal, oracle session 6); a ref on another page
+    //     is someone else's visual. Symmetric for actors: a wire into an
+    //     extern port that the base feeds from an OutputRef's `AQ` lands
+    //     on that ref's `AI` instead — the ref on the *writer's* page.
+    #[derive(Clone)]
+    struct MirrorRoute {
+        /// Port the rerouted wire uses instead of the named one.
+        port: String,
+        /// The ref object itself (owner of `port`).
+        ref_uuid: String,
+        page: Option<String>,
+    }
+    let routed_objects = doc.objects();
+    let managed_uuids: BTreeSet<&str> = managed.values().map(|p| p.uuid.as_str()).collect();
+    let pages_idx: Vec<(&[usize], &str)> = routed_objects
+        .iter()
+        .filter(|o| o.block_type == "Page")
+        .map(|o| (o.path.as_slice(), o.uuid.as_str()))
+        .collect();
+    let page_uuid_of = |path: &[usize]| -> Option<String> {
+        pages_idx
+            .iter()
+            .filter(|(p, _)| path.len() > p.len() && path.starts_with(p))
+            .max_by_key(|(p, _)| p.len())
+            .map(|(_, u)| (*u).to_string())
+    };
+    let path_by_uuid: BTreeMap<&str, &[usize]> = routed_objects
+        .iter()
+        .map(|o| (o.uuid.as_str(), o.path.as_slice()))
+        .collect();
+    let mut in_routes: BTreeMap<String, Vec<MirrorRoute>> = BTreeMap::new();
+    let mut aq_of_outputref: BTreeMap<String, MirrorRoute> = BTreeMap::new();
+    for o in &routed_objects {
+        if managed_uuids.contains(o.uuid.as_str())
+            || !matches!(o.block_type.as_str(), "InputRef" | "OutputRef")
+        {
+            continue;
+        }
+        let el = doc.element_at(&o.path).expect("path from objects()");
+        let ps = ports(el);
+        let port = |k: &str| ps.iter().find(|p| p.key == k);
+        let page = page_uuid_of(&o.path);
+        if o.block_type == "InputRef" {
+            for (fed, serves) in [("AI", "AQ"), ("I", "Q")] {
+                if let (Some(f), Some(s)) = (port(fed), port(serves)) {
+                    for src in &f.inputs {
+                        in_routes.entry(src.clone()).or_default().push(MirrorRoute {
+                            port: s.uuid.clone(),
+                            ref_uuid: o.uuid.clone(),
+                            page: page.clone(),
+                        });
+                    }
+                }
+            }
+        } else if let (Some(aq), Some(ai)) = (port("AQ"), port("AI")) {
+            aq_of_outputref.insert(
+                aq.uuid.clone(),
+                MirrorRoute {
+                    port: ai.uuid.clone(),
+                    ref_uuid: o.uuid.clone(),
+                    page,
+                },
+            );
+        }
+    }
+    let mut out_routes: BTreeMap<String, Vec<MirrorRoute>> = BTreeMap::new();
+    for w in doc.wires() {
+        if let Some(r) = aq_of_outputref.get(&w.from_port) {
+            out_routes
+                .entry(w.to_port.clone())
+                .or_default()
+                .push(r.clone());
+        }
+    }
+    // Same-page candidates only; several on one page fall back to the
+    // previous compile's recorded wire, then refuse.
+    let pick_route = |cands: &[MirrorRoute],
+                      ctx_page: Option<&String>,
+                      pinned: &dyn Fn(&MirrorRoute) -> bool|
+     -> std::result::Result<Option<MirrorRoute>, Vec<String>> {
+        let local: Vec<&MirrorRoute> = cands
+            .iter()
+            .filter(|c| c.page.as_ref() == ctx_page && ctx_page.is_some())
+            .collect();
+        match local.as_slice() {
+            [] => Ok(None),
+            [one] => Ok(Some((*one).clone())),
+            many => {
+                let hits: Vec<&&MirrorRoute> = many.iter().filter(|c| pinned(c)).collect();
+                match hits.as_slice() {
+                    [one] => Ok(Some((**one).clone())),
+                    _ => Err(many.iter().map(|c| c.ref_uuid.clone()).collect()),
+                }
+            }
+        }
+    };
+
     // --- Wires: block argument bindings (sink = the declaring block) and
     //     `<-` statements (sink = an extern port), in source order.
     for (from_ref, to_ref) in module.wire_pairs() {
-        let from = resolve_port(
+        let mut from = resolve_port(
             &doc,
             &managed,
             &extern_uuid,
@@ -744,7 +846,7 @@ pub fn compile(
             &from_ref.port,
             PortDir::Output,
         )?;
-        let to = resolve_port(
+        let mut to = resolve_port(
             &doc,
             &managed,
             &extern_uuid,
@@ -752,6 +854,70 @@ pub fn compile(
             &to_ref.port,
             PortDir::Input,
         )?;
+        // Ref-typed endpoints wire literally (feed wires, explicit ref
+        // externs); routing is for wires naming the mirrored object.
+        let endpoint_type = |slug: &str, owner_uuid: &str| -> Option<&str> {
+            managed
+                .get(slug)
+                .map(|p| p.block_type.as_str())
+                .or_else(|| type_by_uuid.get(owner_uuid).map(|(t, _)| t.as_str()))
+        };
+        let page_of_endpoint = |slug: &str, owner_uuid: &str| -> Option<String> {
+            managed
+                .get(slug)
+                .map(|p| p.page_uuid.clone())
+                .or_else(|| path_by_uuid.get(owner_uuid).and_then(|p| page_uuid_of(p)))
+        };
+        let from_is_ref = endpoint_type(&from_ref.slug, &from.owner_uuid).is_some_and(is_ref_type);
+        let to_is_ref = endpoint_type(&to_ref.slug, &to.owner_uuid).is_some_and(is_ref_type);
+        if !from_is_ref && !to_is_ref {
+            let route_err = |which: &str, endpoint: String, refs: Vec<String>| {
+                Error::Compile(format!(
+                    "wire `{to_ref} <- {from_ref}`: several mirrors of {which} \
+                     `{endpoint}` sit on the consumer's page ({}) — declare the \
+                     intended one explicitly (`extern … = \
+                     InputRef(mirrors: …)` or a `uuid:` pin) and wire through it",
+                    refs.join(", ")
+                ))
+            };
+            if let Some(cands) = in_routes.get(&from.port_uuid) {
+                let sink_page = page_of_endpoint(&to_ref.slug, &to.owner_uuid);
+                let pin = |c: &MirrorRoute| {
+                    old_wires
+                        .iter()
+                        .any(|w| w.to == to.port_uuid && w.from == c.port)
+                };
+                match pick_route(cands, sink_page.as_ref(), &pin) {
+                    Ok(Some(r)) => {
+                        from.owner_uuid = r.ref_uuid;
+                        from.port_uuid = r.port;
+                    }
+                    Ok(None) => {}
+                    Err(refs) => {
+                        return Err(route_err("source", from_ref.to_string(), refs));
+                    }
+                }
+            }
+            if let Some(cands) = out_routes.get(&to.port_uuid) {
+                let from_page = page_of_endpoint(&from_ref.slug, &from.owner_uuid);
+                let pin = |c: &MirrorRoute| {
+                    old_wires
+                        .iter()
+                        .any(|w| w.from == from.port_uuid && w.to == c.port)
+                };
+                match pick_route(cands, from_page.as_ref(), &pin) {
+                    Ok(Some(r)) => {
+                        to.owner_uuid = r.ref_uuid;
+                        to.port_uuid = r.port;
+                        to.is_extern = true;
+                    }
+                    Ok(None) => {}
+                    Err(refs) => {
+                        return Err(route_err("sink", to_ref.to_string(), refs));
+                    }
+                }
+            }
+        }
         let flg = residue.get(&to.owner_uuid).and_then(|r| {
             r.wire_flags
                 .get(&(to.port_uuid.clone(), from.port_uuid.clone()))

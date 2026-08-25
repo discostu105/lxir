@@ -673,3 +673,30 @@ Anything unverified is an error, not a heuristic:
   OutputRef → actor distribution wire is *not* healed and stays
   source-drawn. Confirmation cycle: recompile onto the GUI-saved file
   is a semantic no-op, second save empty in both directions.
+- **D34 — mirror routing: wires reuse the page's refs** (2026-08-25).
+  With D33 the pieces exist to drop ref plumbing from consumer source:
+  a wire that names the *mirrored object* is drawn through a ref the
+  base already carries. Reuse-only and page-local, because that is what
+  the corpus proves the GUI does: a consumer reads a signal through the
+  ref *on its own page* (all 96 `ref.AQ` and 5 `ref.Q` consumer wires
+  in r50 are same-page), and a cross-page read with no local ref is a
+  legal direct wire (oracle session 6). Rules, all refuse-never-guess:
+  an input-side wire `X: obj.port` routes through a base ref iff the
+  ref mirrors `obj`, is *fed from exactly that port* (feed wire
+  `obj.idx0 → AI` serves `AQ`, `obj.idx1 → I` serves `Q`), and sits on
+  the consuming block's page; an output-side wire `obj.port <- y` whose
+  port the base feeds from an `OutputRef.AQ` lands on that ref's `AI`
+  (writer's page — the corpus wires all 154 `OutputRef.AQ`
+  distributions explicitly, so that leg stays source-side for actors
+  but the *write into* the mirror is routed). Several same-page
+  candidates: the previously locked wire pins the choice
+  (`extern_wires` from the old lock); no pin → refuse, naming the
+  candidates and the explicit-extern escape hatch. Ref-*typed*
+  endpoints are exempt — a wire naming a ref (D32 extern or D33 minted
+  block) is drawn literally, which also protects feed wires from
+  re-routing. No same-page fed ref → direct wire. Verified: the r50
+  live config has zero direct wires shadowed by a same-page fed mirror,
+  so enabling routing is byte-stable on the deployed bytes (ci gate),
+  and e2e tests cover reuse through `AQ`/`Q`, the `OutputRef.AI`
+  redirect, cross-page staying direct, and literal explicit-ref
+  wiring.
