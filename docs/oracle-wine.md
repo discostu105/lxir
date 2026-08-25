@@ -240,6 +240,32 @@ prefix on Xvfb `:5`), saved via Ctrl+S per tab:
   were admitted from web-corpus evidence only; this closes their mint
   validation.
 
+## The mint oracle, round 2: the whole second batch (session 9) — passed
+
+Ran 2026-08-25, same rig. Four blocks minted from bare declarations
+(`t = LightController2("Oracle LC2")` — no args, no wires) on page
+Testing of the real house base, opened and saved once:
+
+- **All four survive with their exact connector sets** —
+  LightController2 75, CentralLight 24, CentralShade 18, Code16 34.
+  Empty semantic diff.
+- **The GUI backfills missing GUI-owned children instead of rejecting
+  the block.** The bare LC2 gained its default scene configuration on
+  save (`<LightscenesC>` with the stock scenes "Viel Licht"/"Aus",
+  `<LSConfig>`, `<PSD>` presence defaults, `<HCL>`, `<IoData>`,
+  `<COHist>`) — the DayTimer-default-entries pattern at full scale. So
+  a minted LC2 is legal; its scene setup then belongs to the GUI as
+  D19 residue.
+- **Central blocks need no `rec=`**: controlling zero objects is a
+  valid state; the UUID list appears only once objects are assigned in
+  the GUI. **Code16 needs no `Code=`**: zero backfill at all, an empty
+  program block is legal.
+- Cycle closed: re-adopting the GUI-saved file lifts all 104 blocks
+  with zero refusals, compile is a semantic no-op, `lxir drift` green.
+
+With session 8 (PulseAt, DayTimer, Switch2Button) this mint-validates
+every type of the second admission batch.
+
 ## The rig
 
 - Prefix: `~/.local/share/loxone-config/wine`, exe under

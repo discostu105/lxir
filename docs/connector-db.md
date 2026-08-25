@@ -255,6 +255,14 @@ Input/Param as source, no Def on Output/Api, no unlisted key
 materialized) and re-verifies that whatever adopts rebuilds as a
 semantic no-op, on every config in the corpus.
 
+**Mint-validated (oracle sessions 8–9, 2026-08-25):** bare-minted
+instances of all five types survive a Loxone Config open+save with
+their exact connector sets. The GUI backfills absent GUI-owned content
+(LightController2's default scenes, `IoData`, DayTimer's default
+entries) rather than rejecting the block; central blocks are legal
+with no `rec=`, Code16 with no `Code=`. Details in
+[oracle-wine.md](oracle-wine.md).
+
 ## Growing the table
 
 Add configs to the corpus (any installation helps — foreign corpora
