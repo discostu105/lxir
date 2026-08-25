@@ -91,6 +91,12 @@ is rendered inline (`<Key>2B35</Key>`).
   UUIDs.
 - Wires are stored at the **sink**: each `<In Input="…"/>` names the source
   port's UUID. An output being wired leaves no trace on the output itself.
+- A wire source needs **no on-page representation**: the system `Mode`
+  objects (operating modes; no `Px/Py`, deterministic UUIDs) source wires
+  directly into page blocks. The GUI's own pattern inserts an `InputRef`
+  when a mode is dragged onto a page (nine corpus configs), but a save
+  accepts and preserves the direct wire without creating one — verified
+  by the sixth oracle run ([oracle-wine.md](oracle-wine.md)).
 - `Nc` — number of incoming wires (= count of `<In>` children); omitted
   when zero.
 - `Def` — the port's parameter value; omitted at type default.

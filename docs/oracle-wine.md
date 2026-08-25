@@ -185,7 +185,25 @@ mostly unmanaged blocks — settling beyond doubt that `WF` is freely
 recomputed view-state — plus one unmanaged Text-note geometry nudge and
 `<In>` order rewrites).
 
-## Crash: minimal synthetic configs
+## The first real-world change — passed
+
+Sixth run (2026-08-25, fresh rig). The first change compiled for actual
+deployment: the pool UV lamp, previously running permanently on a latched
+`PushButton`, gated to two weekdays by wiring `Or(Montag.Q, Dienstag.Q)`
+into the button's `On` and its inversion into `Reset` (module in the
+private sibling repo `~/repos/my/r50`).
+
+The probe value beyond the change itself: the `Or` inputs are wired
+**directly from the system `Mode` objects' `Q` ports** — objects that
+live in the system area with no `Px/Py` and no on-page representation.
+The GUI's own pattern is different (dragging a mode onto a page creates
+an `InputRef` wired from `Mode.Q`; nine corpus configs show it), so this
+save answered whether the visual ref is *required*. It is not: open +
+save kept both minted blocks and all 5 wires verbatim, created no
+`InputRef`, and the semantic diff was empty in both directions. The
+fingerprint was the known set plus a grid-snap of the two new blocks'
+`Py` (the compiler's `next_free_py` cursor is not grid-aligned —
+cosmetic, picked up by the next adopt).
 
 Handing Loxone Config the crate's synthetic `examples/out` file
 SIGSEGVs it on load (minidump in the prefix's
