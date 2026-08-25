@@ -10,6 +10,9 @@
 //!                                              (managed block: params and
 //!                                               input wires in one place)
 //! <slug>.<Port> <- <slug>.<Port>               (wire onto an extern port)
+//! <slug>.<Port> <- <expr>                      (expression sugar, D24:
+//!                                               `or`/`and`/`not`/comparisons
+//!                                               desugar into gate blocks)
 //! <slug>.<Port> = <value>                      (Def write on an extern port)
 //! removed <slug>                               (authorize deleting a managed block)
 //! moved   <old_slug> -> <new_slug>             (rename keeping identity)
@@ -33,18 +36,21 @@ mod adopt;
 mod ast;
 mod compile;
 mod decompile;
+mod desugar;
 mod parser;
 mod template;
 mod validate;
 
 pub use adopt::{AdoptReport, AdoptedBlock, PageFragments, adopt, adopt_one, adopt_pages};
 pub use ast::{
-    ArgItem, Binding, BindingKind, BlockDecl, ExternDecl, Item, LetDecl, MatchSpec, Module,
-    MovedDecl, PortRef, RemovedDecl, SetDecl, TemplateDecl, TemplateParam, Value, WireDecl,
+    ArgItem, Binding, BindingKind, BlockDecl, CmpOp, Expr, ExprWireDecl, ExternDecl, Item, LetDecl,
+    MatchSpec, Module, MovedDecl, Operand, PortRef, RemovedDecl, SetDecl, TemplateDecl,
+    TemplateParam, Value, WireDecl,
 };
 pub use compile::{CompileOptions, compile};
 pub use decompile::{
     DecompileOptions, DecompileReport, DecompileScope, PageModule, decompile, decompile_pages,
     slugify,
 };
+pub use desugar::DesugarInfo;
 pub use validate::validate_ports;

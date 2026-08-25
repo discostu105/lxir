@@ -45,6 +45,12 @@ fassade(jalousie: jal_sued)` stamps it out per facade. Each instance's
 blocks get stable expanded slugs (`sued_hoch`) in the lockfile, so
 re-instantiating never re-mints identities.
 
+Boolean logic can skip the blocks entirely:
+`jal_sued.AutoShade <- sonne.Q and aussentemp.Q >= temp_schwelle`
+desugars into the same verified gate and comparator blocks — each
+labeled with its sub-expression, so the rule stays readable in Loxone
+Config — and editing the expression re-derives them without ceremony.
+
 ## Why
 
 A Miniserver's entire behavior lives in one opaque `.Loxone` XML file,

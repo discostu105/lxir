@@ -117,13 +117,15 @@ pub fn adopt_one(
     lock: &mut Lockfile,
 ) -> Result<AdoptedBlock> {
     let fail = |m: String| Error::Compile(m);
-    // Templates (D23): the checks below — slug freshness, wires already
-    // declared on managed sinks — must see the expanded module, where an
-    // instance's blocks exist under their lock-key names. Expansion of a
-    // partial (leniently loaded) module can fail; then the raw view has
-    // to do, and the caller's no-op verification stays the backstop.
+    // Templates (D23) and expressions (D24): the checks below — slug
+    // freshness, wires already declared on managed sinks — must see the
+    // expanded and desugared module, where an instance's blocks and an
+    // expression's synthetic blocks exist under their lock-key names.
+    // Expansion of a partial (leniently loaded) module can fail; then the
+    // raw view has to do, and the caller's no-op verification stays the
+    // backstop.
     let raw = module;
-    let expanded = module.expand();
+    let expanded = module.expand().and_then(|x| x.desugar().map(|(m, _)| m));
     let module = expanded.as_ref().unwrap_or(module);
     let objects = doc.objects();
     let Some(o) = objects.iter().find(|o| o.uuid == uuid) else {
@@ -343,6 +345,7 @@ pub fn adopt_one(
             ports: ports(el).into_iter().map(|p| (p.key, p.uuid)).collect(),
             layout: Some(layout_of(el).expect("verified numeric")),
             page_uuid: Some(lift.page_uuids[page].clone()),
+            expr_owned: false,
         },
     );
     // The adopted-from config is the new drift baseline: nothing changed
@@ -408,6 +411,7 @@ fn adopt_lock(doc: &LoxoneDoc, lift: &Lift, refused: Vec<String>) -> (Lockfile, 
                 ports: ports(el).into_iter().map(|p| (p.key, p.uuid)).collect(),
                 layout: Some(layout_of(el).expect("verified numeric")),
                 page_uuid: Some(lift.page_uuids[page].clone()),
+                expr_owned: false,
             },
         );
     }

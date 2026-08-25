@@ -26,6 +26,11 @@ pub enum Item {
     /// lowercase callee. Shares [`BlockDecl`]'s shape (`block_type`
     /// holds the template name; a label string is not allowed).
     Instance(BlockDecl),
+    /// `target.Port <- <expr>` — expression sugar (D24): the boolean
+    /// expression desugars into managed gate/comparator blocks whose
+    /// result is wired onto the extern port. A bare `slug.Port` RHS is a
+    /// plain [`Item::Wire`], not an expression.
+    ExprWire(ExprWireDecl),
     /// A whole-line `#` comment, stored verbatim (text after the `#`) so
     /// formatting is non-destructive. Statements carry their own trailing
     /// comments; argument lists carry theirs as [`ArgItem`]s.
@@ -235,6 +240,154 @@ pub struct WireDecl {
     pub comment: Option<String>,
 }
 
+/// `target.Port <- <expr>` — expression sugar on an extern port (D24).
+/// [`Module::desugar`] turns the expression into managed gate/comparator
+/// blocks (synthetic slugs `<target>_<port>__<op><n>`, locked like
+/// hand-written blocks but marked expression-owned) plus a plain wire from
+/// the root block's `Q` onto the target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExprWireDecl {
+    pub to: PortRef,
+    pub expr: Expr,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
+}
+
+/// A boolean expression on the RHS of `<-`. Precedence, loosest to
+/// tightest: `or` < `and` < `not` < comparison. Comparisons do not chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expr {
+    Or(Box<Expr>, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Not(Box<Expr>),
+    Cmp {
+        op: CmpOp,
+        lhs: Operand,
+        rhs: Operand,
+    },
+    /// A bare operand in gate position — a boolean source port. Constants
+    /// here are rejected at desugar time (they cannot drive a gate input).
+    Atom(Operand),
+}
+
+/// Comparison operator; each maps to one verified comparator block type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmpOp {
+    Ge,
+    Gt,
+    Le,
+    Lt,
+    Eq,
+    Ne,
+}
+
+impl CmpOp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            CmpOp::Ge => ">=",
+            CmpOp::Gt => ">",
+            CmpOp::Le => "<=",
+            CmpOp::Lt => "<",
+            CmpOp::Eq => "==",
+            CmpOp::Ne => "!=",
+        }
+    }
+}
+
+/// A leaf of an expression: a source port or a constant (number or `let`
+/// reference).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Operand {
+    Port(PortRef),
+    Value(Value),
+}
+
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operand::Port(p) => p.fmt(f),
+            Operand::Value(v) => v.fmt(f),
+        }
+    }
+}
+
+impl Expr {
+    /// Every leaf operand, in evaluation (post-order) order.
+    pub fn operands(&self) -> Vec<&Operand> {
+        let mut out = Vec::new();
+        self.collect_operands(&mut out);
+        out
+    }
+
+    fn collect_operands<'a>(&'a self, out: &mut Vec<&'a Operand>) {
+        match self {
+            Expr::Or(a, b) | Expr::And(a, b) => {
+                a.collect_operands(out);
+                b.collect_operands(out);
+            }
+            Expr::Not(x) => x.collect_operands(out),
+            Expr::Cmp { lhs, rhs, .. } => {
+                out.push(lhs);
+                out.push(rhs);
+            }
+            Expr::Atom(o) => out.push(o),
+        }
+    }
+
+    /// Binding strength for canonical (minimal-paren) emission.
+    fn prec(&self) -> u8 {
+        match self {
+            Expr::Or(..) => 1,
+            Expr::And(..) => 2,
+            Expr::Not(..) => 3,
+            Expr::Cmp { .. } => 4,
+            Expr::Atom(_) => 5,
+        }
+    }
+
+    fn fmt_child(
+        &self,
+        child: &Expr,
+        needs_parens: bool,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        let _ = self;
+        if needs_parens {
+            write!(f, "({child})")
+        } else {
+            write!(f, "{child}")
+        }
+    }
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Binary operators are left-associative: an equal-precedence
+            // LEFT child re-parses to the same tree without parens, an
+            // equal-precedence RIGHT child does not.
+            Expr::Or(a, b) | Expr::And(a, b) => {
+                let kw = if matches!(self, Expr::Or(..)) {
+                    "or"
+                } else {
+                    "and"
+                };
+                self.fmt_child(a, a.prec() < self.prec(), f)?;
+                write!(f, " {kw} ")?;
+                self.fmt_child(b, b.prec() <= self.prec(), f)
+            }
+            // A comparison under `not` gets parens for readability even
+            // though `not a >= b` would re-parse identically.
+            Expr::Not(x) => {
+                f.write_str("not ")?;
+                self.fmt_child(x, !matches!(**x, Expr::Atom(_) | Expr::Not(_)), f)
+            }
+            Expr::Cmp { op, lhs, rhs } => write!(f, "{lhs} {} {rhs}", op.symbol()),
+            Expr::Atom(o) => o.fmt(f),
+        }
+    }
+}
+
 /// `target.Port = value` — write a parameter (`Def=`) on an *extern* port;
 /// the original value is preserved in the lockfile and restored when the
 /// statement is removed from source. On managed blocks, parameters belong
@@ -401,6 +554,15 @@ impl Module {
     pub fn extern_wires(&self) -> impl Iterator<Item = &WireDecl> {
         self.items.iter().filter_map(|i| match i {
             Item::Wire(w) => Some(w),
+            _ => None,
+        })
+    }
+
+    /// The `<-` statements with an expression RHS (desugared by
+    /// [`Module::desugar`]).
+    pub fn expr_wires(&self) -> impl Iterator<Item = &ExprWireDecl> {
+        self.items.iter().filter_map(|i| match i {
+            Item::ExprWire(w) => Some(w),
             _ => None,
         })
     }
@@ -589,6 +751,32 @@ impl Module {
                         ));
                     }
                 }
+                Item::ExprWire(w) => {
+                    object_ref(&w.to)?;
+                    if names.get(w.to.slug.as_str()) == Some(&NameKind::Block) {
+                        return compile_err(format!(
+                            "`{to} <- …` targets managed block `{slug}` — wire the \
+                             expression's result in the argument list instead; `<-` \
+                             is for extern ports only",
+                            to = w.to,
+                            slug = w.to.slug,
+                        ));
+                    }
+                    for operand in w.expr.operands() {
+                        match operand {
+                            Operand::Port(p) => object_ref(p)?,
+                            Operand::Value(Value::Str(s)) => {
+                                return compile_err(format!(
+                                    "string {} in the expression on `{}` — \
+                                     expressions compare numbers and ports only",
+                                    quote(s),
+                                    w.to,
+                                ));
+                            }
+                            Operand::Value(v) => value_refs(v)?,
+                        }
+                    }
+                }
                 Item::Set(s) => {
                     object_ref(&s.target)?;
                     if names.get(s.target.slug.as_str()) == Some(&NameKind::Block) {
@@ -640,7 +828,8 @@ impl Module {
                                     }
                                 }
                             }
-                            Item::Wire(_) | Item::Set(_) | Item::Comment(_) => {}
+                            Item::Wire(_) | Item::ExprWire(_) | Item::Set(_) | Item::Comment(_) => {
+                            }
                             _ => {
                                 return compile_err(format!(
                                     "template `{}`: only block declarations, wires, port \
@@ -800,13 +989,29 @@ impl Module {
 
     /// Canonical text form. `parse(to_text(m)) == m`.
     pub fn to_text(&self) -> String {
+        // Blank lines separate statement families; plain and expression
+        // wires are one family (both read `sink <- …`).
+        fn family(item: &Item) -> u8 {
+            match item {
+                Item::Extern(_) => 0,
+                Item::Block(_) => 1,
+                Item::Wire(_) | Item::ExprWire(_) => 2,
+                Item::Set(_) => 3,
+                Item::Let(_) => 4,
+                Item::Removed(_) => 5,
+                Item::Moved(_) => 6,
+                Item::Template(_) => 7,
+                Item::Instance(_) => 8,
+                Item::Comment(_) => 9,
+            }
+        }
         let mut out = String::new();
-        let mut prev: Option<std::mem::Discriminant<Item>> = None;
+        let mut prev: Option<u8> = None;
         // A multi-line call is visually dense; separate it from the next
         // item even when the kind does not change.
         let mut prev_multiline = false;
         for item in &self.items {
-            let disc = std::mem::discriminant(item);
+            let disc = family(item);
             if prev.is_some_and(|p| p != disc) || prev_multiline {
                 out.push('\n');
             }
@@ -860,6 +1065,9 @@ impl Module {
                 }
                 Item::Wire(w) => {
                     out.push_str(&format!("{} <- {}{}\n", w.to, w.from, tail(&w.comment)));
+                }
+                Item::ExprWire(w) => {
+                    out.push_str(&format!("{} <- {}{}\n", w.to, w.expr, tail(&w.comment)));
                 }
                 Item::Set(s) => {
                     out.push_str(&format!("{} = {}{}\n", s.target, s.value, tail(&s.comment)));

@@ -1326,3 +1326,233 @@ fn module_fragments_duplicate_slug_is_rejected() {
     let err = Module { items }.validate().unwrap_err();
     assert!(err.to_string().contains("duplicate name `x`"), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// Expression sugar (D24)
+
+const EXPR_MODULE: &str = "\
+extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+extern wind_alarm = VirtualIn(iname: \"VI2\")\n\
+extern sonne = VirtualIn(iname: \"VI3\")\n\
+extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+\n\
+let schwelle = 28\n\
+\n\
+jal_sued.AutoShade <- sonne.Q and aussentemp.Q >= schwelle\n";
+
+#[test]
+fn expressions_desugar_with_locked_identities() {
+    let base = base();
+    let module = Module::parse(EXPR_MODULE).unwrap();
+
+    // Canonical form keeps the expression as written (it is already
+    // minimal-paren) and is a fixpoint.
+    let text = module.to_text();
+    assert_eq!(
+        Module::parse(&text).unwrap(),
+        module,
+        "parse ∘ to_text = id"
+    );
+    assert_eq!(Module::parse(&text).unwrap().to_text(), text, "fixpoint");
+    assert!(
+        text.contains("jal_sued.AutoShade <- sonne.Q and aussentemp.Q >= schwelle"),
+        "{text}"
+    );
+
+    // Desugaring emits one comparator and one gate, prefixed by the sink.
+    let (plain, info) = module.expand().unwrap().desugar().unwrap();
+    assert_eq!(info.expressions, 1);
+    assert_eq!(
+        info.synthetic.iter().collect::<Vec<_>>(),
+        ["jal_sued_autoshade__and1", "jal_sued_autoshade__ge1"]
+    );
+    let ge = plain
+        .blocks()
+        .find(|b| b.slug == "jal_sued_autoshade__ge1")
+        .unwrap();
+    assert_eq!(ge.block_type, "GreaterEqual");
+    assert_eq!(ge.title.as_deref(), Some("aussentemp.Q >= schwelle"));
+    assert!(
+        ge.params()
+            .any(|(p, v)| p == "Input2" && v.to_string() == "schwelle"),
+        "constant operand becomes a Def parameter"
+    );
+
+    // Compile: both synthetic blocks are locked and expression-owned.
+    let mut lock = Lockfile::new();
+    let out = compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.objects.keys().collect::<Vec<_>>(),
+        ["jal_sued_autoshade__and1", "jal_sued_autoshade__ge1"]
+    );
+    assert!(lock.objects.values().all(|o| o.expr_owned));
+    let ge_uuid = lock.objects["jal_sued_autoshade__ge1"].uuid.clone();
+    let and_uuid = lock.objects["jal_sued_autoshade__and1"].uuid.clone();
+
+    // Recompile: byte-identical, no re-mint.
+    let out2 = compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(out.to_bytes(), out2.to_bytes());
+
+    // Growing the expression keeps the unchanged nodes' identities and
+    // mints only the new gate — no `removed` statement anywhere.
+    let grown =
+        Module::parse(&EXPR_MODULE.replace(">= schwelle\n", ">= schwelle or wind_alarm.Q\n"))
+            .unwrap();
+    compile(&base, &grown, &mut lock, &opts()).unwrap();
+    assert_eq!(lock.objects["jal_sued_autoshade__ge1"].uuid, ge_uuid);
+    assert_eq!(lock.objects["jal_sued_autoshade__and1"].uuid, and_uuid);
+    let or_uuid = lock.objects["jal_sued_autoshade__or1"].uuid.clone();
+    // Cross-session mint collision guard: a block minted in a later
+    // compile (same mint time) must not reuse any earlier (time, sequence)
+    // pair — every locked UUID stays distinct.
+    let all: Vec<&String> = lock
+        .objects
+        .values()
+        .flat_map(|o| std::iter::once(&o.uuid).chain(o.ports.values()))
+        .collect();
+    let distinct: std::collections::BTreeSet<&&String> = all.iter().collect();
+    assert_eq!(distinct.len(), all.len(), "duplicate minted UUIDs");
+
+    // Shrinking to just the `or` auto-removes the orphaned comparator and
+    // gate (they are expression-owned) while `__or1` keeps its identity.
+    let shrunk = Module::parse(&EXPR_MODULE.replace(
+        "sonne.Q and aussentemp.Q >= schwelle\n",
+        "sonne.Q or wind_alarm.Q\n",
+    ))
+    .unwrap();
+    compile(&base, &shrunk, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.objects.keys().collect::<Vec<_>>(),
+        ["jal_sued_autoshade__or1"]
+    );
+    assert_eq!(lock.objects["jal_sued_autoshade__or1"].uuid, or_uuid);
+
+    // Deleting the statement deletes everything expression-owned.
+    let gone = Module::parse(&EXPR_MODULE.replace(
+        "jal_sued.AutoShade <- sonne.Q and aussentemp.Q >= schwelle\n",
+        "",
+    ))
+    .unwrap();
+    let out_gone = compile(&base, &gone, &mut lock, &opts()).unwrap();
+    assert!(lock.objects.is_empty());
+    assert!(
+        lxir::diff::diff(&base, &out_gone).is_empty(),
+        "removing the expression restores the base"
+    );
+}
+
+#[test]
+fn expressions_expand_inside_template_bodies() {
+    let base = base();
+    let module = Module::parse(
+        "extern aussentemp = VirtualIn(iname: \"VI1\")\n\
+         extern sonne = VirtualIn(iname: \"VI3\")\n\
+         extern jal_sued = AutoJalousie(title: \"Beschattung S\u{fc}d\")\n\
+         template fassade(jalousie: AutoJalousie, schwelle = 28)\n\
+         \tjalousie.AutoShade <- sonne.Q and aussentemp.Q >= schwelle\n\
+         end\n\
+         sued = fassade(jalousie: jal_sued, schwelle: 30)\n",
+    )
+    .unwrap();
+
+    // The synthetic prefix uses the *expanded* sink — the passed extern.
+    let mut lock = Lockfile::new();
+    compile(&base, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(
+        lock.objects.keys().collect::<Vec<_>>(),
+        ["jal_sued_autoshade__and1", "jal_sued_autoshade__ge1"]
+    );
+    assert!(lock.objects.values().all(|o| o.expr_owned));
+}
+
+#[test]
+fn expression_canonical_form_uses_minimal_parens() {
+    let head = "extern a = VirtualIn(iname: \"VI1\")\n\
+                extern b = VirtualIn(iname: \"VI2\")\n\
+                extern c = VirtualIn(iname: \"VI3\")\n\
+                extern jal = AutoJalousie(title: \"J\")\n";
+    let canon = |rhs: &str| {
+        let m = Module::parse(&format!("{head}jal.AutoShade <- {rhs}\n")).unwrap();
+        let text = m.to_text();
+        assert_eq!(Module::parse(&text).unwrap().to_text(), text, "fixpoint");
+        text.lines()
+            .find(|l| l.starts_with("jal.AutoShade <- "))
+            .unwrap()
+            .trim_start_matches("jal.AutoShade <- ")
+            .to_string()
+    };
+    // Precedence needs no parens; grouping against it keeps them.
+    assert_eq!(canon("a.Q and b.Q or c.Q"), "a.Q and b.Q or c.Q");
+    assert_eq!(canon("(a.Q and b.Q) or c.Q"), "a.Q and b.Q or c.Q");
+    assert_eq!(canon("a.Q and (b.Q or c.Q)"), "a.Q and (b.Q or c.Q)");
+    assert_eq!(canon("(a.Q or b.Q) and c.Q"), "(a.Q or b.Q) and c.Q");
+    assert_eq!(canon("a.Q or (b.Q or c.Q)"), "a.Q or (b.Q or c.Q)");
+    // A comparison under `not` is always parenthesized for readability.
+    assert_eq!(canon("not a.Q >= 5"), "not (a.Q >= 5)");
+    assert_eq!(canon("not (a.Q >= 5)"), "not (a.Q >= 5)");
+    assert_eq!(canon("not not a.Q"), "not not a.Q");
+    assert_eq!(canon("not (a.Q and b.Q)"), "not (a.Q and b.Q)");
+    assert_eq!(canon("a.Q < -5"), "a.Q < -5");
+}
+
+#[test]
+fn expression_misuse_is_reported() {
+    let head = "extern a = VirtualIn(iname: \"VI1\")\n\
+                extern b = VirtualIn(iname: \"VI2\")\n\
+                extern jal = AutoJalousie(title: \"J\")\n\
+                let schwelle = 28\n";
+    let fails = |line: &str, needle: &str| {
+        let err = Module::parse(&format!("{head}{line}\n"))
+            .and_then(|m| m.expand())
+            .and_then(|m| m.desugar().map(|_| ()))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(needle),
+            "`{line}`: expected {needle:?} in: {err}"
+        );
+    };
+
+    // Parse-level shape errors.
+    fails("jal.AutoShade <- a.Q and \"x\"", "strings have no place");
+    fails("jal.AutoShade <- a.Q < b.Q < 5", "comparisons do not chain");
+    fails(
+        "jal.AutoShade <- (a.Q and b.Q) >= 5",
+        "not parenthesized expressions",
+    );
+    fails("jal.AutoShade <- (a.Q and b.Q", "missing `)`");
+    fails("jal.AutoShade <- a.Q b.Q", "unexpected trailing tokens");
+    fails(
+        "jal.AutoShade <- and a.Q",
+        "expected an operand, found `and`",
+    );
+    fails("jal.AutoShade <- 5", "use `jal.AutoShade = 5`");
+    fails("let and = 5", "reserved word");
+    fails("or = And(I1: a.Q, I2: b.Q)", "reserved word");
+
+    // Validation: references resolve before desugaring, on what the user
+    // wrote.
+    fails(
+        "jal.AutoShade <- nix.Q and a.Q",
+        "reference to undeclared slug `nix`",
+    );
+    fails(
+        "jal.AutoShade <- a.Q and nixkonst >= 5",
+        "undeclared constant `nixkonst`",
+    );
+
+    // Desugar-level semantic errors.
+    fails("jal.AutoShade <- 5 and a.Q", "cannot drive a gate input");
+    fails("jal.AutoShade <- schwelle >= 28", "compares two constants");
+    fails(
+        "jal_autoshade__and1 = And(I1: a.Q, I2: b.Q)\n\
+         jal.AutoShade <- a.Q and b.Q",
+        "claimed by the expression",
+    );
+
+    // A managed sink refuses `<-` exactly like plain wires do.
+    let err = Module::parse(&format!(
+        "{head}gate = And(I1: a.Q, I2: b.Q)\ngate.I1 <- a.Q and b.Q\n"
+    ))
+    .unwrap_err();
+    assert!(err.to_string().contains("targets managed block"), "{err}");
+}

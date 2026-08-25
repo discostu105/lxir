@@ -423,3 +423,45 @@ Anything unverified is an error, not a heuristic:
     block-declaration form — one call syntax, distinguished by case.
     Nested templates and template-local `let`/`extern` are deferred,
     not rejected.
+
+- **D24 — Expressions are sugar over the discrete blocks, owned by their
+  statement** (2026-08-25). The sketch's
+  `jal.AutoShade = sonne.Q and (aussentemp.AQ >= 28)` becomes, in v1
+  grammar, an expression on the wire statement:
+  `jal_sued.AutoShade <- sonne.Q and aussentemp.Q >= schwelle`. `<-`
+  stays the one wiring operator (`=` on a port remains the `Def=`
+  write); a bare `slug.Port` RHS is a plain wire, anything more
+  desugars — before compile, like template expansion — into the
+  live-verified discrete blocks: `and`/`or` → `And`/`Or` (fixed
+  2-input per D8, chains cascade left-associatively), `not` → `Not`,
+  comparisons → the comparator family, with operand order preserved
+  (lhs → `Input1`, rhs → `Input2`), constants becoming `Def=`
+  parameters and ports becoming wires. Each generated block's label is
+  its sub-expression text, so the rule stays readable on the Config
+  canvas — the point of the discrete backend. Precedence `or` < `and` <
+  `not` < comparison; parens group; comparisons take plain operands and
+  do not chain. `and`/`or`/`not` join the reserved words.
+  Identity: synthetic slugs are `<sink>_<port>__<op><n>` (post-order,
+  per-operator counter), keyed in the lockfile like hand-written
+  blocks but marked `expr_owned`. An unchanged expression therefore
+  never re-mints; an edited one re-derives its slugs, and the compiler
+  auto-removes the orphaned `expr_owned` entries — no `removed`
+  statement, because no hand ever wrote those blocks and the
+  expression is their single source of truth. A hand-written slug
+  colliding with a synthetic name is an error naming the expression.
+  Templates compose for free: desugaring runs after expansion, so a
+  body expression's sink prefix uses the instance's actual extern.
+  This work also surfaced (and fixed) a latent mint hazard: the
+  minter's per-run counter restarts at 0, so with an identical mint
+  time a block added in a *later* compile session could reuse a
+  (time, sequence) pair from the first — an object-UUID collision.
+  Compiles now seed the minter past the lock's recorded high-water
+  mark (`counters.next_mint`) and every locked UUID's sequence.
+  - Rejected alternatives: the `formula` backend (one `Formula` block
+    per expression — compact but opaque in the canvas and capped at
+    four inputs) is deferred, not rejected; expressions in block
+    argument lists and parenthesized comparison operands are deferred
+    until a use case demands them; content-hash slugs (stable across
+    edits, but unreadable and leaking into the canvas) lost to the
+    positional scheme, accepting that an edit re-mints the edited
+    expression's nodes — a self-contained blast radius.

@@ -144,9 +144,15 @@ pub fn compile(
     lock: &mut Lockfile,
     opts: &CompileOptions,
 ) -> Result<LoxoneDoc> {
-    // Templates expand first (D23): everything below — validation, the
-    // lockfile, minting — sees only plain statements.
+    // Templates expand first (D23), then expressions desugar (D24):
+    // everything below — the lockfile, minting — sees only plain
+    // statements. Validation runs before desugaring so reference errors
+    // name what the user wrote, and again after as a self-check on the
+    // generated blocks.
     let module = &module.expand()?;
+    module.validate()?;
+    let (module, desugar_info) = module.desugar()?;
+    let module = &module;
     module.validate()?;
     validate_ports(module)?;
 
@@ -203,14 +209,15 @@ pub fn compile(
 
     // --- Sync check: the lock must not know managed blocks the source
     //     lost, unless the removal is authorized (per-slug via `removed`,
-    //     or globally via allow_removals).
+    //     globally via allow_removals, or implicitly for expression-owned
+    //     blocks — editing the expression IS the removal authorization).
     let src_slugs: BTreeSet<String> = module.blocks().map(|b| b.slug.clone()).collect();
     let removed_slugs: BTreeSet<&str> = module.removed().map(|r| r.slug.as_str()).collect();
     if !opts.allow_removals
-        && let Some(slug) = lock
-            .objects
-            .keys()
-            .find(|s| !src_slugs.contains(*s) && !removed_slugs.contains(s.as_str()))
+        && let Some(slug) = lock.objects.iter().find_map(|(s, o)| {
+            (!src_slugs.contains(s) && !removed_slugs.contains(s.as_str()) && !o.expr_owned)
+                .then_some(s)
+        })
     {
         return Err(Error::Compile(format!(
             "managed block `{slug}` is in the lockfile but not in the source; \
@@ -260,6 +267,18 @@ pub fn compile(
                 .map(String::from)
         });
     let mut minter = Minter::new(opts.machine, opts.mint_time_unix);
+    // Never reuse a (time, sequence) pair a previous compile session
+    // handed out: seed past the recorded high-water mark and every locked
+    // UUID (older locks have no mark). With a fixed mint time the bare
+    // per-run counter would mint a later-added block into a collision.
+    minter.seed(lock.counters.next_mint);
+    for o in lock.objects.values() {
+        minter.avoid(&o.uuid);
+        for p in o.ports.values() {
+            minter.avoid(p);
+        }
+    }
+    let mint_base = minter.counter();
     let mut managed: BTreeMap<String, PlannedBlock> = BTreeMap::new();
     let mut py_cursor = next_free_py(lock);
     for block in module.blocks() {
@@ -280,7 +299,12 @@ pub fn compile(
                 ports: BTreeMap::new(),
                 layout: None,
                 page_uuid: None,
+                expr_owned: false,
             });
+        // Ownership follows the current source: a slug the desugarer
+        // produced is expression-owned; one it no longer produces (but a
+        // hand now declares) is hand-owned again.
+        entry.expr_owned = desugar_info.synthetic.contains(&block.slug);
         if entry.uuid.is_empty() {
             entry.block_type = block.block_type.clone();
         } else if entry.block_type != block.block_type {
@@ -336,6 +360,12 @@ pub fn compile(
                 page_uuid,
             },
         );
+    }
+
+    // Record the mint high-water mark — only when something was minted, so
+    // a mint-free compile leaves the lock byte-identical.
+    if minter.counter() != mint_base {
+        lock.counters.next_mint = minter.counter();
     }
 
     // --- Def values on managed ports come from the blocks' parameter

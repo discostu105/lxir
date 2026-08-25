@@ -35,8 +35,18 @@ arg        = string                                (* label; first argument only
 binding    = value                                 (* Def= parameter *)
            | slug "." port ;                       (* wire from that source *)
 
-wire       = slug "." port "<-" slug "." port [ comment ] ;   (* extern target *)
+wire       = slug "." port "<-" ( slug "." port | expr ) [ comment ] ;
+                                    (* extern target; an expression RHS
+                                       desugars into gate blocks (D24) *)
 set        = slug "." port "=" value [ comment ] ;            (* extern target *)
+
+expr       = and-expr { "or" and-expr } ;
+and-expr   = unary { "and" unary } ;
+unary      = "not" unary | primary ;
+primary    = comparison | operand | "(" expr ")" ;
+comparison = operand cmp-op operand ;              (* no chaining *)
+cmp-op     = ">=" | ">" | "<=" | "<" | "==" | "!=" ;
+operand    = slug "." port | number | const-ref ;
 removed    = "removed" slug [ comment ] ;
 moved      = "moved" slug "->" slug [ comment ] ;
 
@@ -74,9 +84,10 @@ Notes:
   it must name a `let` in the same module. A dotted identifier
   (`slug.Port`) is always a **port reference**. String values are always
   quoted.
-- The keywords `let`, `extern`, `removed`, `moved`, `template`, and
-  `end` are reserved, as are v0's `block`, `wire`, `set`, and `use`
-  (migration errors) — none can be used as a slug in statement position.
+- The keywords `let`, `extern`, `removed`, `moved`, `template`, `end`,
+  and the expression operators `and`, `or`, `not` are reserved, as are
+  v0's `block`, `wire`, `set`, and `use` (migration errors) — none can
+  be declared as a name.
 - An instantiation is distinguished from a block declaration by the case
   of the callee: `sued = fassade(…)` (lowercase = template name) vs
   `hoch = GreaterEqual(…)` (PascalCase = block type).
@@ -307,6 +318,45 @@ no nesting, no template-local `let`/`extern` (deferred, D23). `template`
 and `end` are reserved words; `use` is reserved for the v0 migration
 error.
 
+### Expressions — sugar over the discrete blocks
+
+```text
+let schwelle = 28
+
+jal_sued.AutoShade <- sonne.Q and aussentemp.Q >= schwelle
+```
+
+The RHS of `<-` may be a boolean expression; it desugars — before
+compile, like template expansion — into the verified discrete blocks:
+`and`/`or` become `And`/`Or` (fixed 2-input, longer chains cascade
+left-associatively), `not` becomes `Not`, and each comparison becomes
+one comparator block (`>=` → `GreaterEqual`, `>` → `Greater`, `<=` →
+`LessEqual`, `<` → `Less`, `==` → `Equal`, `!=` → `NotEqual`). Operand
+order is preserved: the left side binds `Input1`, the right side
+`Input2`; a port operand becomes a wire, a number or `let` reference
+becomes the port's `Def=` parameter. Each generated block's label is
+its sub-expression text, so the rule stays readable on the Loxone
+Config canvas. A bare `slug.Port` RHS stays a plain wire.
+
+Precedence, loosest to tightest: `or` < `and` < `not` < comparison;
+parentheses group. Comparisons take plain operands (a port, a number,
+or a constant — at least one side a port) and do not chain — write
+`a.AQ >= 5 and a.AQ < 10`, not `5 <= a.AQ < 10`. A constant cannot
+drive a gate input directly; compare it. Gates take boolean ports or
+sub-expressions.
+
+**Identity.** The generated blocks get synthetic slugs
+`<sink>_<port>__<op><n>` (post-order walk, one counter per operator) —
+here `jal_sued_autoshade__ge1` and `jal_sued_autoshade__and1` — and are
+keyed in the lockfile like hand-written blocks, but marked
+expression-owned. An unchanged expression therefore never re-mints.
+Editing the expression re-derives its slugs, and the compiler
+auto-removes the orphaned expression-owned entries — no `removed`
+statement needed: the expression is the blocks' single source of
+truth. Declaring a slug that collides with an expression's synthetic
+namespace is an error. Inside a template body, desugaring runs after
+expansion, so the synthetic prefix uses the instance's actual sink.
+
 ## Name resolution and validation
 
 - Externs, blocks, and `let` constants share one namespace per module;
@@ -350,7 +400,8 @@ with remedies in [agents.md](agents.md#errors-and-remedies).
 ## Versioning
 
 This is v1; there are no v0 files in the wild (pre-release revision).
-Anything not specified here (expressions, imports, template nesting and
-template-local declarations, unit-suffixed values) is future work —
+Anything not specified here (imports, template nesting and
+template-local declarations, the `formula` expression backend,
+unit-suffixed values) is future work —
 see [roadmap.md](roadmap.md). Future versions will keep v1 files parsing
 unchanged or provide a migration tool.

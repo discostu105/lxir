@@ -9,10 +9,42 @@
 
 use crate::error::{Error, Result};
 use crate::ir::ast::{
-    ArgItem, Binding, BindingKind, BlockDecl, Item, Module, PortRef, SetDecl, TemplateDecl,
-    TemplateParam, Value, WireDecl,
+    ArgItem, Binding, BindingKind, BlockDecl, Expr, ExprWireDecl, Item, Module, Operand, PortRef,
+    SetDecl, TemplateDecl, TemplateParam, Value, WireDecl,
 };
 use std::collections::BTreeMap;
+
+/// Rewrite an expression's operands through the instance's slug/value
+/// maps: port operands like wire refs, constant operands like values.
+fn map_expr(
+    e: &Expr,
+    map_ref: &impl Fn(&PortRef) -> PortRef,
+    map_value: &impl Fn(&Value) -> Result<Value>,
+) -> Result<Expr> {
+    let operand = |o: &Operand| -> Result<Operand> {
+        Ok(match o {
+            Operand::Port(p) => Operand::Port(map_ref(p)),
+            Operand::Value(v) => Operand::Value(map_value(v)?),
+        })
+    };
+    Ok(match e {
+        Expr::Or(a, b) => Expr::Or(
+            Box::new(map_expr(a, map_ref, map_value)?),
+            Box::new(map_expr(b, map_ref, map_value)?),
+        ),
+        Expr::And(a, b) => Expr::And(
+            Box::new(map_expr(a, map_ref, map_value)?),
+            Box::new(map_expr(b, map_ref, map_value)?),
+        ),
+        Expr::Not(x) => Expr::Not(Box::new(map_expr(x, map_ref, map_value)?)),
+        Expr::Cmp { op, lhs, rhs } => Expr::Cmp {
+            op: *op,
+            lhs: operand(lhs)?,
+            rhs: operand(rhs)?,
+        },
+        Expr::Atom(o) => Expr::Atom(operand(o)?),
+    })
+}
 
 impl Module {
     /// The module with every template instantiated: `Template` items drop
@@ -185,6 +217,11 @@ impl Module {
                 Item::Wire(w) => out.push(Item::Wire(WireDecl {
                     to: map_ref(&w.to),
                     from: map_ref(&w.from),
+                    comment: w.comment.clone(),
+                })),
+                Item::ExprWire(w) => out.push(Item::ExprWire(ExprWireDecl {
+                    to: map_ref(&w.to),
+                    expr: map_expr(&w.expr, &map_ref, &map_value)?,
                     comment: w.comment.clone(),
                 })),
                 Item::Set(s) => out.push(Item::Set(SetDecl {

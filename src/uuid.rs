@@ -191,6 +191,27 @@ impl Minter {
         tail[2..8].copy_from_slice(&entity);
         self.next(tail)
     }
+
+    /// Raise the counter to at least `c` (never lowers it).
+    pub fn seed(&mut self, c: u32) {
+        self.counter = self.counter.max(c);
+    }
+
+    /// Ensure future mints cannot collide with `uuid`: when it carries this
+    /// minter's time stamp, advance the counter past its sequence. Uuids
+    /// with a different time stamp can never collide and are ignored.
+    pub fn avoid(&mut self, uuid: &str) {
+        if let Ok(u) = LoxUuid::parse(uuid)
+            && u.time == self.time
+        {
+            let c = ((u.mid as u32) << 16) | u.seq as u32;
+            self.counter = self.counter.max(c.saturating_add(1));
+        }
+    }
+
+    pub fn counter(&self) -> u32 {
+        self.counter
+    }
 }
 
 #[cfg(test)]

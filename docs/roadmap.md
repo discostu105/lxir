@@ -131,20 +131,28 @@ types) contradict each other. Results and methodology:
 
 ## Stufe 2 — Expression sugar
 
-`jal.AutoShade = sonne.Q and (aussentemp.AQ >= 28)` desugaring into managed
-comparator/gate blocks. Requires stable synthetic-slug derivation (e.g.
-`__expr1_ge`) so re-desugaring never re-mints — the lockfile keys them like
-hand-written blocks. The sketch proposed two backends, selectable per
-expression:
-
-| Backend | emits | pro | con |
-|---|---|---|---|
-| `discrete` (default) | GreaterEqual / And / Or / Not … | readable on the Config canvas | many blocks |
-| `formula` | one `Formula` block | compact (a 14-block rule becomes 2) | 4-input limit, opaque in the canvas |
-
-Open question: how far the expression semantics go — boolean/comparison
-only (maps 1:1 onto discrete blocks) or the full Formula grammar (`IF`,
-arithmetic).
+- [x] Discrete backend 2026-08-25 (D24): `jal_sued.AutoShade <- sonne.Q
+      and aussentemp.Q >= schwelle` desugars — before compile, like
+      template expansion — into the verified gate/comparator blocks,
+      each labeled with its sub-expression so the rule stays readable on
+      the Config canvas. Precedence `or` < `and` < `not` < comparison;
+      operand order preserved (lhs → Input1); constants become `Def=`,
+      ports become wires; `and`/`or`/`not` reserved. Synthetic slugs
+      `<sink>_<port>__<op><n>` key the lockfile like hand-written blocks
+      but are marked `expr_owned`: an unchanged expression never
+      re-mints, and editing one auto-removes its orphaned blocks — no
+      `removed` statement, the expression is their single source of
+      truth. Composes with templates (desugar runs after expansion).
+      Also fixed en route: the minter now seeds past the lock's
+      `next_mint` high-water mark and every locked UUID, so a block
+      minted in a later compile session can never collide with an
+      earlier one at an identical mint time. Spec:
+      [ir-spec.md](ir-spec.md), rationale: design.md D24.
+- [ ] `formula` backend, selectable per expression: one `Formula` block
+      (compact — a 14-block rule becomes 2) instead of discrete gates;
+      capped at 4 inputs, opaque in the canvas. With it, the question
+      how far the semantics go — boolean/comparison only, or the full
+      Formula grammar (`IF`, arithmetic).
 
 ## Stufe 3 — Verification loop
 

@@ -215,20 +215,22 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
         _ => return Err("usage: lxir check [--json] <module.lxir>".into()),
     };
     // Full static validation: parse (syntax + references), then template
-    // expansion, then types, ports, and wire directions against the
-    // builtin table. Counts describe the source; the deep checks run on
-    // the expanded form (what compile will see).
+    // expansion and expression desugaring, then types, ports, and wire
+    // directions against the builtin table. Counts describe the source;
+    // the deep checks run on the desugared form (what compile will see).
     let checked = load_module(path).and_then(|m| {
         m.expand()
             .and_then(|x| x.validate().map(|()| x))
-            .and_then(|x| lxir::ir::validate_ports(&x).map(|()| x))
-            .map(|x| (m, x))
+            .and_then(|x| x.desugar())
+            .and_then(|(x, d)| x.validate().map(|()| (x, d)))
+            .and_then(|(x, d)| lxir::ir::validate_ports(&x).map(|()| (x, d)))
+            .map(|(x, d)| (m, x, d))
             .map_err(|e| (path.to_string(), e))
     });
     let count =
         |m: &Module, f: fn(&lxir::ir::Item) -> bool| m.items.iter().filter(|i| f(i)).count();
     match checked {
-        Ok((m, x)) => {
+        Ok((m, x, d)) => {
             let templates = count(&m, |i| matches!(i, lxir::ir::Item::Template(_)));
             let instances = count(&m, |i| matches!(i, lxir::ir::Item::Instance(_)));
             if json {
@@ -240,6 +242,7 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
                         "lets": m.lets().count(), "removed": m.removed().count(),
                         "moved": m.moved().count(),
                         "templates": templates, "instances": instances,
+                        "expressions": d.expressions,
                         "expanded_blocks": x.blocks().count(),
                     }})
                 );
@@ -259,6 +262,13 @@ fn cmd_check(args: &[&str]) -> Result<ExitCode, AnyError> {
                     println!(
                         "    {templates} templates, {instances} instances -> {} blocks expanded",
                         x.blocks().count()
+                    );
+                }
+                if d.expressions > 0 {
+                    println!(
+                        "    {} expressions -> {} blocks desugared",
+                        d.expressions,
+                        d.synthetic.len()
                     );
                 }
             }

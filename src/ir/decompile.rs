@@ -637,11 +637,13 @@ fn is_ident(s: &str) -> bool {
     }
 }
 
-/// Statement-initial keywords (v1, plus reserved v0 words). A slug
-/// colliding with one would change the meaning of the line it starts, so
-/// [`SlugTable`] never hands them out.
+/// Statement-initial keywords (v1, plus reserved v0 words) and the
+/// expression operators (D24). A slug colliding with one would change the
+/// meaning of the line or expression it appears in, so [`SlugTable`] never
+/// hands them out and the parser refuses them as names.
 pub(super) const RESERVED: &[&str] = &[
-    "let", "extern", "removed", "moved", "template", "end", "use", "block", "wire", "set",
+    "let", "extern", "removed", "moved", "template", "end", "use", "block", "wire", "set", "and",
+    "or", "not",
 ];
 
 /// Slug generation with umlaut transliteration and `_2`-style
@@ -714,9 +716,12 @@ mod tests {
     #[test]
     fn slug_table_dedupes() {
         let mut t = SlugTable::default();
-        assert_eq!(t.assign("Or"), "or");
+        // `or` itself is reserved (expression operator, D24), so the
+        // first Or block already dedupes.
         assert_eq!(t.assign("Or"), "or_2");
         assert_eq!(t.assign("Or"), "or_3");
+        assert_eq!(t.assign("Memory"), "memory");
+        assert_eq!(t.assign("Memory"), "memory_2");
     }
 
     #[test]

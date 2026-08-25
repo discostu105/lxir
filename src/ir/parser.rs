@@ -19,6 +19,8 @@ enum Tok {
     RParen,
     LBrace,
     RBrace,
+    /// Comparison operators (expression sugar, D24).
+    Cmp(CmpOp),
 }
 
 fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
@@ -50,7 +52,30 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
             }
             '=' => {
                 chars.next();
-                toks.push(Tok::Eq);
+                if chars.peek() == Some(&'=') {
+                    chars.next();
+                    toks.push(Tok::Cmp(CmpOp::Eq));
+                } else {
+                    toks.push(Tok::Eq);
+                }
+            }
+            '>' => {
+                chars.next();
+                if chars.peek() == Some(&'=') {
+                    chars.next();
+                    toks.push(Tok::Cmp(CmpOp::Ge));
+                } else {
+                    toks.push(Tok::Cmp(CmpOp::Gt));
+                }
+            }
+            '!' => {
+                chars.next();
+                if chars.peek() == Some(&'=') {
+                    chars.next();
+                    toks.push(Tok::Cmp(CmpOp::Ne));
+                } else {
+                    return Err(err("unexpected `!` (not-equal is `!=`)".into()));
+                }
             }
             '(' => {
                 chars.next();
@@ -70,13 +95,18 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
             }
             '<' => {
                 chars.next();
-                if chars.peek() == Some(&'-') {
-                    chars.next();
-                    toks.push(Tok::LArrow);
-                } else {
-                    return Err(err(
-                        "unexpected `<` (a wire is `target.Port <- source.Port`)".into(),
-                    ));
+                // `<-` wins over `<` followed by a negative number: write
+                // `x < -5` with a space (canonical form) to compare.
+                match chars.peek() {
+                    Some(&'-') => {
+                        chars.next();
+                        toks.push(Tok::LArrow);
+                    }
+                    Some(&'=') => {
+                        chars.next();
+                        toks.push(Tok::Cmp(CmpOp::Le));
+                    }
+                    _ => toks.push(Tok::Cmp(CmpOp::Lt)),
                 }
             }
             '-' => {
@@ -583,33 +613,40 @@ fn parse_ident_statement(
         [Tok::Ident(slug), Tok::Eq, Tok::Str(_)] => Err(err(format!(
             "`{slug} = \"…\"` — did you mean `let {slug} = \"…\"`?"
         ))),
-        // slug.Port <- slug.Port — a wire onto an extern port.
+        // slug.Port <- … — a plain wire (`slug.Port` RHS) or an
+        // expression that desugars into gate/comparator blocks (D24).
         [
             Tok::Ident(ts),
             Tok::Dot,
             Tok::Ident(tp),
             Tok::LArrow,
-            Tok::Ident(fs),
-            Tok::Dot,
-            Tok::Ident(fp),
+            rest @ ..,
         ] => {
-            items.push(Item::Wire(WireDecl {
-                to: PortRef {
-                    slug: ts.clone(),
-                    port: tp.clone(),
-                },
-                from: PortRef {
-                    slug: fs.clone(),
-                    port: fp.clone(),
-                },
-                comment,
-            }));
+            let to = PortRef {
+                slug: ts.clone(),
+                port: tp.clone(),
+            };
+            if rest.is_empty() {
+                return Err(err(format!(
+                    "expected a source after `<-` (`{ts}.{tp} <- <slug>.<Port>`, or an \
+                     expression like `{ts}.{tp} <- a.Q and b.AQ >= 28`); to assign a \
+                     value, use `{ts}.{tp} = <value>`"
+                )));
+            }
+            match parse_expr(rest, lineno)? {
+                Expr::Atom(Operand::Port(from)) => {
+                    items.push(Item::Wire(WireDecl { to, from, comment }));
+                }
+                Expr::Atom(Operand::Value(v)) => {
+                    return Err(err(format!(
+                        "`{to} <- {v}` wires a constant — to assign a value, \
+                         use `{to} = {v}`"
+                    )));
+                }
+                expr => items.push(Item::ExprWire(ExprWireDecl { to, expr, comment })),
+            }
             Ok(())
         }
-        [Tok::Ident(ts), Tok::Dot, Tok::Ident(tp), Tok::LArrow, ..] => Err(err(format!(
-            "expected a source port after `<-` (`{ts}.{tp} <- <slug>.<Port>`); \
-             to assign a value, use `{ts}.{tp} = <value>`"
-        ))),
         // slug.Port = value — a Def write on an extern port.
         [
             Tok::Ident(ts),
@@ -762,6 +799,12 @@ fn value_of(tok: &Tok, lineno: usize) -> Result<Value> {
 }
 
 fn check_slug(s: &str, lineno: usize) -> Result<String> {
+    if super::decompile::RESERVED.contains(&s) {
+        return Err(Error::IrParse {
+            line: lineno,
+            msg: format!("`{s}` is a reserved word and cannot be used as a name"),
+        });
+    }
     let ok = s.chars().next().is_some_and(|c| c.is_ascii_lowercase())
         && s.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
@@ -772,6 +815,139 @@ fn check_slug(s: &str, lineno: usize) -> Result<String> {
             line: lineno,
             msg: format!("invalid slug `{s}` (expected [a-z][a-z0-9_]*)"),
         })
+    }
+}
+
+/// Parse the RHS of `<-` as an expression (D24). Precedence, loosest to
+/// tightest: `or` < `and` < `not` < comparison; parens group; comparisons
+/// take plain operands and do not chain. Must consume every token.
+fn parse_expr(toks: &[Tok], lineno: usize) -> Result<Expr> {
+    let mut p = ExprParser {
+        toks,
+        pos: 0,
+        lineno,
+    };
+    let e = p.or_level()?;
+    if p.pos != toks.len() {
+        return Err(p.err("unexpected trailing tokens after the expression".into()));
+    }
+    Ok(e)
+}
+
+struct ExprParser<'t> {
+    toks: &'t [Tok],
+    pos: usize,
+    lineno: usize,
+}
+
+impl ExprParser<'_> {
+    fn err(&self, msg: String) -> Error {
+        Error::IrParse {
+            line: self.lineno,
+            msg,
+        }
+    }
+
+    fn peek(&self) -> Option<&Tok> {
+        self.toks.get(self.pos)
+    }
+
+    fn keyword(&self, kw: &str) -> bool {
+        matches!(self.peek(), Some(Tok::Ident(s)) if s == kw)
+    }
+
+    fn or_level(&mut self) -> Result<Expr> {
+        let mut e = self.and_level()?;
+        while self.keyword("or") {
+            self.pos += 1;
+            e = Expr::Or(Box::new(e), Box::new(self.and_level()?));
+        }
+        Ok(e)
+    }
+
+    fn and_level(&mut self) -> Result<Expr> {
+        let mut e = self.unary()?;
+        while self.keyword("and") {
+            self.pos += 1;
+            e = Expr::And(Box::new(e), Box::new(self.unary()?));
+        }
+        Ok(e)
+    }
+
+    fn unary(&mut self) -> Result<Expr> {
+        if self.keyword("not") {
+            self.pos += 1;
+            return Ok(Expr::Not(Box::new(self.unary()?)));
+        }
+        self.primary()
+    }
+
+    fn primary(&mut self) -> Result<Expr> {
+        if matches!(self.peek(), Some(Tok::LParen)) {
+            self.pos += 1;
+            let e = self.or_level()?;
+            if !matches!(self.peek(), Some(Tok::RParen)) {
+                return Err(self.err("missing `)` in the expression".into()));
+            }
+            self.pos += 1;
+            if let Some(Tok::Cmp(op)) = self.peek() {
+                return Err(self.err(format!(
+                    "`(…) {}` — comparison operands are plain ports, numbers, or \
+                     constants, not parenthesized expressions (v1)",
+                    op.symbol()
+                )));
+            }
+            return Ok(e);
+        }
+        let lhs = self.operand()?;
+        if let Some(Tok::Cmp(op)) = self.peek() {
+            let op = *op;
+            self.pos += 1;
+            let rhs = self.operand()?;
+            if matches!(self.peek(), Some(Tok::Cmp(_))) {
+                return Err(self.err(
+                    "comparisons do not chain (`a < b < c`) — split into two \
+                     comparisons joined with `and`"
+                        .into(),
+                ));
+            }
+            return Ok(Expr::Cmp { op, lhs, rhs });
+        }
+        Ok(Expr::Atom(lhs))
+    }
+
+    fn operand(&mut self) -> Result<Operand> {
+        match (
+            self.toks.get(self.pos),
+            self.toks.get(self.pos + 1),
+            self.toks.get(self.pos + 2),
+        ) {
+            (Some(Tok::Ident(kw)), _, _) if matches!(kw.as_str(), "and" | "or" | "not") => {
+                Err(self.err(format!("expected an operand, found `{kw}`")))
+            }
+            (Some(Tok::Ident(s)), Some(Tok::Dot), Some(Tok::Ident(p))) => {
+                let r = Operand::Port(PortRef {
+                    slug: s.clone(),
+                    port: p.clone(),
+                });
+                self.pos += 3;
+                Ok(r)
+            }
+            (Some(Tok::Ident(s)), _, _) => {
+                let r = Operand::Value(Value::Ref(s.clone()));
+                self.pos += 1;
+                Ok(r)
+            }
+            (Some(Tok::Num(n)), _, _) => {
+                let r = Operand::Value(Value::Number(n.clone()));
+                self.pos += 1;
+                Ok(r)
+            }
+            (Some(Tok::Str(_)), _, _) => Err(self.err(
+                "strings have no place in an expression — it compares numbers and ports".into(),
+            )),
+            _ => Err(self.err("expected an operand: `slug.Port`, a number, or a constant".into())),
+        }
     }
 }
 
@@ -1047,10 +1223,7 @@ sonne.Qm = 30 # override
         let e = Module::parse("extern j = AutoJalousie(title: \"J\")\nj.Pos = j.Q\n").unwrap_err();
         assert!(e.to_string().contains("use `<-` to wire"), "{e}");
         let e = Module::parse("extern j = AutoJalousie(title: \"J\")\nj.Pos <- 5\n").unwrap_err();
-        assert!(
-            e.to_string().contains("use `j.Pos = <value>`") || e.to_string().contains("= <value>"),
-            "{e}"
-        );
+        assert!(e.to_string().contains("use `j.Pos = 5`"), "{e}");
         let e = Module::parse("x = 28\n").unwrap_err();
         assert!(e.to_string().contains("let x = 28"), "{e}");
     }
