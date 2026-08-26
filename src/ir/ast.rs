@@ -1347,10 +1347,8 @@ impl Module {
                         }
                     }
                 }
-                Item::Page(p) => {
-                    if p.title.is_empty() {
-                        return compile_err("`page \"\"`: the page title must not be empty".into());
-                    }
+                Item::Page(p) if p.title.is_empty() => {
+                    return compile_err("`page \"\"`: the page title must not be empty".into());
                 }
                 _ => {}
             }
