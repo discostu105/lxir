@@ -202,21 +202,25 @@ types) contradict each other. Results and methodology:
 
 ## Stufe 3 — Verification loop
 
-- [ ] Integration with `lox-cli sim`: compile → simulate → assert, as a
-      test harness (`lxir test`?).
-- [ ] A test DSL compiled straight to the simulator, bypassing the XML
-      round-trip entirely (the sketch's first-class tests):
-
-      ```text
-      test "Windalarm gewinnt" {
-        given { aussentemp = 30, sonne = 1, wind_alarm = 1 }
-        after 10 ticks (dt = 0.1)
-        expect jal_sued.Safety == 1
-      }
-      ```
-
-      Time-dependent logic needs simulated-clock support (`clock 23:00`),
-      a known gap in the current simulator.
+- [x] `lxir test` shipped 2026-08-26 (D36): `test "Name" … end` blocks
+      in the module itself — injections (`slug.Port = value`),
+      `tick <n> [dt <s>]`, `expect slug.Port <cmp> <value>` (`==`, `>`,
+      `>=`, `<`, `<=`, `~=`), `clock "HH:MM"` / `"YYYY-MM-DD HH:MM"`.
+      The command compiles in memory against the lockfile, maps slugs to
+      simulator addresses ("Title.Port", room-qualified on duplicate
+      titles), generates SimSpec JSON and shells out to `lox sim run`
+      (discovered via `--lox`, `$LOX`, or PATH), then attributes each
+      flattened check back to its `expect` line. Tests survive `fmt`,
+      `rename`, decompile-adopt; references validate on the flattened
+      (expanded + desugared) form so expects can name template-expanded
+      and desugared slugs. The sketch's `given`/`after` braces became
+      line-oriented statements to match the rest of the DSL. Simulated
+      clock: `lox sim`'s ClockSpec already existed — the "known gap"
+      note was stale. Along the way lox-sim (local fork) learned to
+      honor wires into parameter connectors (Formula Input1–4 arrive as
+      params); the pool example's PV test exposed the bug.
+- [x] CI recipe: `examples/ci.sh` runs `lxir test` when a `lox` binary
+      is available (`LOX=` or PATH), skips with a note otherwise.
 - [x] CI recipe 2026-08-25: `examples/ci.sh`, a tree-untouched check path
       for a repo holding lxir sources — `check`, `fmt --check`, lock
       currency (compile against a lock copy must change nothing),

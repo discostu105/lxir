@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comment" },
     { "include": "#template" },
+    { "include": "#test" },
     { "include": "#end" },
     { "include": "#page" },
     { "include": "#extern" },
@@ -51,7 +52,7 @@
         },
         {
           "name": "keyword.operator.comparison.lxir",
-          "match": ">=|<=|==|!=|<(?!-)|>"
+          "match": ">=|<=|==|!=|~=|<(?!-)|>"
         },
         {
           "name": "keyword.operator.arithmetic.lxir",
@@ -107,6 +108,36 @@
     "end": {
       "name": "keyword.control.end.lxir",
       "match": "^\\s*(end)\\s*$"
+    },
+    "test": {
+      "patterns": [
+        {
+          "match": "^\\s*(test)\\s+(?=\")",
+          "captures": {
+            "1": { "name": "keyword.control.test.lxir" }
+          }
+        },
+        {
+          "match": "^\\s*(tick)\\s+([0-9]+)(?:\\s+(dt)\\b)?",
+          "captures": {
+            "1": { "name": "keyword.control.tick.lxir" },
+            "2": { "name": "constant.numeric.lxir" },
+            "3": { "name": "keyword.control.dt.lxir" }
+          }
+        },
+        {
+          "match": "^\\s*(expect)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.expect.lxir" }
+          }
+        },
+        {
+          "match": "^\\s*(clock)\\s+(?=\")",
+          "captures": {
+            "1": { "name": "keyword.control.clock.lxir" }
+          }
+        }
+      ]
     },
     "extern": {
       "match": "^\\s*(extern)\\s+([a-z][a-z0-9_]*)\\s*(=)\\s*([A-Z][A-Za-z0-9]*)\\s*(\\()\\s*(uuid|iname|title)\\s*(:)",

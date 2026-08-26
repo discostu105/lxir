@@ -7,7 +7,7 @@
 use lxir::ir::{
     CompileOptions, DecompileOptions, DecompileScope, Item, LintFinding, Module, adopt, adopt_one,
     adopt_pages, apply_rekeys, compile, decompile, decompile_pages, lint_dead_outputs, lint_source,
-    lock_rekeys, rename_slug, slugify, valid_slug, validate_ports,
+    lock_rekeys, plan_tests, read_results, rename_slug, slugify, valid_slug, validate_ports,
 };
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc, Project};
@@ -55,6 +55,17 @@ USAGE:
         A base written by a different Loxone release than the lock's
         ConfigVersion pin is refused; after qualifying the release
         (one oracle open+save run), --accept-version <v> re-pins it.
+
+  lxir test [<project-dir>] [--filter <substr>] [--lox <path>] [--show-spec]
+            [--base <cfg.Loxone>] [--module <m.lxir | module-dir>]
+            [--lock <lock.json>] [--serial <12-hex>] [--page <title>]
+        Run the module's `test \"…\"` … `end` scenarios (D36): compile in
+        memory (the lockfile is never written), translate each test into
+        a simulator scenario, and execute it with `lox sim run`
+        (lox-cli). The lox binary is found via --lox, then the LOX
+        environment variable, then PATH. --filter selects tests whose
+        name contains the substring; --show-spec prints the generated
+        scenario JSON instead of running. Exit 1 when a test fails.
 
   lxir rename <old-slug> <new-slug> [<project-dir>]
         Rename a module-level name — extern, block, constant, template,
@@ -166,6 +177,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["check", rest @ ..] => cmd_check(rest),
         ["fmt", rest @ ..] => cmd_fmt(rest),
         ["compile", rest @ ..] => cmd_compile(rest),
+        ["test", rest @ ..] => cmd_test(rest),
         ["rename", rest @ ..] => cmd_rename(rest),
         ["lint", rest @ ..] => cmd_lint(rest),
         ["decompile", rest @ ..] => cmd_decompile(rest),
@@ -540,6 +552,170 @@ fn cmd_compile(args: &[&str]) -> Result<ExitCode, AnyError> {
         lock_path.display()
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_test(args: &[&str]) -> Result<ExitCode, AnyError> {
+    let mut project_dir: Option<PathBuf> = None;
+    let mut base = None;
+    let mut module = None;
+    let mut lock_path: Option<PathBuf> = None;
+    let mut serial = None;
+    let mut page = None;
+    let mut filter: Option<String> = None;
+    let mut lox_flag: Option<String> = None;
+    let mut show_spec = false;
+
+    let mut it = args.iter();
+    while let Some(&flag) = it.next() {
+        let mut value = || -> Result<&str, AnyError> {
+            it.next()
+                .copied()
+                .ok_or_else(|| format!("{flag} needs a value").into())
+        };
+        match flag {
+            "--base" => base = Some(value()?.to_string()),
+            "--module" => module = Some(value()?.to_string()),
+            "--lock" => lock_path = Some(PathBuf::from(value()?)),
+            "--serial" => serial = Some(value()?.to_string()),
+            "--page" => page = Some(value()?.to_string()),
+            "--filter" => filter = Some(value()?.to_string()),
+            "--lox" => lox_flag = Some(value()?.to_string()),
+            "--show-spec" => show_spec = true,
+            dir if !dir.starts_with('-') && project_dir.is_none() => {
+                project_dir = Some(PathBuf::from(dir));
+            }
+            other => return Err(format!("unknown flag `{other}` — run `lxir help`").into()),
+        }
+    }
+    let project = match &project_dir {
+        Some(dir) => Some(Project::load(dir)?),
+        None if [&base, &module].iter().any(|o| o.is_none()) || lock_path.is_none() => {
+            match Project::find(Path::new(".")) {
+                Some(f) => Some(Project::load(&f)?),
+                None => None,
+            }
+        }
+        None => None,
+    };
+    let (base, module_path, lock_path) = match &project {
+        Some(p) => (
+            base.unwrap_or_else(|| p.base.display().to_string()),
+            module.unwrap_or_else(|| p.module.display().to_string()),
+            lock_path.unwrap_or_else(|| p.lock.clone()),
+        ),
+        None => {
+            let (Some(base), Some(module), Some(lock_path)) = (base, module, lock_path) else {
+                return Err("test requires --base, --module, and --lock \
+                     (or a lox.toml project — run `lxir help`)"
+                    .into());
+            };
+            (base, module, lock_path)
+        }
+    };
+
+    let base_doc = read_doc(&base)?;
+    let m = read_module(&module_path)?;
+    let lock = if lock_path.exists() {
+        Lockfile::load(&lock_path)?
+    } else {
+        Lockfile::new()
+    };
+    let serial = serial
+        .or_else(|| project.as_ref().and_then(|p| p.serial.clone()))
+        .or_else(|| lock.target.miniserver_serial.clone())
+        .ok_or("no --serial given, none in the project file, and the lockfile has none recorded")?;
+    let opts = CompileOptions {
+        machine: parse_serial(&serial)?,
+        accept_version: None,
+        mint_time_unix: 0,
+        page_title: page.or_else(|| project.as_ref().and_then(|p| p.page.clone())),
+        allow_removals: false,
+    };
+    // Compile against a lock COPY — testing never moves the baseline.
+    let mut lock_copy = lock;
+    let compiled = compile(&base_doc, &m, &mut lock_copy, &opts)?;
+
+    // Tests may reference template-expanded and expression-owned slugs;
+    // plan on the same flattened view the compiler used.
+    let (flat, _) = m.expand()?.desugar()?;
+    let plan = plan_tests(&flat, &lock_copy, &compiled, filter.as_deref())?;
+    if plan.runs.is_empty() {
+        match &filter {
+            Some(f) => println!("no tests match --filter {f}"),
+            None => println!("no tests in {module_path}"),
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    if show_spec {
+        println!("{}", plan.specs_json());
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // The simulator lives in lox-cli (`lox sim`): --lox flag, LOX env
+    // var, then PATH.
+    let lox = lox_flag
+        .or_else(|| std::env::var("LOX").ok())
+        .unwrap_or_else(|| "lox".to_string());
+    let probe = std::process::Command::new(&lox)
+        .args(["sim", "--help"])
+        .output();
+    if !probe.map(|o| o.status.success()).unwrap_or(false) {
+        return Err(format!(
+            "no sim-capable `lox` binary (tried `{lox}`) — install lox-cli \
+             (github.com/eisber/lox-cli) or point --lox / the LOX environment \
+             variable at it"
+        )
+        .into());
+    }
+
+    let tmp = std::env::temp_dir().join(format!("lxir-test-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp)?;
+    let cfg_path = tmp.join("compiled.Loxone");
+    let specs_path = tmp.join("specs.json");
+    std::fs::write(&cfg_path, compiled.to_bytes())?;
+    std::fs::write(&specs_path, plan.specs_json())?;
+    let output = std::process::Command::new(&lox)
+        .arg("sim")
+        .arg("run")
+        .arg(&cfg_path)
+        .arg("--sim-file")
+        .arg(&specs_path)
+        .args(["--json", "--non-interactive"])
+        .output();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let output = output?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        return Err(format!(
+            "`{lox} sim run` produced no output; stderr: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+
+    let results = read_results(&stdout, &plan)?;
+    let mut failed = 0;
+    for r in &results {
+        if r.pass {
+            println!("test \"{}\" ... ok", r.name);
+        } else {
+            failed += 1;
+            println!("test \"{}\" ... FAILED", r.name);
+            for line in &r.failures {
+                println!("    {line}");
+            }
+        }
+    }
+    println!(
+        "{} tests: {} passed, {failed} failed",
+        results.len(),
+        results.len() - failed
+    );
+    Ok(if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 fn cmd_rename(args: &[&str]) -> Result<ExitCode, AnyError> {

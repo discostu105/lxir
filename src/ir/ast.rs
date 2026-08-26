@@ -37,6 +37,10 @@ pub enum Item {
     /// after it, until the next `page` statement; blocks above the first
     /// `page` statement keep the compile options' default page.
     Page(PageDecl),
+    /// `test "Name"` … `end` — a simulator-backed scenario (D36).
+    /// `compile` ignores it entirely; `lxir test` compiles the module in
+    /// memory and replays the body against `lox sim run` (lox-cli).
+    Test(TestDecl),
     /// A whole-line `#` comment, stored verbatim (text after the `#`) so
     /// formatting is non-destructive. Statements carry their own trailing
     /// comments; argument lists carry theirs as [`ArgItem`]s.
@@ -679,6 +683,129 @@ impl fmt::Display for TemplateParam {
     }
 }
 
+/// `test "<name>"` … `end` — an imperative simulator scenario (D36). The
+/// body reads top to bottom: port assignments inject signals, `tick`
+/// advances simulated time, `expect` asserts a port's value, `clock` sets
+/// the simulated wall-clock. `lxir test` groups the statements into
+/// `lox sim` steps at the `tick` boundaries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestDecl {
+    /// Display name, quoted in source. Unique across the module.
+    pub name: String,
+    pub body: Vec<TestItem>,
+    /// Trailing `#` comment on the header line, verbatim.
+    pub comment: Option<String>,
+    /// Trailing `#` comment on the `end` line, verbatim.
+    pub end_comment: Option<String>,
+}
+
+/// One statement of a `test` body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestItem {
+    /// `slug.Port = value` — inject a signal, persistently for the rest
+    /// of the scenario. On an output connector the injection overrides
+    /// the block (how calendar-driven Mode blocks are driven in the sim).
+    Inject(SetDecl),
+    /// `tick <n> [dt <seconds>]` — advance the simulation `n` ticks of
+    /// `dt` simulated seconds each (default 1s; a unit value like
+    /// `dt 100ms` scales).
+    Tick(TickDecl),
+    /// `expect slug.Port <cmp> <value>` — assert a port's value after the
+    /// preceding `tick`.
+    Expect(ExpectDecl),
+    /// `clock "HH:MM[:SS]"` or `clock "YYYY-MM-DD HH:MM[:SS]"` — set the
+    /// simulated wall-clock (drives DayTimer/astro blocks); it advances
+    /// by `dt` each tick.
+    Clock(ClockDecl),
+    /// Whole-line `#` comment, verbatim.
+    Comment(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickDecl {
+    pub n: u64,
+    /// Simulated seconds per tick; `None` = the default (1s). Always
+    /// `Number` or `Unit`.
+    pub dt: Option<Value>,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectDecl {
+    pub port: PortRef,
+    pub cmp: TestCmp,
+    /// Always numeric: `Number`, `Unit`, or a `let` reference.
+    pub value: Value,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockDecl {
+    /// `"HH:MM[:SS]"` or `"YYYY-MM-DD HH:MM[:SS]"`, verbatim.
+    pub spec: String,
+    /// Trailing `#` comment on the statement line, verbatim.
+    pub comment: Option<String>,
+}
+
+/// Comparators the simulator supports in `expect` (there is no `!=`).
+/// `~=` passes within 5% of the expected value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestCmp {
+    Eq,
+    Ge,
+    Gt,
+    Le,
+    Lt,
+    Approx,
+}
+
+impl TestCmp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            TestCmp::Eq => "==",
+            TestCmp::Ge => ">=",
+            TestCmp::Gt => ">",
+            TestCmp::Le => "<=",
+            TestCmp::Lt => "<",
+            TestCmp::Approx => "~=",
+        }
+    }
+}
+
+impl fmt::Display for TestCmp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.symbol())
+    }
+}
+
+impl fmt::Display for TestItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let tail = |c: &Option<String>| c.as_ref().map(|t| format!(" #{t}")).unwrap_or_default();
+        match self {
+            TestItem::Inject(s) => write!(f, "{} = {}{}", s.target, s.value, tail(&s.comment)),
+            TestItem::Tick(t) => {
+                write!(f, "tick {}", t.n)?;
+                if let Some(dt) = &t.dt {
+                    write!(f, " dt {dt}")?;
+                }
+                f.write_str(&tail(&t.comment))
+            }
+            TestItem::Expect(e) => write!(
+                f,
+                "expect {} {} {}{}",
+                e.port,
+                e.cmp,
+                e.value,
+                tail(&e.comment)
+            ),
+            TestItem::Clock(c) => write!(f, "clock {}{}", quote(&c.spec), tail(&c.comment)),
+            TestItem::Comment(text) => write!(f, "#{text}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PortRef {
     pub slug: String,
@@ -852,6 +979,15 @@ impl Module {
                 return compile_err(format!("duplicate name `{name}`"));
             }
         }
+        // Tests are named by display string, in a namespace of their own.
+        let mut test_names: BTreeSet<&str> = BTreeSet::new();
+        for item in &self.items {
+            if let Item::Test(t) = item
+                && !test_names.insert(t.name.as_str())
+            {
+                return compile_err(format!("duplicate test name {}", quote(&t.name)));
+            }
+        }
         let block_type = |slug: &str| -> &str {
             self.blocks()
                 .find(|b| b.slug == slug)
@@ -902,6 +1038,15 @@ impl Module {
                 }
             }
         };
+        // Whether every template and expression has already been lowered
+        // into plain blocks. Test bodies may reference the slugs those
+        // lowerings mint, so their references only resolve on this form.
+        let flattened = !self.items.iter().any(|i| match i {
+            Item::Template(_) | Item::Instance(_) | Item::ExprWire(_) => true,
+            Item::Block(b) => b.bindings().any(|x| matches!(x.kind, BindingKind::Expr(_))),
+            _ => false,
+        });
+
         // Expression operands, shared by `<-` expressions and expression
         // bindings in argument lists: ports must resolve, constants must be
         // numbers or `let` references.
@@ -1019,6 +1164,43 @@ impl Module {
                         ));
                     }
                     value_refs(&s.value)?;
+                }
+                // Unlike `Set`, a test may target managed blocks — driving
+                // their inputs (and overriding outputs) is the point. Slug
+                // references are deferred to the flattened view: tests may
+                // name template-expanded blocks (`frost_alarm`) and
+                // expression-owned blocks (`…__and2`), which only exist
+                // after expansion and desugaring — compile/check/test all
+                // re-validate that form.
+                Item::Test(t) => {
+                    for stmt in &t.body {
+                        let numeric = |target: &dyn fmt::Display, v: &Value| -> Result<()> {
+                            if let Value::Str(s) = v {
+                                return compile_err(format!(
+                                    "`{target}` gets string {} in test {} — the \
+                                     simulator handles numbers only",
+                                    quote(s),
+                                    quote(&t.name)
+                                ));
+                            }
+                            value_refs(v)
+                        };
+                        match stmt {
+                            TestItem::Inject(s) => {
+                                if flattened {
+                                    object_ref(&s.target)?;
+                                }
+                                numeric(&s.target, &s.value)?;
+                            }
+                            TestItem::Expect(e) => {
+                                if flattened {
+                                    object_ref(&e.port)?;
+                                }
+                                numeric(&e.port, &e.value)?;
+                            }
+                            TestItem::Tick(_) | TestItem::Clock(_) | TestItem::Comment(_) => {}
+                        }
+                    }
                 }
                 Item::Template(t) => {
                     // Parameters and body slugs share one template-local
@@ -1261,6 +1443,7 @@ impl Module {
                 // A `page` statement heads a placement section — the blank
                 // line on both sides comes from the family change.
                 Item::Page(_) => 10,
+                Item::Test(_) => 11,
             }
         }
         let mut out = String::new();
@@ -1379,6 +1562,14 @@ impl Module {
                 }
                 Item::Page(p) => {
                     out.push_str(&format!("page {}{}\n", quote(&p.title), tail(&p.comment)));
+                }
+                Item::Test(t) => {
+                    out.push_str(&format!("test {}{}\n", quote(&t.name), tail(&t.comment)));
+                    for stmt in &t.body {
+                        out.push_str(&format!("\t{stmt}\n"));
+                    }
+                    out.push_str(&format!("end{}\n", tail(&t.end_comment)));
+                    prev_multiline = true;
                 }
                 Item::Comment(text) => {
                     out.push_str(&format!("#{text}\n"));

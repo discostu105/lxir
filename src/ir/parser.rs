@@ -23,6 +23,8 @@ enum Tok {
     RBrace,
     /// Comparison operators (expression sugar, D24).
     Cmp(CmpOp),
+    /// `~=` — approximately-equal, valid only in a test `expect` (D36).
+    Approx,
     /// Arithmetic operators (formula backend, D24). `-` is only lexed as
     /// binary minus after a token that can end an operand — everywhere
     /// else it starts a negative number.
@@ -84,6 +86,15 @@ fn lex(line: &str, lineno: usize) -> Result<(Vec<Tok>, Option<String>)> {
                     toks.push(Tok::Cmp(CmpOp::Ne));
                 } else {
                     return Err(err("unexpected `!` (not-equal is `!=`)".into()));
+                }
+            }
+            '~' => {
+                chars.next();
+                if chars.peek() == Some(&'=') {
+                    chars.next();
+                    toks.push(Tok::Approx);
+                } else {
+                    return Err(err("unexpected `~` (approximately-equal is `~=`)".into()));
                 }
             }
             '+' => {
@@ -302,6 +313,8 @@ pub fn parse(src: &str) -> Result<Module> {
     let mut open_call: Option<BlockDecl> = None;
     // A `template` whose body is still open (until `end`).
     let mut open_template: Option<TemplateDecl> = None;
+    // A `test` whose body is still open (until `end`) — D36.
+    let mut open_test: Option<TestDecl> = None;
 
     for (i, raw) in src.lines().enumerate() {
         let lineno = i + 1;
@@ -335,14 +348,42 @@ pub fn parse(src: &str) -> Result<Module> {
             // Blank line, or a whole-line comment — kept verbatim as an
             // item so formatting is non-destructive.
             if let Some(text) = comment {
-                sink(&mut open_template, &mut items).push(Item::Comment(text));
+                match open_test.as_mut() {
+                    Some(t) => t.body.push(TestItem::Comment(text)),
+                    None => sink(&mut open_template, &mut items).push(Item::Comment(text)),
+                }
+            }
+            continue;
+        }
+
+        // Inside a `test` body every line is a test statement (or `end`).
+        if let Some(t) = open_test.as_mut() {
+            if let [Tok::Ident(kw)] = toks.as_slice()
+                && kw == "end"
+            {
+                let mut t = open_test.take().unwrap();
+                t.end_comment = comment;
+                items.push(Item::Test(t));
+            } else {
+                t.body.push(parse_test_stmt(&toks, comment, lineno)?);
             }
             continue;
         }
 
         if open_template.is_some()
             && let Tok::Ident(kw) = &toks[0]
-            && matches!(kw.as_str(), "let" | "extern" | "removed" | "moved" | "page")
+            && matches!(
+                kw.as_str(),
+                "let"
+                    | "extern"
+                    | "removed"
+                    | "moved"
+                    | "page"
+                    | "test"
+                    | "tick"
+                    | "expect"
+                    | "clock"
+            )
         {
             return Err(err(format!(
                 "`{kw}` is not allowed inside a template body — only block \
@@ -410,10 +451,33 @@ pub fn parse(src: &str) -> Result<Module> {
                     end_comment: None,
                 });
             }
+            Tok::Ident(kw) if kw == "test" => {
+                if open_template.is_some() {
+                    return Err(err(
+                        "`test` inside a template body — close the template with `end` \
+                         first (tests are module-level)"
+                            .into(),
+                    ));
+                }
+                let [_, Tok::Str(name)] = toks.as_slice() else {
+                    return Err(err("expected `test \"<name>\"`".into()));
+                };
+                open_test = Some(TestDecl {
+                    name: name.clone(),
+                    body: Vec::new(),
+                    comment,
+                    end_comment: None,
+                });
+            }
+            Tok::Ident(kw) if matches!(kw.as_str(), "tick" | "expect" | "clock") => {
+                return Err(err(format!(
+                    "`{kw}` is only allowed inside a `test \"…\"` … `end` body"
+                )));
+            }
             Tok::Ident(kw) if kw == "end" => match toks.as_slice() {
                 [_] => {
                     let Some(mut t) = open_template.take() else {
-                        return Err(err("`end` without an open `template`".into()));
+                        return Err(err("`end` without an open `template` or `test`".into()));
                     };
                     t.end_comment = comment;
                     items.push(Item::Template(t));
@@ -654,7 +718,125 @@ pub fn parse(src: &str) -> Result<Module> {
             msg: format!("unclosed `template {}` — missing `end`", t.name),
         });
     }
+    if let Some(t) = open_test {
+        return Err(Error::IrParse {
+            line: src.lines().count(),
+            msg: format!("unclosed `test \"{}\"` — missing `end`", t.name),
+        });
+    }
     Ok(Module { items })
+}
+
+/// One statement of a `test` body (D36): a port injection, `tick`,
+/// `expect`, or `clock`.
+fn parse_test_stmt(toks: &[Tok], comment: Option<String>, lineno: usize) -> Result<TestItem> {
+    let err = |msg: String| Error::IrParse { line: lineno, msg };
+    match toks {
+        [Tok::Ident(kw), rest @ ..] if kw == "tick" => {
+            let (n_tok, dt) = match rest {
+                [n] => (n, None),
+                [n, Tok::Ident(kw), v] if kw == "dt" => {
+                    let dt = match value_of(v, lineno)? {
+                        v @ (Value::Number(_) | Value::Unit { .. }) => v,
+                        other => {
+                            return Err(err(format!(
+                                "`dt {other}` — the tick length is a number of seconds \
+                                 or a unit value (`dt 0.1`, `dt 100ms`)"
+                            )));
+                        }
+                    };
+                    (n, Some(dt))
+                }
+                _ => {
+                    return Err(err("expected `tick <n>` or `tick <n> dt <seconds>`".into()));
+                }
+            };
+            let Tok::Num(n) = n_tok else {
+                return Err(err("expected `tick <n>` with a plain tick count".into()));
+            };
+            let n: u64 = n
+                .parse()
+                .map_err(|_| err(format!("`tick {n}` — the tick count is a positive integer")))?;
+            if n == 0 {
+                return Err(err("`tick 0` advances nothing — use at least 1".into()));
+            }
+            Ok(TestItem::Tick(TickDecl { n, dt, comment }))
+        }
+        [Tok::Ident(kw), rest @ ..] if kw == "expect" => {
+            let [Tok::Ident(slug), Tok::Dot, Tok::Ident(port), cmp_tok, val] = rest else {
+                return Err(err(
+                    "expected `expect <slug>.<Port> <cmp> <value>` with cmp one of \
+                     `==`, `>=`, `>`, `<=`, `<`, `~=`"
+                        .into(),
+                ));
+            };
+            let cmp = match cmp_tok {
+                Tok::Cmp(CmpOp::Eq) => TestCmp::Eq,
+                Tok::Cmp(CmpOp::Ge) => TestCmp::Ge,
+                Tok::Cmp(CmpOp::Gt) => TestCmp::Gt,
+                Tok::Cmp(CmpOp::Le) => TestCmp::Le,
+                Tok::Cmp(CmpOp::Lt) => TestCmp::Lt,
+                Tok::Approx => TestCmp::Approx,
+                Tok::Cmp(CmpOp::Ne) => {
+                    return Err(err(
+                        "the simulator has no `!=` — assert the value you expect instead".into(),
+                    ));
+                }
+                _ => {
+                    return Err(err(
+                        "expected a comparator after the port: `==`, `>=`, `>`, `<=`, \
+                         `<`, or `~=`"
+                            .into(),
+                    ));
+                }
+            };
+            Ok(TestItem::Expect(ExpectDecl {
+                port: PortRef {
+                    slug: slug.clone(),
+                    port: port.clone(),
+                },
+                cmp,
+                value: value_of(val, lineno)?,
+                comment,
+            }))
+        }
+        [Tok::Ident(kw), rest @ ..] if kw == "clock" => {
+            let [Tok::Str(spec)] = rest else {
+                return Err(err(
+                    "expected `clock \"HH:MM\"` or `clock \"YYYY-MM-DD HH:MM\"`".into(),
+                ));
+            };
+            Ok(TestItem::Clock(ClockDecl {
+                spec: spec.clone(),
+                comment,
+            }))
+        }
+        [Tok::Ident(slug), Tok::Dot, Tok::Ident(port), Tok::Eq, val] => {
+            Ok(TestItem::Inject(SetDecl {
+                target: PortRef {
+                    slug: slug.clone(),
+                    port: port.clone(),
+                },
+                value: value_of(val, lineno)?,
+                comment,
+            }))
+        }
+        [
+            Tok::Ident(slug),
+            Tok::Dot,
+            Tok::Ident(port),
+            Tok::LArrow,
+            ..,
+        ] => Err(err(format!(
+            "`{slug}.{port} <- …` — a test body injects values (`{slug}.{port} = 1`), \
+             it draws no wires"
+        ))),
+        _ => Err(err(
+            "expected a test statement: `<slug>.<Port> = <value>`, `tick <n> [dt <s>]`, \
+             `expect <slug>.<Port> <cmp> <value>`, `clock \"…\"`, or `end`"
+                .into(),
+        )),
+    }
 }
 
 /// Statements that start with a plain identifier: block declarations

@@ -18,6 +18,9 @@
 # Optional:
 #   EXPECTED=...   compiled output must be byte-identical to this
 #                  committed file
+#   LOX=...        lox binary (eisber/lox-cli); when set — or when `lox`
+#                  is on PATH — the module's `test … end` blocks run
+#                  through the simulator (`lxir test`)
 #
 # Configuration via environment:
 #   LXIR=...       lxir binary                 (default: lxir on PATH)
@@ -60,6 +63,15 @@ echo "compile: deterministic"
 if [ -n "${EXPECTED:-}" ]; then
     cmp "$EXPECTED" "$tmp/out.Loxone"
     echo "expected output: byte-identical"
+fi
+
+# Simulated tests: run when a lox binary is available (LOX env or PATH),
+# skip with a note otherwise — repos without a simulator stay green.
+if [ -n "${LOX:-}" ] || command -v lox >/dev/null 2>&1; then
+    "$lxir" test --base "$base" --module "$module" --lock "$lock" \
+        ${SERIAL:+--serial "$SERIAL"}
+else
+    echo "sim: skipped (no lox binary — set LOX= or put lox on PATH)"
 fi
 
 if [ "${1:-}" = "--sync" ]; then

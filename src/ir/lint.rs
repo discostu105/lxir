@@ -11,7 +11,7 @@
 //! documentation, an app-visible state block), which is why lint reports
 //! and never blocks a compile.
 
-use super::ast::{Item, MatchSpec, Module, Value};
+use super::ast::{Item, MatchSpec, Module, TestItem, Value};
 use crate::doc::{LoxoneDoc, ports};
 use crate::error::Result;
 use crate::lock::Lockfile;
@@ -107,6 +107,20 @@ pub fn lint_source(module: &Module) -> Result<Vec<LintFinding>> {
             Item::Extern(e) => {
                 if let MatchSpec::Mirrors(target) = &e.match_spec {
                     object_refs.insert(target);
+                }
+            }
+            // A test driving or asserting a port is a use (D36).
+            Item::Test(t) => {
+                for stmt in &t.body {
+                    let (port, value) = match stmt {
+                        TestItem::Inject(s) => (&s.target, &s.value),
+                        TestItem::Expect(e) => (&e.port, &e.value),
+                        _ => continue,
+                    };
+                    object_refs.insert(&port.slug);
+                    if let Value::Ref(name) = value {
+                        let_refs.insert(name);
+                    }
                 }
             }
             _ => {}

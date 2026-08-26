@@ -121,6 +121,8 @@ lxir adopt current.Loxone --uuid <uuid> --as <slug> --module modules/ \
      --lock modules/haus.lock.json  # adopt one freshly drawn block
 lxir observe current.Loxone          # port-direction evidence (JSON)
 lxir roundtrip current.Loxone        # byte-fidelity self-check
+lxir test                            # run the module's `test … end` blocks
+                                     # through `lox sim` (eisber/lox-cli)
 ```
 
 A directory with a `lox.toml` — flat `key = "value"` lines naming the
@@ -171,9 +173,29 @@ For a complete end-to-end module, see `examples/ir/pool.lxir` against
 placement, named constants, externs matched by iname and by composite
 `title` + `room:`, a template with an instance, an expression as an
 argument, a unit-suffixed value (`Time: 30min`), a boolean expression
-wired onto an extern port, and an arithmetic binding folded into a
-`Formula` block — the sketch's pool idea, kept compiling by the
+wired onto an extern port, an arithmetic binding folded into a
+`Formula` block, and two `test … end` scenarios runnable with
+`lxir test` — the sketch's pool idea, kept compiling by the
 test suite.
+
+Tests live in the module itself and simulate the *compiled* config:
+
+```text
+test "Frostwächter schlägt an und beruhigt sich"
+	wassertemp.Q = 2         # inject: drive the sensor
+	tick 2
+	expect frost_alarm.Q == 1
+	wassertemp.Q = 10
+	tick 2
+	expect frost_alarm.Q == 0
+end
+```
+
+`lxir test` compiles in memory, hands the scenario to
+[`lox sim`](https://github.com/eisber/lox-cli) (found via `--lox`,
+`$LOX`, or PATH), and reports each `expect` with its actual value on
+failure. Comparators: `== > >= < <= ~=` (approximately); `clock "06:30"`
+sets the simulated time for `DayTimer`-style logic.
 
 ## Scope
 
@@ -185,7 +207,7 @@ test suite.
 | `uuid` | The anatomy of Loxone UUIDs — creation time, mint counters, minting-machine id, connector index — plus a deterministic minter (no clock, no RNG). |
 | `doc` | Semantic read layer: objects, ports, wires, counters, pages. |
 | `connectors` | Port-direction knowledge: a **verified** builtin table (gates, comparators, `Formula`, `Monoflop`, `PulseGen`, `AnalogThresholdTrigger` — see [docs/connector-db.md](docs/connector-db.md)) and evidence-based inference (`observe`, corpus merge, legacy-db crosscheck) over real configs. |
-| `ir` | The text language: constructor-style block declarations with inline wires/parameters, `extern`, `let`, `page` placement, templates with instances, boolean/comparison/arithmetic expressions (as arguments and on wires; arithmetic folds into `Formula` blocks), unit-suffixed values, lifecycle statements; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view), `adopt` (existing blocks → module + identity-pinning lockfile). |
+| `ir` | The text language: constructor-style block declarations with inline wires/parameters, `extern`, `let`, `page` placement, templates with instances, boolean/comparison/arithmetic expressions (as arguments and on wires; arithmetic folds into `Formula` blocks), unit-suffixed values, lifecycle statements, `test … end` scenarios; parser, canonical printer, `compile` (base + module + lockfile → config), `decompile` (config → IR view), `adopt` (existing blocks → module + identity-pinning lockfile), `test` (compile in memory → `lox sim` → per-expect results). |
 | `lock` | The lockfile: slug → object *and per-port* UUIDs, counters, layout, extern-wire ownership, extern-port `Def=` originals. |
 | `diff` | Semantic diff between two configs, with locale-rename noise flagged. |
 

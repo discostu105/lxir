@@ -19,7 +19,7 @@ errors.
 module     = { line } ;
 line       = comment | let | extern | block-head | arg-line
            | wire | set | removed | moved | template | instance
-           | page | blank ;
+           | page | test | blank ;
 
 comment    = "#" any-text ;                        (* whole line *)
 let        = "let" slug "=" ( number | string ) [ comment ] ;
@@ -68,6 +68,16 @@ param      = slug ":" type                         (* object parameter *)
 instance   = slug "=" slug "(" [ inst-args ] ")" [ comment ] ;
 inst-args  = param-name ":" ( slug | value ) { "," … } [ "," ] ;
 
+test       = "test" string [ comment ]
+             { comment | inject | tick | expect | clock }
+             "end" [ comment ] ;
+test-cmp   = "==" | ">=" | ">" | "<=" | "<" | "~=" ;
+inject     = slug "." port "=" ( number [ unit ] | const-ref ) [ comment ] ;
+tick       = "tick" integer [ "dt" ( number [ unit ] | const-ref ) ] [ comment ] ;
+expect     = "expect" slug "." port test-cmp ( number [ unit ] | const-ref ) [ comment ] ;
+clock      = "clock" string [ comment ] ;          (* "HH:MM[:SS]" or
+                                                      "YYYY-MM-DD HH:MM[:SS]" *)
+
 slug       = lowercase-letter { lowercase-letter | digit | "_" } ;
 type       = uppercase-letter { letter | digit } ;          (* PascalCase *)
 port       = letter-or-digit-or-underscore-sequence ;       (* as in the XML `K=` key *)
@@ -103,9 +113,10 @@ Notes:
   through `fmt`. An unknown suffix is a parse error. A *quoted* `"40s"`
   stays a string — two spellings, two meanings.
 - The keywords `let`, `extern`, `removed`, `moved`, `template`, `end`,
-  `page`, and the expression operators `and`, `or`, `not` are reserved,
-  as are v0's `block`, `wire`, `set`, and `use` (migration errors) —
-  none can be declared as a name.
+  `page`, `test`, `tick`, `expect`, `clock`, and the expression
+  operators `and`, `or`, `not` are reserved, as are v0's `block`,
+  `wire`, `set`, and `use` (migration errors) — none can be declared as
+  a name.
 - An instantiation is distinguished from a block declaration by the case
   of the callee: `sued = fassade(…)` (lowercase = template name) vs
   `hoch = GreaterEqual(…)` (PascalCase = block type).
@@ -489,6 +500,58 @@ statement needed: the expression is the blocks' single source of
 truth. Declaring a slug that collides with an expression's synthetic
 namespace is an error. Inside a template body, desugaring runs after
 expansion, so the synthetic prefix uses the instance's actual sink.
+
+### `test` — a simulated scenario (D36)
+
+```text
+test "Frostwächter schlägt an"
+	wassertemp.Q = 2        # inject: override that output for the whole test
+	tick 2                  # advance the simulation two steps (default dt 1s)
+	expect frost_alarm.Q == 1
+	wassertemp.Q = 10
+	tick 2 dt 0.5           # per-step dt override, unit values allowed
+	expect frost_alarm.Q == 0
+end
+```
+
+A `test` block is a top-level item (not allowed inside templates) and
+never affects compilation — `lxir compile` ignores tests entirely.
+`lxir test` runs them: it compiles the module in memory against the
+lockfile, translates each test into a
+[lox-cli](https://github.com/eisber/lox-cli) SimSpec, shells out to
+`lox sim run` (binary found via `--lox`, the `LOX` environment
+variable, or `lox` on PATH), and maps each check in the result back to
+its `expect` line.
+
+Statements, in file order:
+
+- **Injection** `slug.Port = value` — sets that signal for the rest of
+  the test (a persistent override, the simulator's injection model).
+  Any declared extern or block port can be driven, including outputs
+  (that is the normal case: drive a sensor's `Q`/`AQ`). Values are
+  numbers (with units) or `let` references; strings are rejected.
+- **`tick <n> [dt <v>]`** — advance the simulation `n` steps of `dt`
+  seconds (default 1). Injections since the previous `tick` take
+  effect for these steps.
+- **`expect slug.Port <cmp> <value>`** — assert after the preceding
+  `tick`. Comparators: `==`, `>`, `>=`, `<`, `<=`, and `~=`
+  (approximately, 5 % tolerance). There is no `!=` (the simulator has
+  none). An `expect` before any `tick` is an error, as is a trailing
+  injection no `tick` ever applies.
+- **`clock "HH:MM[:SS]"` / `clock "YYYY-MM-DD HH:MM[:SS]"`** — set the
+  simulated wall clock before the following `tick`, for time-dependent
+  logic (`DayTimer` etc.).
+
+References resolve on the **flattened** module (templates expanded,
+expressions desugared), so tests can name template-produced slugs
+(`frost_alarm`) and expression-synthetic slugs
+(`pv_kw_input__f1.AQ`) — exactly what the simulator sees. The
+simulator addresses signals by object **title**; `lxir test` derives
+titles from the lockfile and refuses ambiguity unless the duplicates
+are same-signal mirrors or a room qualifier separates them.
+
+`lxir test --filter <substring>` runs a subset; `--show-spec` prints
+the generated SimSpec JSON instead of running.
 
 ## Name resolution and validation
 

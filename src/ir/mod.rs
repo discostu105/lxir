@@ -43,14 +43,16 @@ mod desugar;
 mod lint;
 mod parser;
 mod rename;
+mod simtest;
 mod template;
 mod validate;
 
 pub use adopt::{AdoptReport, AdoptedBlock, PageFragments, adopt, adopt_one, adopt_pages};
 pub use ast::{
-    ArgItem, Binding, BindingKind, BlockDecl, CmpOp, Expr, ExprWireDecl, ExternDecl, Item, LetDecl,
-    MatchSpec, Module, MovedDecl, Operand, PageDecl, PortRef, RemovedDecl, SetDecl, TemplateDecl,
-    TemplateParam, Value, WireDecl,
+    ArgItem, Binding, BindingKind, BlockDecl, ClockDecl, CmpOp, ExpectDecl, Expr, ExprWireDecl,
+    ExternDecl, Item, LetDecl, MatchSpec, Module, MovedDecl, Operand, PageDecl, PortRef,
+    RemovedDecl, SetDecl, TemplateDecl, TemplateParam, TestCmp, TestDecl, TestItem, TickDecl,
+    Value, WireDecl,
 };
 pub use compile::{CompileOptions, compile};
 pub use decompile::{
@@ -60,4 +62,7 @@ pub use decompile::{
 pub use desugar::DesugarInfo;
 pub use lint::{LintFinding, LintKind, lint_dead_outputs, lint_source};
 pub use rename::{Rekey, RekeyKind, apply_rekeys, lock_rekeys, rename_slug, valid_slug};
+pub use simtest::{
+    PlannedExpect, PlannedStep, TestPlan, TestResult, TestRun, plan_tests, read_results,
+};
 pub use validate::validate_ports;

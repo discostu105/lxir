@@ -16,7 +16,8 @@
 //! positionally — the structure is identical, only names differ.
 
 use super::ast::{
-    ArgItem, BindingKind, BlockDecl, Expr, Item, MatchSpec, Module, Operand, TemplateDecl, Value,
+    ArgItem, BindingKind, BlockDecl, Expr, Item, MatchSpec, Module, Operand, TemplateDecl,
+    TestItem, Value,
 };
 use crate::error::{Error, Result};
 use crate::lock::Lockfile;
@@ -133,6 +134,27 @@ fn rename_item(item: &mut Item, old: &str, new: &str) {
             sub_comment(&mut t.end_comment);
         }
         Item::Page(p) => sub_comment(&mut p.comment),
+        Item::Test(t) => {
+            for stmt in &mut t.body {
+                match stmt {
+                    TestItem::Inject(s) => {
+                        sub(&mut s.target.slug);
+                        rename_value(&mut s.value, old, new);
+                        sub_comment(&mut s.comment);
+                    }
+                    TestItem::Expect(e) => {
+                        sub(&mut e.port.slug);
+                        rename_value(&mut e.value, old, new);
+                        sub_comment(&mut e.comment);
+                    }
+                    TestItem::Tick(t) => sub_comment(&mut t.comment),
+                    TestItem::Clock(c) => sub_comment(&mut c.comment),
+                    TestItem::Comment(text) => sub_text(text, old, new),
+                }
+            }
+            sub_comment(&mut t.comment);
+            sub_comment(&mut t.end_comment);
+        }
         Item::Comment(text) => sub_text(text, old, new),
     }
 }

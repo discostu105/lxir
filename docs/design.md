@@ -779,3 +779,44 @@ Anything unverified is an error, not a heuristic:
     The full Formula grammar (`IF`, functions, comparisons *inside*
     the formula string) stays out of the expression language — the
     string parameter remains available verbatim on an explicit block.
+
+- **D36 — tests live in the module and run through `lox sim`**
+  (2026-08-26). `test "Name" … end` is a top-level item whose body is
+  line-oriented like everything else: injections (`slug.Port = value`),
+  `tick <n> [dt <v>]`, `expect slug.Port <cmp> <value>`, and
+  `clock "…"`. Statements group into simulator steps at `tick`
+  boundaries; `expect`s attach to the preceding `tick`. Compilation
+  ignores tests entirely — they change no bytes, so a module with tests
+  compiles identically to one without.
+  `lxir test` is a *driver*, not a simulator: it compiles in memory
+  against the lockfile, maps slugs to the simulator's title-based
+  addresses (lock UUID → compiled `Title`, room-qualified
+  `"Title [Room].Port"` when titles collide; same-signal
+  `InputRef`/`OutputRef` mirrors are tolerated), emits SimSpec JSON,
+  shells out to `lox sim run --json`, and attributes the flattened
+  check results back to `expect` lines by per-step slicing. Owning a
+  simulator is out of scope — eisber/lox-cli already has one with
+  injection-as-override semantics and a simulated clock (ClockSpec),
+  which the DSL exposes 1:1. The comparator set is the simulator's
+  (`== > >= < <= ~=`; no `!=`), surfaced honestly instead of emulated.
+  References validate on the flattened form (templates expanded,
+  expressions desugared): tests address what the simulator actually
+  sees, including expansion-produced and expression-synthetic slugs.
+  The unexpanded module skips test object-refs (a `flattened` guard in
+  validate) because those slugs do not exist yet; `check`, `compile`,
+  and `test` all re-validate the flattened form, so nothing escapes.
+  Injections may drive any port, including outputs — driving a
+  sensor's `Q` **is** the point (the simulator's persistent-override
+  model), so port direction is deliberately unrestricted in tests.
+  - Rejected alternatives: the roadmap's `given {…} after N ticks`
+    block syntax — braces and keyword soup in a language that is
+    otherwise line-oriented statements; the body reads like the rest
+    of the DSL instead. Compiling tests to XML test configs and
+    round-tripping through files — in-memory compile plus a temp dir
+    for the two artifacts the CLI needs is simpler and leaves no
+    droppings. Addressing the simulator by UUID — `lox sim` addresses
+    by title; deriving titles from the lock keeps lxir's identity
+    model authoritative and made the ambiguity rules explicit.
+    A `!=` comparator emulated as two checks — dishonest reporting
+    when only one leg fails; the simulator can grow `!=` upstream
+    instead.

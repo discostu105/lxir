@@ -82,6 +82,26 @@ pub fn validate_ports(module: &Module) -> Result<()> {
         }
     }
 
+    // Test statements (D36): a referenced port on a managed block must
+    // exist. Direction is deliberately unrestricted — the simulator
+    // injects into inputs and overrides outputs alike, and `expect` reads
+    // either side.
+    for item in &module.items {
+        let super::ast::Item::Test(t) = item else {
+            continue;
+        };
+        for stmt in &t.body {
+            let port = match stmt {
+                super::ast::TestItem::Inject(s) => &s.target,
+                super::ast::TestItem::Expect(e) => &e.port,
+                _ => continue,
+            };
+            if module.blocks().any(|b| b.slug == port.slug) {
+                known_port(module, &port.slug, &port.port)?;
+            }
+        }
+    }
+
     // Wire endpoints on managed blocks — argument-list bindings and `<-`
     // statements alike: the port must exist and its direction must fit
     // (source = output; sink = input or param).
