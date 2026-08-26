@@ -480,7 +480,10 @@ fn verify_rebuildable(el: &Element, o: &ObjectSummary) -> std::result::Result<()
     }
     if el.attr("V") != Some("175") {
         return Err(format!(
-            "block version V=\"{}\" differs from the verified \"175\"",
+            "block version V=\"{}\" differs from the verified \"175\" — connector \
+             indexes are verified per version, so this needs a save-oracle run \
+             for your Loxone Config version first (docs/connector-db.md, \
+             \"Admit a type yourself\")",
             el.attr("V").unwrap_or("")
         ));
     }
