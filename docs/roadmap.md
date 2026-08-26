@@ -66,10 +66,12 @@ types) contradict each other. Results and methodology:
       compiled config (real base + minted `Monoflop`/`And`/wire), saved it,
       and the semantic diff came back empty — every minted UUID, wire, and
       param survived. Method and the full save-fingerprint findings:
-      [oracle-wine.md](oracle-wine.md). Remaining: turn the manual rig into
-      a repeatable script — pointer injection is solved (the Xvfb+xdotool
-      rig has full control; Wine on Linux replaces the Windows-VM plan
-      entirely).
+      [oracle-wine.md](oracle-wine.md). The manual rig became a
+      repeatable one-command script 2026-08-26: `scripts/oracle.sh run
+      compiled.Loxone` does open → save → semantic diff → teardown
+      (Xvfb+xdotool, isolated wineprefix, recovery-dialog and
+      news-overlay handling built in); first scripted run blessed the
+      full r50 rebuild with an empty diff.
 - [ ] More verified block types: timers (`TimerDelay`…), flip-flops,
       `Switch` — prioritized by what real modules need. (The 2026-08-25
       batches covered everything the house needs; see Stufe −1.)

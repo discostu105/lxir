@@ -329,6 +329,28 @@ type-registry code of the mirrored object's XML type (VirtualIn 71,
 Actor 63, Memory 320, …) with `Analog=` following the target type —
 learned into `connectors::ref_link_type`, unknown types refuse the mint.
 
+## The rig, one command
+
+Everything below is wrapped in [`scripts/oracle.sh`](../scripts/oracle.sh):
+
+```sh
+scripts/oracle.sh run compiled.Loxone --out saved.Loxone   # open → save → diff
+```
+
+starts Xvfb, opens a **copy** in the isolated wineprefix, answers the
+recovery dialog with No, unmaps the news overlay, saves via Ctrl+S
+(md5-polled), runs `lxir diff` compiled → GUI-saved, and tears the rig
+down (`--keep` to leave it warm; `up`/`open`/`save`/`shot`/`status`/
+`down` subcommands drive the pieces for interactive sessions).
+Paths are env-configurable (`ORACLE_PREFIX`, `ORACLE_EXE`,
+`ORACLE_DISPLAY`, `ORACLE_DIR`, `LXIR`); the script refuses to launch
+into a prefix whose wineserver already serves another display — that
+would open the file as a tab in the desktop instance.
+
+First scripted run 2026-08-26: the full r50 rebuild (1929 objects,
+templates + expressions + D36-era compiler) open+saved with an empty
+semantic diff.
+
 ## The rig
 
 - Prefix: `~/.local/share/loxone-config/wine`, exe under
