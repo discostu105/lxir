@@ -271,3 +271,43 @@ and re-apply the rules. The final gate stays [implementation.md's
 workflow](implementation.md): a new entry should eventually be confirmed by
 compiling it and passing the config through Loxone Config (the Stufe 0
 oracle).
+
+## Admit a type yourself — the recipe
+
+The builtin table refuses to mint what nobody has verified. If a block
+type you need is missing, this is the path — your own configs are the
+corpus:
+
+1. **Gather evidence.** Run `lxir observe your.Loxone` on every config
+   you have (older downloads and backups count). Each instance of the
+   type contributes: its connector key set with indexes, wire
+   directions (a `<Co>` receiving an `<In>` is a sink; a wire's source
+   side is an output), and `Def=`-only keys (parameters).
+
+2. **Apply the admission rules** (above): identical, contiguous key
+   sets across instances; every key's direction resolved by wires, by
+   legacy-db agreement, or by the inert-flag rule; no key left
+   undetermined. One unresolved key keeps the type out — that is the
+   rule, not a formality: a guessed direction becomes an invented wire
+   in someone's house.
+
+3. **Add the entry** to `connectors::builtin` in `src/connectors.rs`
+   (key set in index order, direction per key), mirroring an existing
+   entry of the same family.
+
+4. **Close the loop with the save oracle.** Mint a minimal instance
+   (`t = YourType("Oracle Probe")` on a test page of a copy of a real
+   config), compile, and run
+   `scripts/oracle.sh run compiled.Loxone` — Loxone Config deletes
+   anything off-descriptor on save (D8), so the block surviving
+   open+save with its exact connector set is the proof. An undecided
+   port direction is settled the same way: compile a wire *sourced*
+   from it; survival proves output.
+
+5. **PR both**: the table entry and a sentence of evidence (instance
+   count, which rule resolved each contested key, oracle result). The
+   evidence sentence is what makes the next person trust the entry.
+
+Types that stay out regardless of evidence: hardware/IO references
+(sensors, actors, refs, Tree/Air/Modbus devices) — lxir references
+hardware, it never owns it.

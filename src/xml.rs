@@ -26,6 +26,13 @@ pub struct XmlDocument {
     /// The XML declaration line, verbatim without line ending
     /// (e.g. `<?xml version="1.0" encoding="utf-8"?>`).
     pub decl: Option<String>,
+    /// Line-ending convention. Loxone writes CRLF; files that passed
+    /// through git newline normalization are LF. Byte fidelity means
+    /// writing back whichever the input had.
+    pub crlf: bool,
+    /// Exact whitespace after the root's closing tag (normally one line
+    /// ending, but stray extra newlines occur in the wild).
+    pub trailing: String,
     pub root: Element,
 }
 
@@ -134,16 +141,27 @@ impl XmlDocument {
             line: 0,
             msg: format!("not valid UTF-8: {e}"),
         })?;
-        Parser::new(text).parse_document()
+        let mut doc = Parser::new(text).parse_document()?;
+        // First newline decides the convention; a file without any keeps
+        // the Loxone default (CRLF).
+        if let Some(i) = text.find('\n') {
+            doc.crlf = text[..i].ends_with('\r');
+        }
+        Ok(doc)
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
+        let nl = if self.crlf { "\r\n" } else { "\n" };
         let mut out = String::with_capacity(1 << 16);
         if let Some(decl) = &self.decl {
             out.push_str(decl);
-            out.push_str("\r\n");
+            out.push_str(nl);
         }
-        write_element(&mut out, &self.root, 0);
+        write_element(&mut out, &self.root, 0, nl);
+        // The root, like every element, was written with a trailing line
+        // ending; the document's actual trailing whitespace replaces it.
+        out.truncate(out.len() - nl.len());
+        out.push_str(&self.trailing);
         let mut bytes = Vec::with_capacity(out.len() + 3);
         if self.bom {
             bytes.extend_from_slice(b"\xEF\xBB\xBF");
@@ -153,7 +171,7 @@ impl XmlDocument {
     }
 }
 
-fn write_element(out: &mut String, e: &Element, depth: usize) {
+fn write_element(out: &mut String, e: &Element, depth: usize, nl: &str) {
     for _ in 0..depth {
         out.push('\t');
     }
@@ -164,33 +182,33 @@ fn write_element(out: &mut String, e: &Element, depth: usize) {
     }
     if e.children.is_empty() {
         if e.self_closing {
-            out.push_str("/>\r\n");
+            let _ = write!(out, "/>{nl}");
         } else {
-            let _ = write!(out, "></{}>\r\n", e.name);
+            let _ = write!(out, "></{}>{nl}", e.name);
         }
         return;
     }
     // Single text child renders inline: <Key>ABCD…</Key>
     if let [Node::Text(t)] = e.children.as_slice() {
-        let _ = write!(out, ">{}</{}>\r\n", t, e.name);
+        let _ = write!(out, ">{}</{}>{nl}", t, e.name);
         return;
     }
-    out.push_str(">\r\n");
+    let _ = write!(out, ">{nl}");
     for child in &e.children {
         match child {
-            Node::Element(c) => write_element(out, c, depth + 1),
+            Node::Element(c) => write_element(out, c, depth + 1, nl),
             // Mixed content does not occur in Loxone output; emit raw on its
             // own line so nothing is lost if it ever does.
             Node::Text(t) => {
                 out.push_str(t);
-                out.push_str("\r\n");
+                out.push_str(nl);
             }
         }
     }
     for _ in 0..depth {
         out.push('\t');
     }
-    let _ = write!(out, "</{}>\r\n", e.name);
+    let _ = write!(out, "</{}>{nl}", e.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,14 +283,20 @@ impl<'a> Parser<'a> {
             return Err(self.err("expected root element"));
         }
         let root = self.parse_element()?;
-        self.skip_ws();
-        if !self.rest().is_empty() {
+        let trailing = self.rest().to_string();
+        if !trailing.chars().all(|c| c.is_ascii_whitespace()) {
             return Err(self.err(format!(
                 "trailing content after root element: {:?}…",
-                &self.rest()[..self.rest().len().min(40)]
+                &trailing[..trailing.len().min(40)]
             )));
         }
-        Ok(XmlDocument { bom, decl, root })
+        Ok(XmlDocument {
+            bom,
+            decl,
+            crlf: true,
+            trailing,
+            root,
+        })
     }
 
     /// Parses one element; `pos` must be at `<`.

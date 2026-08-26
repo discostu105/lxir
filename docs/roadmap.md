@@ -374,7 +374,18 @@ haus/
         copyright, so external contributions need a CLA (or equivalent) —
         undecided until it becomes relevant.
   - [ ] crates.io publication (the name `lxir` was free 2026-08-24);
-        `publish = false` until wanted.
+        `publish = false` until wanted. Prep done 2026-08-26: full
+        package metadata, dev-trees excluded, `cargo package` verifies
+        at 264 KiB — publishing is one `publish = false` flip away.
+  - [x] Release workflow 2026-08-26: a `v*` tag builds and attaches
+        binaries for Linux (musl), Windows, and macOS (both arches) —
+        `.github/workflows/release.yml`; first tag pending.
+  - [x] Stranger onboarding 2026-08-26: README "Try it on your own
+        config" — install, download/extract via lox-cli, decompile,
+        adopt one block, compile, read the diff, push; plus the
+        "admit a type yourself" recipe in
+        [connector-db.md](connector-db.md) (evidence → rules → table
+        entry → one-command oracle proof).
   - [ ] `lox-cli` adopting the crate for its config model (the intended end
         state), wiring transport to `lxir compile` output.
 

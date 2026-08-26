@@ -97,6 +97,47 @@ rule today; the rest of the config never notices. See
   UUID; a managed block vanishing from source is an error unless removal is
   explicit.
 
+## Try it on your own config
+
+lxir never talks to a Miniserver — it only reads and writes `.Loxone`
+files. Transport is [`lox-cli`](https://github.com/eisber/lox-cli)'s job
+(`lox config download` / `extract` / `push`), or simply Loxone Config's
+own save. A careful first loop:
+
+```sh
+cargo install --git https://github.com/discostu105/lxir   # or a release binary
+
+# 1. Get the deployed config as XML (or use the .Loxone file
+#    Loxone Config saves locally):
+lox config download && lox config extract <downloaded.zip>
+
+# 2. Look around — decompile is a read-only view of every page:
+lxir decompile current.Loxone | less
+
+# 3. Start small: adopt ONE existing block you own mentally,
+#    or add a page-placed block of your own. This writes a module
+#    and a lockfile pinning the block's identity:
+lxir adopt current.Loxone --uuid <uuid> --as my_block \
+     --module modules/ --lock modules/haus.lock.json
+
+# 4. Edit the module, then compile onto the *current* base:
+lxir compile --base current.Loxone --module modules/ \
+     --lock modules/haus.lock.json --out out.Loxone --serial <serial>
+
+# 5. Trust nothing — read the diff. It must show exactly your change:
+lxir diff current.Loxone out.Loxone
+
+# 6. Deploy: push the XML back (recompress + upload), or open
+#    out.Loxone in Loxone Config and upload from there:
+lox config push out.Loxone   # take a backup first
+```
+
+After a push, download again and keep that file as the new base —
+`lxir drift` tells you when someone else (GUI, app, Miniserver) has
+written to the config since, *before* you compile over their change.
+Everything you did not adopt passes through byte-for-byte; the diff in
+step 5 is the proof, every time.
+
 ## Quickstart (CLI)
 
 ```sh
