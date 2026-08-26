@@ -12,8 +12,6 @@ categories = ["command-line-utilities", "parser-implementations"]
 license = "GPL-3.0-or-later OR LicenseRef-Commercial"
 # Dev-only trees stay out of the package (the corpus is gitignored anyway).
 exclude = ["/corpus", "/docs/data", "/tools", "/scripts", "/.github", "/AGENTS.md"]
-# Flip to publish: deliberately blocked until the crates.io decision is made.
-publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

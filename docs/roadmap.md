@@ -373,13 +373,11 @@ haus/
         outside PRs: selling commercial licenses requires unified
         copyright, so external contributions need a CLA (or equivalent) —
         undecided until it becomes relevant.
-  - [ ] crates.io publication (the name `lxir` was free 2026-08-24);
-        `publish = false` until wanted. Prep done 2026-08-26: full
-        package metadata, dev-trees excluded, `cargo package` verifies
-        at 264 KiB — publishing is one `publish = false` flip away.
+  - [x] crates.io publication: `lxir` 0.1.0 published 2026-08-26
+        (full package metadata, dev-trees excluded, 264 KiB).
   - [x] Release workflow 2026-08-26: a `v*` tag builds and attaches
         binaries for Linux (musl), Windows, and macOS (both arches) —
-        `.github/workflows/release.yml`; first tag pending.
+        `.github/workflows/release.yml`; v0.1.0 is the first tag.
   - [x] Stranger onboarding 2026-08-26: README "Try it on your own
         config" — install, download/extract via lox-cli, decompile,
         adopt one block, compile, read the diff, push; plus the

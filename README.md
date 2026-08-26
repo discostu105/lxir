@@ -323,5 +323,5 @@ everything config-model-related.
 Dual-licensed, the same scheme as `lox`: use it under the
 [GPL-3.0](LICENSE-GPL), or obtain a
 [commercial license](LICENSE-COMMERCIAL) for proprietary redistribution —
-see [LICENSE](LICENSE). Early v0; `publish = false` until crates.io
-publication is wanted.
+see [LICENSE](LICENSE). Early v0, published on
+[crates.io](https://crates.io/crates/lxir) as `lxir`.
