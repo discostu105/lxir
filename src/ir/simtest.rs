@@ -4,10 +4,11 @@
 //!
 //! The simulator (lox-cli) addresses signals as `"<Title>.<Port>"`, so the
 //! plan maps every referenced slug to its compiled object's title and
-//! refuses titles another object shares — unless every same-titled object
-//! is an Input/OutputRef mirroring the same target, where injecting into
-//! all of them at once is exactly right. Running the external binary is
-//! the CLI's job; this module is pure translation.
+//! refuses titles another object shares — unless the holders carry one
+//! signal (Input/OutputRefs mirroring the same target, possibly alongside
+//! that target itself), where injecting into all of them at once is
+//! exactly right. Running the external binary is the CLI's job; this
+//! module is pure translation.
 
 use super::ast::{Item, Module, PortRef, TestCmp, TestItem, Value};
 use crate::doc::LoxoneDoc;
@@ -89,7 +90,8 @@ struct TitleTable {
     uuid_of: BTreeMap<String, String>,
     /// uuid → (title, block type, `Ref=` target).
     info_of: BTreeMap<String, (Option<String>, String, Option<String>)>,
-    /// uuid → room (`<IoData Pr=…>` → the `Place`'s title).
+    /// uuid → the enclosing page's title (the simulator's `[Room]`
+    /// qualifier tracks the XML tree's Place/Page nesting).
     room_of: BTreeMap<String, String>,
     /// title → uuids of every object carrying it.
     by_title: BTreeMap<String, Vec<String>>,
@@ -105,24 +107,28 @@ impl TitleTable {
             uuid_of.insert(slug.clone(), e.uuid.clone());
         }
         let objects = compiled.objects();
-        let place_titles: BTreeMap<String, String> = objects
-            .iter()
-            .filter(|o| o.block_type == "Place")
-            .filter_map(|o| Some((o.uuid.clone(), o.title.clone()?)))
-            .collect();
         let mut info_of = BTreeMap::new();
         let mut room_of = BTreeMap::new();
         let mut by_title: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for obj in objects {
             let el = compiled.element_at(&obj.path).expect("path from objects()");
             let refs = el.attr_decoded("Ref").map(|r| r.into_owned());
-            if let Some(room) = el
-                .child_elements()
-                .find(|c| c.name == "IoData")
-                .and_then(|io| io.attr("Pr"))
-                .and_then(|pr| place_titles.get(pr))
-            {
-                room_of.insert(obj.uuid.clone(), room.clone());
+            // The simulator's "[Room]" qualifier is the enclosing
+            // Place/Page element's title in the XML tree (the page the
+            // block sits on) — NOT the assigned `IoData Pr=` room.
+            for cut in (0..obj.path.len()).rev() {
+                let Some(anc) = compiled.element_at(&obj.path[..cut]) else {
+                    continue;
+                };
+                if anc
+                    .attr("Type")
+                    .is_some_and(|t| t == "Place" || t == "Page")
+                {
+                    if let Some(title) = anc.attr_decoded("Title") {
+                        room_of.insert(obj.uuid.clone(), title.into_owned());
+                    }
+                    break;
+                }
             }
             if let Some(title) = &obj.title {
                 by_title
@@ -193,17 +199,23 @@ impl TitleTable {
         Ok(format!("{title}.{}", port.port))
     }
 
-    /// Duplicate titles are harmless when every holder is an
-    /// Input/OutputRef mirroring the same object — they carry the same
-    /// signal, and the simulator injecting into all of them is correct.
+    /// Duplicate titles are harmless when the holders all carry the same
+    /// signal: every one an Input/OutputRef mirroring the same object,
+    /// or one source block plus refs whose `Ref=` points at exactly that
+    /// source. The simulator injecting into all of them is then correct.
     fn same_signal_mirrors(&self, uuids: &[String]) -> bool {
-        let mut target = None;
+        let mut target: Option<String> = None;
+        let mut source: Option<&String> = None;
         for uuid in uuids {
             let Some((_, block_type, refs)) = self.info_of.get(uuid) else {
                 return false;
             };
             if !matches!(block_type.as_str(), "InputRef" | "OutputRef") {
-                return false;
+                if source.is_some() {
+                    return false; // two distinct non-ref sources
+                }
+                source = Some(uuid);
+                continue;
             }
             let Some(r) = refs else { return false };
             match &target {
@@ -212,7 +224,15 @@ impl TitleTable {
                 Some(_) => return false,
             }
         }
-        true
+        match (source, target) {
+            // Refs only, all on one target.
+            (None, Some(_)) => true,
+            // A source and its own mirrors.
+            (Some(src), Some(t)) => *src == t,
+            // A single non-ref "duplicate" cannot happen (len > 1), and
+            // refs without any Ref= never get here — refuse defensively.
+            _ => false,
+        }
     }
 }
 
@@ -620,6 +640,40 @@ mod tests {
         );
         let lock = lock_with(&[("a", "00000003-0000-0000-ffff000000000001")]);
         plan_tests(&module, &lock, &doc, None).unwrap();
+    }
+
+    #[test]
+    fn source_plus_own_mirrors_is_tolerated() {
+        let module = Module::parse(
+            "a = Memory()\n\ntest \"t\"\n\ta.AQ = 1\n\ttick 1\n\texpect a.AQ == 1\nend\n",
+        )
+        .unwrap();
+        // A source block sharing its title with InputRefs whose Ref=
+        // points back at it (r50's AI-fed mirror pattern): injecting the
+        // plain title drives the source and its mirrors — one signal.
+        let doc = doc_with(
+            "\t\t\t<C Type=\"Memory\" V=\"175\" U=\"00000003-0000-0000-ffff000000000001\" Title=\"Sig\" Nio=\"3\"/>\r\n\
+             \t\t\t<C Type=\"InputRef\" V=\"175\" U=\"00000005-0000-0000-ffff000000000001\" Title=\"Sig\" Ref=\"00000003-0000-0000-ffff000000000001\" Nio=\"3\"/>\r\n\
+             \t\t\t<C Type=\"InputRef\" V=\"175\" U=\"00000006-0000-0000-ffff000000000001\" Title=\"Sig\" Ref=\"00000003-0000-0000-ffff000000000001\" Nio=\"3\"/>\r\n",
+        );
+        let lock = lock_with(&[("a", "00000003-0000-0000-ffff000000000001")]);
+        plan_tests(&module, &lock, &doc, None).unwrap();
+
+        // But a ref pointing somewhere ELSE than the co-titled source is
+        // a different signal — refused.
+        let doc = doc_with(
+            "\t\t\t<C Type=\"Memory\" V=\"175\" U=\"00000003-0000-0000-ffff000000000001\" Title=\"Sig\" Nio=\"3\"/>\r\n\
+             \t\t\t<C Type=\"InputRef\" V=\"175\" U=\"00000005-0000-0000-ffff000000000001\" Title=\"Sig\" Ref=\"00000009-0000-0000-ffff000000000001\" Nio=\"3\"/>\r\n",
+        );
+        let err = plan_tests(
+            &module,
+            &lock_with(&[("a", "00000003-0000-0000-ffff000000000001")]),
+            &doc,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("names 2 different objects"), "{err}");
     }
 
     #[test]
