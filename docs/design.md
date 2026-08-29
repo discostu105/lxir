@@ -844,3 +844,38 @@ Anything unverified is an error, not a heuristic:
   line: sugar for declaring *what exists* (nesting, template-local
   externs) may still land; anything whose value is computation at
   compile time points at a generator instead.
+
+- **D38 — `lxir status`: drift triage, read-only** (2026-08-29).
+  `drift` answers *whether* another writer changed something (one
+  parse, one fingerprint compare) and `diff` lists raw UUID-keyed
+  changes; choosing the remedy was left to the operator across four
+  commands. `status` closes that gap without taking any of their
+  jobs: after the fingerprint gate (in sync → done; config
+  byte-identical to the base the last compile read → "push the
+  compiled output", not a triage), it classifies every change by
+  ownership and pairs it with the action that resolves it. From the
+  lock alone: pending D31 tombstones still in the config (push),
+  locked objects gone (recompile re-creates; `removed <slug>` if
+  intended), locked externs gone (the next compile will fail to
+  resolve). Against the last compiled output — the project's `out`
+  file or `--against`, refused as a reference if its fingerprint is
+  stale — the full semantic diff: foreign edits to managed blocks
+  (params, titles, wires into managed sinks, compiler-drawn extern
+  wires, compiler-written `Def=`s), each stating what a recompile
+  would undo and the source change that adopts it instead; new
+  blocks of managed types as ready-to-run incremental
+  `adopt --uuid … --as <slug>` command lines (slug slugified from the
+  title, deduped against the lock); everything else counted as
+  unmanaged (compiles pass it through) with locale-suspect renames
+  split out as save noise. Read-only by construction; exit mirrors
+  `drift` (0 in sync, 1 attention).
+  - Rejected alternatives: auto-applying remedies (writing source
+    from a drifted config is `adopt`'s job and carries its semantic
+    no-op verification; a triage that edits is a merge tool, and a
+    wrong merge here corrupts a house). Adoptable detection without
+    a reference document — managed-type blocks that were never
+    adopted (e.g. D20 `Inv=` refusals) would be indistinguishable
+    from new ones and list forever, so it stays diff-based.
+    A `sync` name — the command writes nothing and never talks to a
+    Miniserver (transport is out of scope), so it reports status,
+    like `git status`.

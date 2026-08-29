@@ -16,6 +16,8 @@
 //!   (config → IR view), compile (IR + lockfile → config).
 //! - [`diff`] — semantic diff between two configs (objects, params, wires),
 //!   with locale-rename noise classification.
+//! - [`status`] — drift triage on top of `diff` + `lock`: classify foreign
+//!   changes by ownership and pair each with the action that resolves it.
 //! - [`project`] — `lox.toml` project files: one directory, one deployment
 //!   target, zero flags.
 //!
@@ -31,6 +33,7 @@ pub mod ir;
 pub mod lock;
 pub mod observed_defaults;
 pub mod project;
+pub mod status;
 pub mod uuid;
 pub mod xml;
 

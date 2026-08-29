@@ -134,7 +134,10 @@ lox config push out.Loxone   # take a backup first
 
 After a push, download again and keep that file as the new base —
 `lxir drift` tells you when someone else (GUI, app, Miniserver) has
-written to the config since, *before* you compile over their change.
+written to the config since, *before* you compile over their change,
+and `lxir status` triages what they changed: foreign edits to managed
+blocks with the module change that adopts each one, and new
+managed-type blocks as ready-to-run `lxir adopt --uuid` commands.
 Everything you did not adopt passes through byte-for-byte; the diff in
 step 5 is the proof, every time.
 

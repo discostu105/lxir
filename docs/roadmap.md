@@ -358,6 +358,19 @@ haus/
         compile path (reference externs kept as documentation are a
         legitimate pattern). First run on the house config surfaced one
         real dead block and three suspicious app-visible tasters.
+- **Workflow**
+  - [x] `lxir status` 2026-08-29 (D38): drift triage in one command.
+        `drift`'s fingerprint gate, then — against the project's compiled
+        out file — every change classified by ownership with the action
+        that resolves it: foreign edits to managed blocks (what a
+        recompile would undo, and the module change that adopts the edit
+        instead), new managed-type blocks as ready-to-run incremental
+        `adopt --uuid` command lines, pending tombstones ("push the
+        output"), unmanaged changes counted as pass-through. Recognizes
+        the compile → push window (config byte-identical to the last
+        compile's base) instead of misreading it as foreign deletions.
+        Read-only; auto-applying remedies is explicitly rejected
+        (design.md D38).
 - **Editor**
   - [x] VS Code: syntax highlighting + snippets (`editor/vscode/`).
   - [ ] LSP server (`lxir lsp`): diagnostics from `Module::parse`/`validate`

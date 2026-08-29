@@ -134,6 +134,21 @@ USAGE:
         *what* changed, this tells you *whether* cheaply. --lock
         defaults to the lox.toml project's lockfile.
 
+  lxir status [<cfg.Loxone>] [--lock <lock.json>] [--against <out.Loxone>]
+        Drift triage: `lxir drift`'s fingerprint check, and when the
+        config *has* changed, classify every change and print what
+        resolves it — foreign edits to managed blocks (a recompile
+        undoes them; the module change that adopts them instead),
+        new blocks of managed types (the exact incremental
+        `lxir adopt --uuid` command), removals the last compile already
+        made (push the compiled output), and changes outside managed
+        scope (no action; compiles pass them through). Read-only.
+        Inside a lox.toml project everything defaults (config: the
+        project base, --against: the compiled out file); --against
+        names the last compiled output to diff against — without one,
+        only the lockfile-derivable findings are reported.
+        Exit 0 = in sync; 1 = something needs attention.
+
   lxir observe <cfg.Loxone>... [--crosscheck <legacy.json>]...
         Port-direction evidence per block type, as JSON. Multiple configs
         merge into one corpus-level view. --crosscheck compares the
@@ -184,6 +199,7 @@ fn run(args: &[&str]) -> Result<ExitCode, AnyError> {
         ["adopt", rest @ ..] => cmd_adopt(rest),
         ["diff", rest @ ..] => cmd_diff(rest),
         ["drift", rest @ ..] => cmd_drift(rest),
+        ["status", rest @ ..] => cmd_status(rest),
         ["observe", rest @ ..] => cmd_observe(rest),
         ["roundtrip", path] => cmd_roundtrip(path),
         [cmd, ..] => {
@@ -1373,6 +1389,187 @@ fn cmd_drift(args: &[&str]) -> Result<ExitCode, AnyError> {
         }
         Ok(ExitCode::FAILURE)
     }
+}
+
+fn cmd_status(args: &[&str]) -> Result<ExitCode, AnyError> {
+    const USAGE: &str =
+        "usage: lxir status [<cfg.Loxone>] [--lock <lock.json>] [--against <out.Loxone>]";
+    let mut config: Option<&str> = None;
+    let mut lock_path: Option<String> = None;
+    let mut against: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(&a) = it.next() {
+        match a {
+            "--lock" => lock_path = Some(it.next().copied().ok_or("--lock needs a value")?.into()),
+            "--against" => {
+                against = Some(it.next().copied().ok_or("--against needs a value")?.into());
+            }
+            _ if a.starts_with("--") => return Err(format!("unknown flag `{a}`\n{USAGE}").into()),
+            _ if config.is_none() => config = Some(a),
+            _ => return Err(USAGE.into()),
+        }
+    }
+    // Inside a project everything defaults: config = base (the file a
+    // download overwrites), lock = the project lock, reference = the
+    // compiled out file when it exists.
+    let project = match Project::find(Path::new(".")) {
+        Some(f) => Some(Project::load(&f)?),
+        None => None,
+    };
+    let config = match (config, &project) {
+        (Some(c), _) => c.to_string(),
+        (None, Some(p)) => p.base.display().to_string(),
+        (None, None) => {
+            return Err(format!(
+                "no config given and no lox.toml in the current directory\n{USAGE}"
+            )
+            .into());
+        }
+    };
+    let lock_path = match (lock_path, &project) {
+        (Some(l), _) => l,
+        (None, Some(p)) => p.lock.display().to_string(),
+        (None, None) => {
+            return Err(format!(
+                "no --lock given and no lox.toml in the current directory\n{USAGE}"
+            )
+            .into());
+        }
+    };
+    let against = against.or_else(|| {
+        project
+            .as_ref()
+            .filter(|p| p.out.is_file())
+            .map(|p| p.out.display().to_string())
+    });
+
+    let doc = read_doc(&config)?;
+    let lock = Lockfile::load(Path::new(&lock_path))?;
+    let Some(recorded) = &lock.target.semantic_fingerprint else {
+        return Err(format!(
+            "{lock_path} records no semantic fingerprint (it predates the \
+             feature) — one adopt or compile establishes the baseline"
+        )
+        .into());
+    };
+    if &lxir::diff::semantic_fingerprint(&doc) == recorded {
+        println!("in sync: {config} matches the fingerprint in {lock_path}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    // The compile → push window: the config under triage is byte-identical
+    // to the base the last compile read, so nothing drifted — the compiled
+    // output just has not been deployed yet. Triaging would misread every
+    // compiled addition as a foreign deletion.
+    if lock.target.source_config_sha256 == Some(lxir::lock::sha256_hex(&doc.to_bytes())) {
+        println!(
+            "not deployed: {config} is exactly the base the last compile read — \
+             push the compiled output{}, then re-download and re-run status",
+            match &against {
+                Some(a) => format!(" ({a})"),
+                None => String::new(),
+            }
+        );
+        return Ok(ExitCode::FAILURE);
+    }
+
+    // The reference must be the state the fingerprint was recorded on —
+    // a stale out file would misattribute changes, so it is refused (the
+    // lock-based findings below still work without one).
+    let reference = match &against {
+        None => None,
+        Some(path) => {
+            let refdoc = read_doc(path)?;
+            if &lxir::diff::semantic_fingerprint(&refdoc) == recorded {
+                Some(refdoc)
+            } else {
+                eprintln!(
+                    "note: {path} does not match the lock's fingerprint (stale \
+                     compile output?) — triaging without it; recompile to refresh"
+                );
+                None
+            }
+        }
+    };
+
+    let report = lxir::status::triage(&doc, reference.as_ref(), &lock);
+    println!(
+        "drift: {config} changed since the last adopt/compile{}",
+        match &against {
+            Some(a) if reference.is_some() => format!(" — triage against {a}:"),
+            _ => " (no compiled output to triage against — diff-level findings \
+                  like adoptable blocks need one; see --against)"
+                .to_string(),
+        }
+    );
+    if !report.pending_push.is_empty() {
+        println!("\npush pending ({}):", report.pending_push.len());
+        for t in &report.pending_push {
+            println!(
+                "  {} ({}) — removed by the last compile but still in this config; \
+                 push the compiled output, then re-download",
+                t.slug, t.block_type
+            );
+        }
+    }
+    if !report.managed.is_empty() {
+        println!("\nmanaged edits ({}):", report.managed.len());
+        for m in &report.managed {
+            match m.block_type.as_str() {
+                "" => println!("  {}: {}", m.slug, m.detail),
+                ty => println!("  {} ({ty}): {}", m.slug, m.detail),
+            }
+            println!("      -> {}", m.action);
+        }
+    }
+    if !report.adoptable.is_empty() {
+        let module_hint = project
+            .as_ref()
+            .map(|p| p.module.display().to_string())
+            .unwrap_or_else(|| "<module.lxir | module-dir>".into());
+        println!("\nadoptable ({}):", report.adoptable.len());
+        if !report.managed.is_empty() {
+            println!(
+                "  (resolve the managed edits above first — incremental adopt \
+                 verifies as a semantic no-op and refuses while they stand)"
+            );
+        }
+        for a in &report.adoptable {
+            match &a.title {
+                Some(t) => println!("  {} \"{t}\" — new block of a managed type:", a.block_type),
+                None => println!(
+                    "  {} {} — new block of a managed type:",
+                    a.block_type, a.uuid
+                ),
+            }
+            println!(
+                "      lxir adopt {config} --uuid {} --as {} --module {module_hint} --lock {lock_path}",
+                a.uuid, a.slug
+            );
+        }
+    }
+    let mut noise = Vec::new();
+    if report.unmanaged_changes > 0 {
+        noise.push(format!(
+            "{} outside managed scope (compiles pass them through untouched)",
+            report.unmanaged_changes
+        ));
+    }
+    if report.locale_renames > 0 {
+        noise.push(format!(
+            "{} locale-suspect renames (save noise)",
+            report.locale_renames
+        ));
+    }
+    if !noise.is_empty() {
+        println!("\nunmanaged: {}", noise.join("; "));
+    }
+    if !report.needs_attention() && report.has_reference {
+        println!(
+            "\nnothing needs a decision — the drift is unmanaged and/or save noise; \
+             the next compile re-baselines the fingerprint"
+        );
+    }
+    Ok(ExitCode::FAILURE)
 }
 
 fn cmd_observe(args: &[&str]) -> Result<ExitCode, AnyError> {

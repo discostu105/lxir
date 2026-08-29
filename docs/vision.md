@@ -56,11 +56,12 @@ reviewable step:
 
 ```text
 everyday:             edit .lxir → check → compile → diff → upload
-after a GUI session:  download → decompile
-    ├─ managed logic changed?    → review it as a source diff, commit
-    ├─ only layout or hardware?  → lockfile update, source untouched
-    └─ new unknown objects?      → stay unmanaged, pass through untouched;
-                                   adoptable into source later (roadmap)
+after a GUI session:  download → lxir status
+    ├─ managed logic changed?    → the triage names the edit and the module
+                                   change that adopts it (or recompile to undo)
+    ├─ only layout or hardware?  → counted as unmanaged, no action
+    └─ new managed-type blocks?  → the exact incremental `lxir adopt --uuid`
+                                   command, ready to run
 ```
 
 Gradual adoption is also the migration path for existing installations: a
