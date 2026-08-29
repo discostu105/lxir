@@ -391,4 +391,6 @@ haus/
 
 Transport, LoxCC, credentials (stay in `lox`/`lox-cli`); simulating block
 semantics (stays in `lox-cli sim`); replacing Loxone Config for hardware/
-visualization authoring.
+visualization authoring; growing the IR into a programming language —
+loops, conditionals, compile-time computation stay out, generators emit
+`.lxir` instead (design.md D37).

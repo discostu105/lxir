@@ -820,3 +820,27 @@ Anything unverified is an error, not a heuristic:
     A `!=` comparator emulated as two checks — dishonest reporting
     when only one leg fails; the simulator can grow `!=` upstream
     instead.
+
+- **D37 — generation over language growth** (2026-08-29). The IR is
+  deliberately not a programming language: no loops, no conditionals,
+  no compile-time computation, and templates are pure macro expansion
+  (D23). That is an invariant, not a gap. Everything the project
+  promises — one-line reviewable diffs, same source + lock → same
+  bytes, a lockfile keyed by stable slugs, `fmt` and recompilation as
+  fixpoints — holds *because* a module is a finite list of
+  declarations whose meaning is read off the text without executing
+  anything. The cautionary tale is the workflow-engine world, which
+  spent a decade growing control flow into graph DSLs and then walked
+  it back to real languages (Vercel, "The best workflow engine is a
+  programming language", 2026-08); a config DSL that grows `for` and
+  `if` piecemeal ends in the same place with none of the guarantees.
+  So the line is drawn one level up: whoever needs `for facade in …`
+  writes a **generator** — any host language, a script, an agent —
+  that emits `.lxir` text. The format is the contract (ir-spec.md),
+  generated modules are first-class (check/fmt/compile cannot tell
+  them from hand-written ones), and the generated text stays the
+  review surface, exactly as adopt- and decompile-emitted modules
+  already do. Deferred template features are judged against this
+  line: sugar for declaring *what exists* (nesting, template-local
+  externs) may still land; anything whose value is computation at
+  compile time points at a generator instead.
