@@ -37,7 +37,7 @@ use crate::doc::{Counters, GUI_OWNED_ATTRS, GUI_OWNED_CHILDREN, LoxoneDoc, ports
 use crate::error::{Error, Result};
 use crate::ir::ast::{Attr, Item, MatchSpec, Module, Value};
 use crate::ir::validate::{api_mirror_entry, is_ref_type, suggest, validate_ports};
-use crate::layout::PageGeometry;
+use crate::layout::{PageGeometry, beside};
 use crate::lock::{
     AttrClaim, Layout, LockedExternal, LockedObject, LockedWire, Lockfile, sha256_hex,
 };
@@ -105,11 +105,34 @@ struct Residue {
     /// Where the block is drawn in the base (D42): a position Loxone Config
     /// moved it to is taken over instead of reverted.
     layout: Option<Layout>,
+    /// The page the base draws the block on.
+    page: Option<String>,
+}
+
+impl Residue {
+    /// The base's position of the block, if the base draws it on `page`:
+    /// a position on another page says nothing about this one.
+    fn layout_on(&self, page: &str) -> Option<Layout> {
+        self.layout.filter(|_| self.page.as_deref() == Some(page))
+    }
+}
+
+/// The `<C Type="Page">` the object at `path` sits under.
+fn page_of(doc: &LoxoneDoc, path: &[usize]) -> Option<String> {
+    (1..path.len()).rev().find_map(|n| {
+        let el = doc.element_at(&path[..n])?;
+        if el.name == "C" && el.attr("Type") == Some("Page") {
+            el.attr("U").map(str::to_string)
+        } else {
+            None
+        }
+    })
 }
 
 fn harvest_residue(el: &Element) -> Residue {
     Residue {
         layout: Layout::of_element(el),
+        page: None,
         attrs: el
             .attrs
             .iter()
@@ -282,9 +305,18 @@ pub fn compile(
     //     Each removed element hands back its GUI-owned residue (D19) so
     //     the rebuild carries it forward verbatim.
     let mut residue: BTreeMap<String, Residue> = BTreeMap::new();
+    let base_page: BTreeMap<String, String> = {
+        let idx = doc.index();
+        lock.objects
+            .values()
+            .filter_map(|o| Some((o.uuid.clone(), page_of(&doc, idx.by_uuid.get(&o.uuid)?)?)))
+            .collect()
+    };
     for obj in lock.objects.values() {
         if let Some(el) = doc.remove_by_uuid(&obj.uuid) {
-            residue.insert(obj.uuid.clone(), harvest_residue(&el));
+            let mut r = harvest_residue(&el);
+            r.page = base_page.get(&obj.uuid).cloned();
+            residue.insert(obj.uuid.clone(), r);
         }
     }
     // Tombstone sweep (D31): a pending removal whose object still exists
@@ -527,18 +559,21 @@ pub fn compile(
             },
         };
         // D42: the position is shared with Loxone Config. A block that
-        // changed pages is placed afresh; one the base shows somewhere else
-        // than the lock was moved in the GUI — taken over — unless the base
-        // shows the position a fresh placement superseded (the base
-        // predates that placement). New blocks are placed after wiring.
+        // changed pages is placed afresh. Where the base draws the block on
+        // its page is the GUI's: its extents and grid snap always, its
+        // position after a drag — unless the base still shows the position
+        // a placement replaced (the base predates that placement). New
+        // blocks are placed after wiring.
         if pinned_before.is_some_and(|p| p != page_uuid) {
             entry.layout = None;
         }
-        let base_layout = residue.get(&entry.uuid).and_then(|r| r.layout);
+        let base_layout = residue
+            .get(&entry.uuid)
+            .and_then(|r| r.layout_on(&page_uuid));
         if let (Some(l), Some(b)) = (entry.layout, base_layout) {
-            if b == l {
-                entry.superseded_layout = None;
-            } else if entry.superseded_layout != Some(b) {
+            let stale =
+                !l.same_spot(&b) && entry.superseded_layout.is_some_and(|s| s.same_spot(&b));
+            if !stale {
                 entry.layout = Some(b);
                 entry.superseded_layout = None;
             }
@@ -1231,8 +1266,16 @@ pub fn compile(
                 .index_of(&plan.uuid)
                 .expect("the block was appended to its page");
             if let Some(l) = plan.layout {
+                // Wired to a ref the compile does not own and drawn beside
+                // it: arranged with that ref in the GUI, so it stays. A
+                // wire routed through a ref elsewhere (D34) pins nothing.
                 let pinned = geo.wires.iter().any(|w| {
-                    (w.from.0 == i && foreign_ref(w.to.0)) || (w.to.0 == i && foreign_ref(w.from.0))
+                    let other = match (w.from.0 == i, w.to.0 == i) {
+                        (true, _) => w.to.0,
+                        (_, true) => w.from.0,
+                        _ => return false,
+                    };
+                    foreign_ref(other) && beside(&geo.objects[i].rect, &geo.objects[other].rect)
                 });
                 if pinned {
                     continue;
@@ -1247,6 +1290,12 @@ pub fn compile(
         for (i, at) in placed {
             let slug = slug_of[&i];
             let uuid = &managed[slug].uuid;
+            // Placed where the base already draws it: the GUI's rectangle.
+            let base = residue.get(uuid).and_then(|r| r.layout_on(page_uuid));
+            let at = match base {
+                Some(b) if b.same_spot(&at) => b,
+                _ => at,
+            };
             let el = doc
                 .element_at_mut(&index.by_uuid[uuid])
                 .expect("indexed path");
@@ -1256,10 +1305,7 @@ pub fn compile(
             el.set_attr("Py2", &at.py2.to_string());
             let entry = lock.objects.get_mut(slug).expect("planned from the lock");
             entry.layout = Some(at);
-            entry.superseded_layout = residue
-                .get(uuid)
-                .and_then(|r| r.layout)
-                .filter(|b| *b != at);
+            entry.superseded_layout = base.filter(|b| !b.same_spot(&at));
         }
     }
 

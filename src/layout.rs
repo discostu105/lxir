@@ -74,6 +74,13 @@ impl Layout {
         Layout::at(self.px + dx, self.py + dy, self.w(), self.h())
     }
 
+    /// The same position as far as the GUI is concerned. Loxone Config
+    /// snaps `Py` to the grid and recomputes the extents on every save, so
+    /// only a move of a grid unit or more is a drag.
+    pub fn same_spot(&self, o: &Layout) -> bool {
+        (self.px - o.px).abs() < GRID && (self.py - o.py).abs() < GRID
+    }
+
     fn grow(&self, left: i64, right: i64, vertical: i64) -> Layout {
         Layout {
             px: self.px - left,
@@ -95,6 +102,14 @@ impl Layout {
 
 fn snap(v: i64) -> i64 {
     v.div_euclid(GRID) * GRID
+}
+
+/// Whether `tag` sits beside `block` the way the GUI sets a ref next to
+/// the port it serves: level with the block, at most two gaps off its
+/// edge. A ref drawn there was arranged with the block.
+pub fn beside(block: &Layout, tag: &Layout) -> bool {
+    let apart = (tag.px - block.px2).max(block.px - tag.px2);
+    apart <= 2 * GAP && tag.py < block.py2 + ROW && block.py < tag.py2 + ROW
 }
 
 /// The three ways the GUI draws an object.
@@ -205,9 +220,9 @@ pub struct GeoObject {
     pub block_type: String,
     pub title: String,
     pub shape: Shape,
-    /// What the GUI draws: the written extents — or, where their width
-    /// contradicts the type's shape (blocks minted before D42), the
-    /// footprint at the written position.
+    /// What the GUI draws: for a builtin type its footprint at the
+    /// written position (no shorter than written), otherwise the written
+    /// extents.
     pub rect: Layout,
     /// The footprint for this type and wiring (width, height).
     pub size: (i64, i64),
@@ -216,6 +231,12 @@ pub struct GeoObject {
 }
 
 impl GeoObject {
+    /// A ref tag: placed beside the port it serves, not in a cluster.
+    /// (`Memory` draws as a tag too, but sits in its chain like a block.)
+    pub fn is_ref(&self) -> bool {
+        matches!(self.block_type.as_str(), "InputRef" | "OutputRef")
+    }
+
     /// Port offset from the object's top-left corner.
     fn port_offset(&self, port: usize, width: i64) -> (i64, i64) {
         let p = &self.ports[port];
@@ -329,16 +350,21 @@ impl PageGeometry {
                     row,
                 });
             }
-            let size = if spec.is_some() || shape == Shape::Tag {
+            let size = if spec.is_some() {
                 let rows = rows[0].max(rows[1]).max(subset.unwrap_or(0));
                 (shape.width(), shape.height(rows))
             } else {
                 (written.w(), written.h())
             };
-            let rect = if written.w() == size.0 {
-                written
-            } else {
-                Layout::at(written.px, written.py, size.0, size.1)
+            // The GUI draws a builtin at its footprint wherever it was
+            // written; a written height above the model (rows the model
+            // does not show) still takes room.
+            let rect = match spec {
+                Some(_) if written.w() == size.0 => {
+                    Layout::at(written.px, written.py, size.0, size.1.max(written.h()))
+                }
+                Some(_) => Layout::at(written.px, written.py, size.0, size.1),
+                None => written,
             };
             objects.push(GeoObject {
                 uuid: uuid.to_string(),
@@ -450,7 +476,8 @@ impl PageGeometry {
 
 /// Positions for the `free` objects of `geo` (object indexes, in source
 /// order); every other object stays put and is an obstacle. `prev` holds
-/// a free object's previous position, kept where it is as good as any.
+/// a free object's previous position; a cluster stays where its first
+/// block was when that spot is within one row of the best.
 ///
 /// Free blocks connected to each other are laid out together as a small
 /// layered graph — feedback broken in source order, columns by longest
@@ -464,7 +491,7 @@ pub fn place(
     prev: &BTreeMap<usize, Layout>,
 ) -> BTreeMap<usize, Layout> {
     let is_free: BTreeSet<usize> = free.iter().copied().collect();
-    let is_tag = |i: usize| geo.objects[i].shape == Shape::Tag;
+    let is_ref = |i: usize| geo.objects[i].is_ref();
     let labels = geo.label_room();
 
     // Where every object is (fixed ones now, free ones once placed), and
@@ -484,7 +511,7 @@ pub fn place(
     let mut tag_room = vec![(0i64, 0i64); geo.objects.len()];
     for w in &geo.wires {
         for (tag, other) in [(w.from, w.to), (w.to, w.from)] {
-            if is_free.contains(&tag.0) && is_tag(tag.0) && !is_tag(other.0) {
+            if is_free.contains(&tag.0) && is_ref(tag.0) && !is_ref(other.0) {
                 let room = GAP + TAG_W;
                 match geo.objects[other.0].ports[other.1].side {
                     Side::Left => tag_room[other.0].0 = room,
@@ -496,7 +523,7 @@ pub fn place(
 
     // Clusters: free blocks joined by wires, in source order of their
     // first member.
-    let blocks: Vec<usize> = free.iter().copied().filter(|&i| !is_tag(i)).collect();
+    let blocks: Vec<usize> = free.iter().copied().filter(|&i| !is_ref(i)).collect();
     let mut comp: BTreeMap<usize, usize> = blocks.iter().map(|&i| (i, i)).collect();
     fn root(comp: &mut BTreeMap<usize, usize>, i: usize) -> usize {
         let p = comp[&i];
@@ -546,7 +573,7 @@ pub fn place(
     }
 
     // Tags beside their partner's port.
-    for &t in free.iter().filter(|&&i| is_tag(i)) {
+    for &t in free.iter().filter(|&&i| is_ref(i)) {
         let partner = geo.wires.iter().find_map(|w| {
             let other = if w.from.0 == t {
                 w.to
@@ -555,7 +582,7 @@ pub fn place(
             } else {
                 return None;
             };
-            (!is_tag(other.0) && at.contains_key(&other.0)).then_some(other)
+            (!is_ref(other.0) && at.contains_key(&other.0)).then_some(other)
         });
         let (w, h) = geo.objects[t].size;
         let spot = partner.and_then(|(o, p)| {
@@ -852,7 +879,8 @@ fn settle(
     }
 
     // Unwired, a cluster goes below the page's content — a relayout pulls
-    // it there too; where it was only wins a tie.
+    // it there too. Where its first block was is worth one row: a spot
+    // about as good keeps it.
     let target = (home.0 - bbox.px, home.1 - bbox.py);
     let cost = |dx: i64, dy: i64| -> i64 {
         let mut c = if anchors.is_empty() {
@@ -1020,8 +1048,9 @@ mod tests {
             Layout::at(960, 960, 2688, 1272),
             &[("OutputAPI", Side::Right, 0)],
         );
-        let tag = |t| {
-            object(
+        let tag = |t| GeoObject {
+            block_type: "OutputRef".into(),
+            ..object(
                 t,
                 Shape::Tag,
                 Layout::at(0, 0, TAG_W, ROW),
@@ -1038,6 +1067,28 @@ mod tests {
             Layout::at(960 + 2688 + GAP, 960 + 480, TAG_W, ROW)
         );
         assert_eq!(placed[&2], placed[&1].shift(0, ROW));
+    }
+
+    #[test]
+    fn a_memory_flag_sits_in_its_chain() {
+        // a → mem → b: the flag is drawn as a tag but is a block of the
+        // chain, not a ref placed beside a port.
+        let mem = GeoObject {
+            block_type: "Memory".into(),
+            ..object(
+                "mem",
+                Shape::Tag,
+                Layout::at(0, 0, TAG_W, ROW),
+                &[("Input", Side::Left, 0), ("Q", Side::Right, 0)],
+            )
+        };
+        let geo = page(
+            vec![small("a"), mem, small("b")],
+            &[((0, 2), (1, 0)), ((1, 1), (2, 0))],
+        );
+        let placed = place(&geo, &[0, 1, 2], &BTreeMap::new());
+        let (a, m, b) = (placed[&0], placed[&1], placed[&2]);
+        assert!(a.px2 < m.px && m.px2 < b.px, "{a:?} {m:?} {b:?}");
     }
 
     #[test]

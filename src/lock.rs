@@ -31,11 +31,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// v2 adds the `removed` tombstone map (D31); v3 the attribute claims on
-/// externs (`attr_claims`/`removed_attrs`, D39). Older locks load fine (the
-/// maps default to empty); saving always writes the current version, so an
-/// old binary — whose version check refuses the newer number — can never
-/// silently drop state it does not know about.
-pub const LOCKFILE_VERSION: u32 = 3;
+/// externs (`attr_claims`/`removed_attrs`, D39); v4 `superseded_layout`
+/// (D42). Older locks load fine (the maps default to empty); saving always
+/// writes the current version, so an old binary — whose version check
+/// refuses the newer number — can never silently drop state it does not
+/// know about.
+pub const LOCKFILE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lockfile {
@@ -348,6 +349,39 @@ mod tests {
             !json.contains("\"followers\": []"),
             "empty followers elided"
         );
+        let back: Lockfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, lock);
+        assert_eq!(back.to_json(), json);
+    }
+
+    #[test]
+    fn superseded_layout_roundtrips_and_stays_out_when_unset() {
+        let mut lock = Lockfile::new();
+        lock.objects.insert(
+            "a".into(),
+            LockedObject {
+                uuid: "u".into(),
+                block_type: "And".into(),
+                ports: BTreeMap::new(),
+                layout: Some(Layout {
+                    px: 960,
+                    py: 960,
+                    px2: 2304,
+                    py2: 1656,
+                }),
+                superseded_layout: None,
+                page_uuid: None,
+                expr_owned: false,
+            },
+        );
+        assert!(!lock.to_json().contains("superseded_layout"));
+        lock.objects.get_mut("a").unwrap().superseded_layout = Some(Layout {
+            px: 7392,
+            py: 21480,
+            px2: 8736,
+            py2: 22176,
+        });
+        let json = lock.to_json();
         let back: Lockfile = serde_json::from_str(&json).unwrap();
         assert_eq!(back, lock);
         assert_eq!(back.to_json(), json);

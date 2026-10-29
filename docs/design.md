@@ -1097,24 +1097,35 @@ Anything unverified is an error, not a heuristic:
   "Automatik-Regeln" the content ends near y 6000 and two managed
   blocks sat at y 15192. Decision:
   - **Positions are shared state.** Teardown harvests each managed
-    block's rectangle from the base, like other GUI residue (D19). When
-    lock and base disagree, the base wins: a drag in the GUI goes into
-    the lock. Positions stay outside the diff projection and the
-    fingerprint (D21), so a drag is not drift.
+    block's rectangle from the base, like other GUI residue (D19),
+    together with the page it is drawn on. When lock and base disagree,
+    the base wins: a drag in the GUI goes into the lock. Positions stay
+    outside the diff projection and the fingerprint (D21), so a drag is
+    not drift. Two limits:
+    - Only a move of a grid unit (96) or more is a drag. The GUI
+      recomputes `Px2`/`Py2` on every save; a block on the same spot
+      takes the GUI's rectangle, so a save moves nothing.
+    - A rectangle on another page than the module's (a GUI cut and
+      paste) is ignored: the block is rebuilt on its own page, where it
+      was.
   - **The GUI's geometry** (`src/layout.rs`, from corpus statistics
     and GUI refs placed next to block ports). Grid 96, port row 192.
     Small blocks are 1344 wide and 312 + 192·rows tall, with the first
     port row at 288. Function blocks are 2688 wide and 504 + 192·rows
     tall, first row at 480. Ref tags are 2112 × 192 and sit 960 off the
     block edge. Rows are what the GUI shows:
-    - Types with a fixed row count, from the corpus mode: LC2 6;
-      AutoJalousie, CentralShade, CentralLight and Code16 4; DayTimer
-      3; PButtonT and PulseAt 2.
+    - Types that show at least a set number of rows, from the corpus
+      mode: LC2 6; AutoJalousie, CentralShade, CentralLight and Code16
+      4; DayTimer 3; PButtonT and PulseAt 2. Wired connectors beyond
+      those add rows.
     - Other built-ins show their inputs and outputs, and show params
       and `Remanence` only when they are wired.
     - Unknown types show only wired ports. Keys starting with `out` go
       on the right: the API links of `OutputAPI` are stored on the
       output, so a wired connector there is not an input.
+
+    `Memory` draws as a 2112 × 192 tag but is a block and sits in its
+    chain. Objects of unknown type keep the size they are drawn with.
 
     The old formula `504 + 192·(ports−2)` was wrong for function blocks:
     a minted PushButton came out 1344 × 1848, where the GUI draws
@@ -1138,19 +1149,27 @@ Anything unverified is an error, not a heuristic:
     make placement deterministic.
   - **`--relayout <page>`** places the page's managed blocks afresh, as
     if new. A block stays where it is if it is wired to a ref tag the
-    compile does not own (a GUI-drawn ref): someone arranged those two
-    together in the GUI. A block's old position wins a tie.
+    compile does not own (a GUI-drawn ref) and drawn beside it, level
+    and at most two gaps off: someone arranged those two together in
+    the GUI. A wire routed through a GUI ref elsewhere on the page
+    (D34) pins nothing. A cluster's old position (that of its first
+    block) is worth one row in the cost, so a spot about as good keeps
+    it. A title that names no page is an error.
   - **A stale base must not revert a placement.** After a relayout,
     the lock holds the new position, and the base keeps the old one
     until it is uploaded and downloaded again. Harvest would read the
     old position as a GUI drag. So the lock records it as
     `superseded_layout`:
-    - a base position equal to it is ignored;
-    - once the base has the new position, the field is cleared;
-    - any other base position is a drag and wins.
+    - a base position on the same spot is ignored;
+    - any other base position is taken over (the new one once it
+      arrives, or a drag) and clears the field;
+    - every placement writes it anew: the base position it replaced,
+      or nothing.
 
-    This is the same lifecycle as D31's tombstones. A placement after
-    a page change records the old position the same way.
+    This is the same lifecycle as D31's tombstones. The field is new in
+    lockfile v4, so an older binary refuses the lock instead of dropping
+    it. A block that changes pages is placed afresh; its old page's
+    position is not on the new page, so nothing is superseded.
   - **`lxir render`** draws one page as SVG: managed objects blue, GUI
     objects grey, wires orthogonal with backward ones red, labels for
     other pages purple. It prints the metrics that placement is judged

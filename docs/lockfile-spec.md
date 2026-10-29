@@ -13,7 +13,7 @@ otherwise — a wrong port UUID silently breaks wire identity.
 
 ```jsonc
 {
-  "lockfile_version": 3,
+  "lockfile_version": 4,
 
   "target": {                       // informational metadata (nullable)
     "config_version": "17010727",   // ConfigVersion of the last base
@@ -52,10 +52,12 @@ otherwise — a wrong port UUID silently breaks wire identity.
       },                            // absent; a GUI drag in the base
                                     // replaces it (harvested at teardown).
       "superseded_layout": { … },   // the base's position that the last
-                                    // placement (relayout, page change)
-                                    // replaced. A base still showing it is
-                                    // stale, not a drag; cleared once the
-                                    // base has `layout`. Usually absent.
+                                    // placement (relayout) replaced. A
+                                    // base still showing it is stale, not
+                                    // a drag. Cleared whenever a base
+                                    // position is taken over (the new one
+                                    // arrived, or a drag); rewritten by
+                                    // every placement. Usually absent.
       "page_uuid": "…",             // <C Type="Page"> the block lives on;
                                     // pinned on first compile (options'
                                     // page) or by adopt (original page).
@@ -194,6 +196,5 @@ maps; saving always writes the current version, so a v1-only binary refuses
 a v2 lock instead of silently dropping tombstones it does not understand.
 **v3** (2026-10-18) added attribute claims (`attr_claims`,
 `removed_attrs`, D39); a v1/v2 lock loads with both empty.
-`superseded_layout` (2026-10-29, D42) is optional and came without a
-bump. A binary that drops it loses only the stale-base guard for a
-position, and binaries from before D42 never harvested positions.
+**v4** (2026-10-29) added `superseded_layout` (D42); a v1–v3 lock loads
+without it.

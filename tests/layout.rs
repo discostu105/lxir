@@ -2,7 +2,7 @@
 //! over GUI moves, and what `relayout` may move.
 
 use lxir::ir::{CompileOptions, Module, compile};
-use lxir::layout::{GRID, Layout, PageGeometry};
+use lxir::layout::{GAP, GRID, Layout, PageGeometry, ROW, TAG_W};
 use lxir::render::metrics;
 use lxir::uuid::parse_serial;
 use lxir::{Lockfile, LoxoneDoc};
@@ -160,9 +160,8 @@ fn base_with_gui_ref() -> LoxoneDoc {
     compile(&base(), &mirrors, &mut Lockfile::new(), &opts()).unwrap()
 }
 
-#[test]
-fn a_relayout_keeps_blocks_wired_to_foreign_refs() {
-    let module = Module::parse(
+fn ref_module() -> Module {
+    Module::parse(
         "page \"Beschattung\"\n\
          extern quelle = VirtualIn(iname: \"VI1\")\n\
          \n\
@@ -174,14 +173,39 @@ fn a_relayout_keeps_blocks_wired_to_foreign_refs() {
          \tI1: anzeige.Q,\n\
          )\n",
     )
-    .unwrap();
+    .unwrap()
+}
+
+/// The GUI's ref, as an unmanaged object on the compiled page.
+fn gui_ref(doc: &LoxoneDoc, lock: &Lockfile) -> String {
+    let geo = PageGeometry::of(doc, BESCHATTUNG).unwrap();
+    let managed: Vec<&str> = lock.objects.values().map(|e| e.uuid.as_str()).collect();
+    geo.objects
+        .iter()
+        .find(|o| o.block_type == "InputRef" && !managed.contains(&o.uuid.as_str()))
+        .unwrap()
+        .uuid
+        .clone()
+}
+
+#[test]
+fn a_relayout_keeps_blocks_set_beside_foreign_refs() {
+    let module = ref_module();
     let mut lock = Lockfile::new();
     let out = compile(&base_with_gui_ref(), &module, &mut lock, &opts()).unwrap();
     let (anzeige, folge) = (uuid(&lock, "anzeige"), uuid(&lock, "folge"));
-    let moved = gui_move(&gui_move(&out, &anzeige, 19200, 19200), &folge, 38400, 960);
+    // The GUI drew its ref and the block reading it side by side, far off.
+    let spiegel = gui_ref(&out, &lock);
+    let moved = gui_move(&out, &spiegel, 19200 - GAP - TAG_W, 19200);
+    let moved = gui_move(
+        &gui_move(&moved, &anzeige, 19200, 19200),
+        &folge,
+        38400,
+        960,
+    );
 
     let laid = compile(&moved, &module, &mut lock, &relayout()).unwrap();
-    // anzeige reads through the GUI's ref: it stays where the GUI put it.
+    // anzeige was arranged with the GUI's ref: it stays where the GUI put it.
     let a = rect(&laid, &anzeige);
     assert_eq!((a.px, a.py), (19200, 19200));
     // folge is ours alone: it moves up beside what feeds it.
@@ -191,21 +215,44 @@ fn a_relayout_keeps_blocks_wired_to_foreign_refs() {
 }
 
 #[test]
+fn a_relayout_moves_blocks_far_from_the_ref_they_read() {
+    let module = ref_module();
+    let mut lock = Lockfile::new();
+    let out = compile(&base_with_gui_ref(), &module, &mut lock, &opts()).unwrap();
+    let anzeige = uuid(&lock, "anzeige");
+    let spiegel = rect(&out, &gui_ref(&out, &lock));
+    // Wired through the GUI's ref (D34), but nowhere near it.
+    let moved = gui_move(&out, &anzeige, 19200, 19200);
+
+    let laid = compile(&moved, &module, &mut lock, &relayout()).unwrap();
+    // Up beside the ref, clear of the GUI's Memory that sits level with it.
+    let a = rect(&laid, &anzeige);
+    assert!(
+        a.px > spiegel.px2 && a.px - spiegel.px2 < 4000,
+        "{spiegel:?} {a:?}"
+    );
+    assert!((a.py - spiegel.py).abs() < 2 * GAP, "{spiegel:?} {a:?}");
+    let geo = PageGeometry::of(&laid, BESCHATTUNG).unwrap();
+    assert!(
+        metrics(&geo).overlaps.is_empty(),
+        "{:?}",
+        metrics(&geo).overlaps
+    );
+}
+
+#[test]
 fn placement_is_per_page() {
-    let xml = std::fs::read_to_string("examples/configs/haus.Loxone").unwrap();
-    let two_pages = LoxoneDoc::parse(
-        xml.replace(
-            PAGE_BESCHATTUNG,
-            &format!("{PAGE_WERKSTATT}{PAGE_BESCHATTUNG}"),
-        )
-        .as_bytes(),
-    )
-    .unwrap();
     let one = "page \"Beschattung\"\n\
                extern sonne = VirtualIn(iname: \"VI3\")\n\
                fern = And(I1: sonne.Q)\n";
     let mut lock = Lockfile::new();
-    let out = compile(&two_pages, &Module::parse(one).unwrap(), &mut lock, &opts()).unwrap();
+    let out = compile(
+        &two_pages(),
+        &Module::parse(one).unwrap(),
+        &mut lock,
+        &opts(),
+    )
+    .unwrap();
     // Far down on its own page.
     let moved = gui_move(&out, &uuid(&lock, "fern"), 960, 96000);
 
@@ -215,4 +262,168 @@ fn placement_is_per_page() {
     let out = compile(&moved, &Module::parse(&two).unwrap(), &mut lock, &opts()).unwrap();
     let nah = rect(&out, &uuid(&lock, "nah"));
     assert!(nah.py < 4800, "{nah:?}");
+}
+
+/// `doc` with the object's extents redrawn, the way the GUI recomputes
+/// `Px2`/`Py2` on every save without anyone dragging.
+fn gui_redraw(doc: &LoxoneDoc, uuid: &str, dw: i64, dh: i64) -> LoxoneDoc {
+    let mut doc = doc.clone();
+    let r = rect(&doc, uuid);
+    let path = doc.index().by_uuid[uuid].clone();
+    let el = doc.element_at_mut(&path).unwrap();
+    el.set_attr("Px2", &(r.px2 + dw).to_string());
+    el.set_attr("Py2", &(r.py2 + dh).to_string());
+    LoxoneDoc::parse(&doc.to_bytes()).unwrap()
+}
+
+fn two_pages() -> LoxoneDoc {
+    let xml = std::fs::read_to_string("examples/configs/haus.Loxone").unwrap();
+    LoxoneDoc::parse(
+        xml.replace(
+            PAGE_BESCHATTUNG,
+            &format!("{PAGE_WERKSTATT}{PAGE_BESCHATTUNG}"),
+        )
+        .as_bytes(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_gui_save_that_only_redraws_extents_is_taken_over() {
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
+    let and = uuid(&lock, "beschatten");
+    let stale = gui_move(&out, &and, 28800, 19200);
+    let laid = compile(&stale, &module(), &mut lock, &relayout()).unwrap();
+    let fresh = rect(&laid, &and);
+
+    // Downloaded after the push and saved: same spot, the GUI's extents.
+    let saved = gui_redraw(&laid, &and, 0, ROW);
+    let out = compile(&saved, &module(), &mut lock, &opts()).unwrap();
+    let at = rect(&out, &and);
+    assert!(at.same_spot(&fresh), "{fresh:?} {at:?}");
+    assert_eq!(at, rect(&saved, &and));
+    assert_eq!(lock.objects["beschatten"].layout, Some(at));
+    assert_eq!(lock.objects["beschatten"].superseded_layout, None);
+    let again = compile(&out, &module(), &mut lock, &opts()).unwrap();
+    assert_eq!(out.to_bytes(), again.to_bytes());
+}
+
+#[test]
+fn a_stale_base_redrawn_by_the_gui_keeps_the_relayout() {
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
+    let and = uuid(&lock, "beschatten");
+    let stale = gui_move(&out, &and, 28800, 19200);
+    let laid = compile(&stale, &module(), &mut lock, &relayout()).unwrap();
+    let fresh = rect(&laid, &and);
+
+    // The stale base, opened and saved once more before the download:
+    // still at the replaced spot, only the extents recomputed.
+    let resaved = gui_redraw(&stale, &and, 0, ROW);
+    let before = lock.objects.clone();
+    let out = compile(&resaved, &module(), &mut lock, &opts()).unwrap();
+    assert_eq!(rect(&out, &and), fresh);
+    assert_eq!(lock.objects, before);
+}
+
+#[test]
+fn a_relayout_of_a_laid_out_page_changes_nothing() {
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module(), &mut lock, &opts()).unwrap();
+    let stale = gui_move(&out, &uuid(&lock, "beschatten"), 28800, 19200);
+    let laid = compile(&stale, &module(), &mut lock, &relayout()).unwrap();
+    let again = compile(&laid, &module(), &mut lock, &relayout()).unwrap();
+    assert_eq!(laid.to_bytes(), again.to_bytes());
+    assert!(
+        lock.objects.values().all(|e| e.superseded_layout.is_none()),
+        "the base carries every placement"
+    );
+}
+
+#[test]
+fn an_unknown_relayout_page_is_an_error() {
+    let opts = CompileOptions {
+        relayout: vec!["Dachboden".into()],
+        ..opts()
+    };
+    let err = compile(&base(), &module(), &mut Lockfile::new(), &opts).unwrap_err();
+    assert!(err.to_string().contains("`Dachboden`"), "{err}");
+}
+
+#[test]
+fn a_block_moved_to_another_page_is_placed_afresh() {
+    let one = "page \"Beschattung\"\n\
+               extern sonne = VirtualIn(iname: \"VI3\")\n\
+               fern = And(I1: sonne.Q)\n";
+    let mut lock = Lockfile::new();
+    let out = compile(
+        &two_pages(),
+        &Module::parse(one).unwrap(),
+        &mut lock,
+        &opts(),
+    )
+    .unwrap();
+    let fern = uuid(&lock, "fern");
+    let moved = gui_move(&out, &fern, 960, 96000);
+
+    // The module moves it: its old page's position means nothing on the
+    // new one.
+    let other = one.replace("page \"Beschattung\"", "page \"Werkstatt\"");
+    let out = compile(&moved, &Module::parse(&other).unwrap(), &mut lock, &opts()).unwrap();
+    let at = rect(&out, &fern);
+    assert!(at.py < 4800, "{at:?}");
+    assert_eq!(lock.objects["fern"].layout, Some(at));
+    assert_eq!(lock.objects["fern"].superseded_layout, None);
+}
+
+#[test]
+fn a_gui_paste_onto_another_page_is_not_a_move() {
+    let one = "page \"Beschattung\"\n\
+               extern sonne = VirtualIn(iname: \"VI3\")\n\
+               fern = And(I1: sonne.Q)\n";
+    let module = Module::parse(one).unwrap();
+    let mut lock = Lockfile::new();
+    let out = compile(&two_pages(), &module, &mut lock, &opts()).unwrap();
+    let fern = uuid(&lock, "fern");
+    let placed = rect(&out, &fern);
+
+    // Cut in the GUI and pasted far down the other page.
+    let mut pasted = gui_move(&out, &fern, 960, 96000);
+    let el = pasted.remove_by_uuid(&fern).unwrap();
+    let werkstatt = pasted.page_path(Some("Werkstatt")).unwrap();
+    pasted.element_at_mut(&werkstatt).unwrap().push_child(el);
+    let pasted = LoxoneDoc::parse(&pasted.to_bytes()).unwrap();
+
+    // The module still says Beschattung: rebuilt there, where it was.
+    let before = lock.objects.clone();
+    let out = compile(&pasted, &module, &mut lock, &opts()).unwrap();
+    assert_eq!(rect(&out, &fern), placed);
+    assert_eq!(lock.objects, before);
+}
+
+#[test]
+fn a_memory_flag_is_placed_in_its_chain() {
+    let module = Module::parse(
+        "page \"Beschattung\"\n\
+         extern sonne = VirtualIn(iname: \"VI3\")\n\
+         \n\
+         vorne = And(\n\
+         \tI1: sonne.Q,\n\
+         )\n\
+         \n\
+         merker = Memory(\n\
+         \tInput: vorne.Q,\n\
+         )\n\
+         \n\
+         hinten = And(\n\
+         \tI1: merker.Q,\n\
+         )\n",
+    )
+    .unwrap();
+    let mut lock = Lockfile::new();
+    let out = compile(&base(), &module, &mut lock, &opts()).unwrap();
+    let [v, m, h] = ["vorne", "merker", "hinten"].map(|s| rect(&out, &uuid(&lock, s)));
+    assert_eq!((m.w(), m.h()), (TAG_W, ROW));
+    assert!(v.px2 < m.px && m.px2 < h.px, "{v:?} {m:?} {h:?}");
 }
