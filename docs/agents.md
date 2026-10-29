@@ -26,7 +26,8 @@ Loxone logic through this toolchain. The IR exists so you never have to edit
    is a separate, human-gated step (`lox`/`lox-cli`, outside this crate).
    Treat everything here as read-only toward the house.
 5. **Prefer `iname`/`uuid` matching over `title`** for externs — titles are
-   locale-volatile and may change under you.
+   locale-volatile and may change under you. Where identical devices
+   repeat a title ("Taster 1"), narrow it with `device: "<serial>"`.
 6. Treat `NoMatch` / `AmbiguousMatch` as **stop-and-ask**: choosing among
    candidates is a human decision unless instructions already cover it.
 7. **Keep real configs out of repositories.** A house config carries the
