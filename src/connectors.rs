@@ -538,6 +538,12 @@ const INPUT_REF: &[PortSpec] = &[
 ];
 const OUTPUT_REF: &[PortSpec] = &[p("AI", Input), p("AQ", Output)];
 
+// Virtual input (D47): an object of the "Virtual Inputs" folder, not a
+// page block — the value a user sets in the app. `Q` and `Qm` are both
+// sources on every one of the 113 corpus instances that carry
+// connectors (175 instances overall, Config 3.x through 17).
+const VIRTUAL_IN: &[PortSpec] = &[p("Q", Output), p("Qm", Output)];
+
 /// `LinkRefType=` code and `Analog=` flag a ref carries for a mirrored
 /// object of the given XML type — Loxone Config's internal type-registry
 /// number, learned from the house corpus (every code below observed on
@@ -613,6 +619,7 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "AnalogMultiplexer2",
     "SRFlipFlop",
     "State",
+    "VirtualIn",
 ];
 
 /// Element-attribute parameters per block type: logic Loxone stores as an
@@ -630,6 +637,43 @@ pub fn attr_params(block_type: &str) -> &'static [&'static str] {
     match block_type {
         "Formula" => &["Formula"],
         "Code16" => &["Code"],
+        "VirtualIn" => &["Analog", "MinVal", "MaxVal", "DefVal"],
+        _ => &[],
+    }
+}
+
+/// The container a block type lives in when it is not drawn on a page
+/// (D47): a minted object of such a type is appended to the base's one
+/// element of that type, never placed, and never governed by `page`.
+pub fn container_type(block_type: &str) -> Option<&'static str> {
+    match block_type {
+        "VirtualIn" => Some("VirtualInCaption"),
+        _ => None,
+    }
+}
+
+/// Per-type GUI-owned attributes (D19) beyond the global
+/// [`crate::doc::GUI_OWNED_ATTRS`]: re-emitted verbatim from the base so a
+/// GUI save converges. A VirtualIn's input-dialog settings — `IName=` its
+/// `VI<n>` designation (minted once, then the GUI's), `Desc=`, `ValOT=`,
+/// `MinChange=`/`MinTime=` change filters, `EnVal=`, `DefOnFirstStart=`,
+/// `Idx=` — and the value range the source may also bind (a binding is a
+/// claim, as with `Code=` in D40).
+pub fn carried_attrs(block_type: &str) -> &'static [&'static str] {
+    match block_type {
+        "VirtualIn" => &[
+            "IName",
+            "Desc",
+            "ValOT",
+            "MinVal",
+            "MaxVal",
+            "DefVal",
+            "MinChange",
+            "MinTime",
+            "EnVal",
+            "DefOnFirstStart",
+            "Idx",
+        ],
         _ => &[],
     }
 }
@@ -713,6 +757,7 @@ pub fn builtin(block_type: &str) -> Option<&'static [PortSpec]> {
         "State" => Some(STATE),
         "InputRef" => Some(INPUT_REF),
         "OutputRef" => Some(OUTPUT_REF),
+        "VirtualIn" => Some(VIRTUAL_IN),
         _ => None,
     }
 }
