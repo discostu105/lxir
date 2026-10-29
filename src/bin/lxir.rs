@@ -131,8 +131,11 @@ USAGE:
         already be declared in that block's argument list — the error
         says exactly which line to add.
 
-  lxir diff [--exit-code] <old.Loxone> <new.Loxone>
+  lxir diff [--exit-code] [--summary] <old.Loxone> <new.Loxone>
         Semantic diff. --exit-code exits 1 when the docs differ.
+        --summary writes it as a commit message instead: a subject line
+        counting the changes (prefixed with the page if they all sit on
+        one), then the changes by type, title and port name.
 
   lxir drift <cfg.Loxone> [--lock <lock.json>]
         Check a config (typically a fresh download) against the semantic
@@ -1332,10 +1335,19 @@ fn cmd_adopt_one(
 }
 
 fn cmd_diff(args: &[&str]) -> Result<ExitCode, AnyError> {
-    let (exit_code, old, new) = match args {
-        [old, new] => (false, *old, *new),
-        ["--exit-code", old, new] => (true, *old, *new),
-        _ => return Err("usage: lxir diff [--exit-code] <old.Loxone> <new.Loxone>".into()),
+    let exit_code = args.contains(&"--exit-code");
+    let summary = args.contains(&"--summary");
+    let (old, new) = match args
+        .iter()
+        .filter(|a| !matches!(**a, "--exit-code" | "--summary"))
+        .collect::<Vec<_>>()[..]
+    {
+        [old, new] if !old.starts_with("--") && !new.starts_with("--") => (*old, *new),
+        _ => {
+            return Err(
+                "usage: lxir diff [--exit-code] [--summary] <old.Loxone> <new.Loxone>".into(),
+            );
+        }
     };
     let a = read_doc(old)?;
     let b = read_doc(new)?;
@@ -1355,6 +1367,14 @@ fn cmd_diff(args: &[&str]) -> Result<ExitCode, AnyError> {
         }
     }
     let d = lxir::diff::diff(&a, &b);
+    if summary {
+        print!("{}", lxir::diff::summary(&a, &b, &d));
+        return Ok(if exit_code && !d.is_empty() {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        });
+    }
 
     for o in &d.added {
         println!("+ {} {} {:?}", o.block_type, o.uuid, o.title);

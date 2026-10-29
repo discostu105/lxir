@@ -65,6 +65,7 @@ lxir compile --base current.Loxone \
 
 # 4. Show your work as a SEMANTIC diff, never an XML diff:
 lxir diff current.Loxone out.Loxone
+lxir diff --summary current.Loxone out.Loxone   # by name: a commit message
 
 # 5. Sanity: the output must round-trip.
 lxir roundtrip out.Loxone
@@ -82,7 +83,9 @@ stay where they are (D42).
 
 Present step 4's output when proposing a change: it shows added blocks,
 wires, and parameter changes in reviewable form, and flags locale-rename
-noise (`[locale?]`) so it isn't mistaken for a real edit.
+noise (`[locale?]`) so it isn't mistaken for a real edit. `--summary`
+says the same by block title and port name — the form to show a human,
+and the commit message for the module change.
 
 The decompile view is for **reading, not compiling**: compiling it against
 the same base would mint duplicates of every managed block and claim

@@ -165,6 +165,8 @@ lxir rename alter_name neuer_name    # refactor: sources + lockfile together,
 lxir lint                            # advisory: unused names, blocks whose
                                      # outputs feed nothing (GUI wires count)
 lxir diff current.Loxone out.Loxone  # semantic diff, locale noise flagged
+lxir diff --summary current.Loxone out.Loxone  # the same as a commit
+                                     # message, by name instead of UUID
 lxir render out.Loxone --page Beschattung --out page.svg
                                      # a page as SVG + layout metrics
 lxir compile --relayout Beschattung  # place the page's managed blocks
