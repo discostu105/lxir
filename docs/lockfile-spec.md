@@ -46,10 +46,16 @@ otherwise — a wrong port UUID silently breaks wire identity.
         "I2": "…-01ff…",            // these must never change
         "Q":  "…-02ff…"
       },
-      "layout": {                   // drawing rectangle; kept stable so
-        "px": 7392, "py": 1080,     // recompiles don't shuffle the page
-        "px2": 8736, "py2": 1776
-      },
+      "layout": {                   // drawing rectangle (D42); kept
+        "px": 7392, "py": 1080,     // stable so recompiles don't shuffle
+        "px2": 8736, "py2": 1776    // the page. Placed by compile when
+      },                            // absent; a GUI drag in the base
+                                    // replaces it (harvested at teardown).
+      "superseded_layout": { … },   // the base's position that the last
+                                    // placement (relayout, page change)
+                                    // replaced. A base still showing it is
+                                    // stale, not a drag; cleared once the
+                                    // base has `layout`. Usually absent.
       "page_uuid": "…",             // <C Type="Page"> the block lives on;
                                     // pinned on first compile (options'
                                     // page) or by adopt (original page).
@@ -188,3 +194,6 @@ maps; saving always writes the current version, so a v1-only binary refuses
 a v2 lock instead of silently dropping tombstones it does not understand.
 **v3** (2026-10-18) added attribute claims (`attr_claims`,
 `removed_attrs`, D39); a v1/v2 lock loads with both empty.
+`superseded_layout` (2026-10-29, D42) is optional and came without a
+bump. A binary that drops it loses only the stale-base guard for a
+position, and binaries from before D42 never harvested positions.

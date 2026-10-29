@@ -150,7 +150,16 @@ pub struct LockedObject {
     pub block_type: String,
     /// Port key → port UUID. Every port gets its own pinned UUID.
     pub ports: BTreeMap<String, String>,
+    /// Drawing rectangle the compiler writes (D42). Placed once, then
+    /// kept — except that a move made in Loxone Config is taken over
+    /// from the base, and a relayout places the block afresh.
     pub layout: Option<Layout>,
+    /// The position a base still showed when the compiler last placed
+    /// the block afresh (relayout, page change). A base that shows it
+    /// predates that placement — it is not a GUI move to take over.
+    /// Cleared once a base shows the current layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_layout: Option<Layout>,
     /// UUID of the `<C Type="Page">` the block lives on. Pinned on first
     /// compile (from the compile options' page) or by adoption (the page
     /// the existing block was drawn on); rebuilds place the block there.
@@ -299,6 +308,7 @@ mod tests {
                     px2: 2304,
                     py2: 1656,
                 }),
+                superseded_layout: None,
                 page_uuid: Some("00000002-0000-0000-ffff504f94112233".into()),
                 expr_owned: false,
             },
@@ -353,6 +363,7 @@ mod tests {
                 block_type: "And".into(),
                 ports: BTreeMap::new(),
                 layout: None,
+                superseded_layout: None,
                 page_uuid: None,
                 expr_owned: false,
             },
