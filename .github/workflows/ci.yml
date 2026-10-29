@@ -33,3 +33,5 @@ jobs:
           LOCK: examples/project/pool.lock.json
           EXPECTED: examples/project/out.Loxone
         run: examples/ci.sh
+      - name: no personal data in committed configs
+        run: git ls-files -z '*.Loxone' | xargs -0 -r target/release/lxir scan
