@@ -150,7 +150,9 @@ pub const GUI_OWNED_ATTRS: &[&str] = &[
 /// editor), `<LSConfig>` the scene-behavior settings (`OpM=`/`ScMv=`
 /// reference the scenes' SIDs), `<HCL>` the human-centric-lighting
 /// color-temperature curve, and `<SeqConf>` RGB color sequences (nested
-/// `<seq0>`/`<Sequence>`/`<Col>`, carried wholesale).
+/// `<seq0>`/`<Sequence>`/`<Col>`, carried wholesale). `<StateTexts>`
+/// holds a State block's per-value status texts, authored in the GUI
+/// (the save adds one to a minted State, oracle session 14).
 pub const GUI_OWNED_CHILDREN: &[&str] = &[
     "IoData",
     "Display",
@@ -161,6 +163,7 @@ pub const GUI_OWNED_CHILDREN: &[&str] = &[
     "LSConfig",
     "HCL",
     "SeqConf",
+    "StateTexts",
 ];
 
 /// Lookup tables built in one pass over the document.
