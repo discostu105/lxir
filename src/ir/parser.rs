@@ -338,6 +338,8 @@ pub fn parse(src: &str) -> Result<Module> {
     let mut open_tiles: Option<TilesDecl> = None;
     // The index of the `tile` whose argument list `open_call` carries.
     let mut open_tile: Option<u32> = None;
+    // A `schedule` whose body is still open (until `end`) — D46.
+    let mut open_schedule: Option<ScheduleDecl> = None;
 
     for (i, raw) in src.lines().enumerate() {
         let lineno = i + 1;
@@ -381,10 +383,30 @@ pub fn parse(src: &str) -> Result<Module> {
                     t.body.push(TilesItem::Comment(text));
                     continue;
                 }
+                if let Some(t) = open_schedule.as_mut() {
+                    t.body.push(ScheduleItem::Comment(text));
+                    continue;
+                }
                 match open_test.as_mut() {
                     Some(t) => t.body.push(TestItem::Comment(text)),
                     None => sink(&mut open_template, &mut items).push(Item::Comment(text)),
                 }
+            }
+            continue;
+        }
+
+        // Inside a `schedule` body every line is a schedule line (or `end`).
+        if let Some(t) = open_schedule.as_mut() {
+            if let [Tok::Ident(kw)] = toks.as_slice()
+                && kw == "end"
+            {
+                let mut t = open_schedule.take().unwrap();
+                t.end_comment = comment;
+                items.push(Item::Schedule(t));
+            } else {
+                t.body.push(ScheduleItem::Line(parse_schedule_line(
+                    &toks, comment, lineno,
+                )?));
             }
             continue;
         }
@@ -465,6 +487,7 @@ pub fn parse(src: &str) -> Result<Module> {
                     | "clock"
                     | "tiles"
                     | "tile"
+                    | "schedule"
             )
         {
             return Err(err(format!(
@@ -562,6 +585,17 @@ pub fn parse(src: &str) -> Result<Module> {
                     end_comment: None,
                 });
             }
+            Tok::Ident(kw) if kw == "schedule" => {
+                let [_, Tok::Ident(name)] = toks.as_slice() else {
+                    return Err(err("expected `schedule <name>`".into()));
+                };
+                open_schedule = Some(ScheduleDecl {
+                    name: check_slug(name, lineno)?,
+                    body: Vec::new(),
+                    comment,
+                    end_comment: None,
+                });
+            }
             Tok::Ident(kw) if kw == "tile" => {
                 return Err(err(
                     "`tile` is only allowed inside a `tiles <name>` … `end` body".into(),
@@ -636,7 +670,8 @@ pub fn parse(src: &str) -> Result<Module> {
                             _ => {
                                 return Err(err(
                                     "expected `extern <slug> = <Type>(uuid|iname|title: \"…\" \
-                                     | mirrors: <slug>[, room: \"…\"] [, category: \"…\"])`"
+                                     | mirrors: <slug>[, room: \"…\"] [, category: \"…\"] \
+                                     [, device: \"…\"])`"
                                         .into(),
                                 ));
                             }
@@ -666,12 +701,12 @@ pub fn parse(src: &str) -> Result<Module> {
                         Some((other, _, _)) => {
                             return Err(err(format!(
                                 "unknown matcher `{other}` (expected uuid, iname, title, or \
-                                 mirrors first; room/category only narrow it)"
+                                 mirrors first; room/category/device only narrow it)"
                             )));
                         }
                         None => return Err(err("empty matcher list".into())),
                     };
-                    let (mut room, mut category) = (None, None);
+                    let (mut room, mut category, mut device) = (None, None, None);
                     for (k, v, is_ident) in pairs {
                         if is_ident {
                             return Err(err(format!("`{k}:` takes a quoted string")));
@@ -679,9 +714,11 @@ pub fn parse(src: &str) -> Result<Module> {
                         let slot = match k {
                             "room" => &mut room,
                             "category" => &mut category,
+                            "device" => &mut device,
                             other => {
                                 return Err(err(format!(
-                                    "unknown constraint `{other}` (expected room or category)"
+                                    "unknown constraint `{other}` (expected room, category \
+                                     or device)"
                                 )));
                             }
                         };
@@ -689,19 +726,16 @@ pub fn parse(src: &str) -> Result<Module> {
                             return Err(err(format!("duplicate `{k}:` constraint")));
                         }
                     }
-                    if matches!(match_spec, MatchSpec::Uuid(_))
-                        && (room.is_some() || category.is_some())
-                    {
-                        return Err(err("`uuid:` pins exactly — room/category constraints are \
-                             redundant and not allowed with it"
+                    let constrained = room.is_some() || category.is_some() || device.is_some();
+                    if matches!(match_spec, MatchSpec::Uuid(_)) && constrained {
+                        return Err(err("`uuid:` pins exactly — room/category/device \
+                             constraints are redundant and not allowed with it"
                             .into()));
                     }
-                    if matches!(match_spec, MatchSpec::Mirrors(_))
-                        && (room.is_some() || category.is_some())
-                    {
+                    if matches!(match_spec, MatchSpec::Mirrors(_)) && constrained {
                         return Err(err(
                             "`mirrors:` is narrowed by the file's `page` statement — \
-                             room/category constraints are not allowed with it"
+                             room/category/device constraints are not allowed with it"
                                 .into(),
                         ));
                     }
@@ -711,6 +745,7 @@ pub fn parse(src: &str) -> Result<Module> {
                         match_spec,
                         room,
                         category,
+                        device,
                         comment,
                     }));
                 }
@@ -820,6 +855,12 @@ pub fn parse(src: &str) -> Result<Module> {
             msg: format!("unclosed `tiles {}` — missing `end`", t.name),
         });
     }
+    if let Some(t) = open_schedule {
+        return Err(Error::IrParse {
+            line: src.lines().count(),
+            msg: format!("unclosed `schedule {}` — missing `end`", t.name),
+        });
+    }
     if let Some(t) = open_template {
         return Err(Error::IrParse {
             line: src.lines().count(),
@@ -837,6 +878,116 @@ pub fn parse(src: &str) -> Result<Module> {
 
 /// One statement of a `test` body (D36): a port injection, `tick`,
 /// `expect`, or `clock`.
+/// One line of a `schedule` body (D46): day keywords, then either `off`
+/// or comma-separated intervals `HH:MM-HH:MM [= <number>] [activate]`.
+fn parse_schedule_line(
+    toks: &[Tok],
+    comment: Option<String>,
+    lineno: usize,
+) -> Result<ScheduleLine> {
+    let err = |msg: String| Error::IrParse { line: lineno, msg };
+    let usage = "a schedule line is `<days> HH:MM-HH:MM[ = <value>][ activate], …` or \
+                 `<days> off`";
+    let mut days = Vec::new();
+    let mut i = 0;
+    while let Some(Tok::Ident(w)) = toks.get(i) {
+        if w == "off" || w == "activate" {
+            break;
+        }
+        if !super::schedule::is_day(w) {
+            let known: Vec<&str> = super::schedule::day_keywords().collect();
+            let mut hint = super::validate::suggest(w, known.iter().copied());
+            if hint.is_empty()
+                && let Some(short) = w.get(..3).filter(|s| super::schedule::is_day(s))
+            {
+                hint = format!(" — did you mean `{short}`?");
+            }
+            return Err(err(format!(
+                "unknown day `{w}`{hint} — days are {} (user-defined operating modes \
+                 are not supported yet)",
+                known.join(", ")
+            )));
+        }
+        days.push(w.clone());
+        i += 1;
+    }
+    if let Some(Tok::Str(s)) = toks.get(i) {
+        return Err(err(format!(
+            "`\"{s}\"`: user-defined operating modes are not supported yet — only the \
+             built-in days ({})",
+            super::schedule::day_keywords()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    if days.is_empty() {
+        return Err(err(format!("expected a day first; {usage}")));
+    }
+    let rest = &toks[i..];
+    if let [Tok::Ident(w)] = rest
+        && w == "off"
+    {
+        return Ok(ScheduleLine {
+            days,
+            intervals: Vec::new(),
+            comment,
+        });
+    }
+    let time = |h: &str, m: &str| -> Result<u16> {
+        let bad = || err(format!("`{h}:{m}` is not a time of day (00:00 … 24:00)"));
+        if m.len() != 2 || h.is_empty() || h.len() > 2 {
+            return Err(bad());
+        }
+        let (h, m): (u16, u16) = (h.parse().map_err(|_| bad())?, m.parse().map_err(|_| bad())?);
+        if m > 59 || h > 24 || (h == 24 && m != 0) {
+            return Err(bad());
+        }
+        Ok(h * 60 + m)
+    };
+    let mut intervals = Vec::new();
+    for part in rest.split(|t| *t == Tok::Comma) {
+        let (from, to, tail) = match part {
+            [
+                Tok::Num(h1),
+                Tok::Colon,
+                Tok::Num(m1),
+                Tok::Minus,
+                Tok::Num(h2),
+                Tok::Colon,
+                Tok::Num(m2),
+                tail @ ..,
+            ] => (time(h1, m1)?, time(h2, m2)?, tail),
+            [] => return Err(err(format!("empty interval; {usage}"))),
+            _ => return Err(err(format!("expected an interval `HH:MM-HH:MM`; {usage}"))),
+        };
+        let (value, tail) = match tail {
+            [Tok::Eq, Tok::Num(v), tail @ ..] => (Some(v.clone()), tail),
+            [Tok::Eq, ..] => {
+                return Err(err(format!(
+                    "expected a number after `=` (the timer's value in the interval); {usage}"
+                )));
+            }
+            _ => (None, tail),
+        };
+        let activate = match tail {
+            [] => false,
+            [Tok::Ident(w)] if w == "activate" => true,
+            _ => return Err(err(format!("unexpected tokens after an interval; {usage}"))),
+        };
+        intervals.push(Interval {
+            from,
+            to,
+            value,
+            activate,
+        });
+    }
+    Ok(ScheduleLine {
+        days,
+        intervals,
+        comment,
+    })
+}
+
 fn parse_test_stmt(toks: &[Tok], comment: Option<String>, lineno: usize) -> Result<TestItem> {
     let err = |msg: String| Error::IrParse { line: lineno, msg };
     match toks {
@@ -1024,6 +1175,11 @@ fn parse_ident_statement(
                     "`{ts}.tiles` takes a tiles set (`{ts}.tiles = <name>`), never a wire"
                 )));
             }
+            if tp == "schedule" {
+                return Err(err(format!(
+                    "`{ts}.schedule` takes a schedule (`{ts}.schedule = <name>`), never a wire"
+                )));
+            }
             let to = PortRef {
                 slug: ts.clone(),
                 port: tp.clone(),
@@ -1078,6 +1234,27 @@ fn parse_ident_statement(
             items.push(Item::TilesClaim(TilesClaim {
                 slug: ts.clone(),
                 tiles: set.clone(),
+                comment,
+            }));
+            Ok(())
+        }
+        // slug.schedule = name — a DayTimer schedule claim (D46).
+        [Tok::Ident(ts), Tok::Dot, Tok::Ident(tp), Tok::Eq, rest @ ..] if tp == "schedule" => {
+            let [Tok::Ident(name)] = rest else {
+                return Err(err(format!(
+                    "expected `{ts}.schedule = <name>` — the name of a `schedule`"
+                )));
+            };
+            if in_template {
+                return Err(err(
+                    "`.schedule` is not allowed inside a template body — claim schedules \
+                     at module level"
+                        .into(),
+                ));
+            }
+            items.push(Item::ScheduleClaim(ScheduleClaim {
+                slug: ts.clone(),
+                schedule: name.clone(),
                 comment,
             }));
             Ok(())

@@ -32,7 +32,9 @@
 //!   Wine oracle showed Loxone Config 17 silently deletes off-descriptor
 //!   connectors (and their wires) on save, so minting them would lose logic.
 
-use crate::connectors::{PortDir, attr_params, builtin, ref_link_type};
+use crate::connectors::{
+    PortDir, attr_params, builtin, carried_attrs, container_type, ref_link_type,
+};
 use crate::doc::{Counters, GUI_OWNED_ATTRS, GUI_OWNED_CHILDREN, LoxoneDoc, ports};
 use crate::error::{Error, Result};
 use crate::ir::ast::{Attr, Item, MatchSpec, Module, Value};
@@ -139,6 +141,7 @@ fn harvest_residue(el: &Element) -> Residue {
             .filter(|a| {
                 matches!(a.name.as_str(), "Cl" | "LtE" | "WF")
                     || GUI_OWNED_ATTRS.contains(&a.name.as_str())
+                    || carried_attrs(el.attr("Type").unwrap_or("")).contains(&a.name.as_str())
             })
             .map(|a| (a.name.clone(), a.value.clone()))
             .collect(),
@@ -443,7 +446,14 @@ pub fn compile(
     // Title → page UUIDs in document order. Titles need not be unique; a
     // kept pin only has to match one of them.
     let mut pages_by_title: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Object-tree containers (D47), first of each type in document order.
+    let mut containers: BTreeMap<String, String> = BTreeMap::new();
     for o in doc.objects() {
+        if o.block_type == "VirtualInCaption" {
+            containers
+                .entry(o.block_type.clone())
+                .or_insert(o.uuid.clone());
+        }
         if o.block_type == "Page" {
             pages_by_title
                 .entry(o.title.clone().unwrap_or_default())
@@ -519,6 +529,35 @@ pub fn compile(
             entry.uuid = minter.mint_object().to_string();
             lock.counters.next_obj += 1;
         }
+        // D47: an object of the object tree (a VirtualIn) is appended to
+        // its container, which the base has exactly once — never pinned,
+        // placed, or governed by `page`.
+        if let Some(container) = container_type(&block.block_type) {
+            let uuid = containers.get(container).cloned().ok_or_else(|| {
+                Error::Compile(format!(
+                    "block `{}`: the base config has no <C Type=\"{container}\"> to \
+                     hold a minted {}",
+                    block.slug, block.block_type
+                ))
+            })?;
+            entry.page_uuid = None;
+            entry.layout = None;
+            entry.superseded_layout = None;
+            managed.insert(
+                block.slug.clone(),
+                PlannedBlock {
+                    uuid: entry.uuid.clone(),
+                    block_type: block.block_type.clone(),
+                    keys,
+                    ports: entry.ports.clone(),
+                    layout: None,
+                    relayout: false,
+                    page_uuid: uuid,
+                    placed: false,
+                },
+            );
+            continue;
+        }
         let pinned_before = entry.page_uuid.clone();
         let page_uuid = match declared_page.get(block.slug.as_str()) {
             // Governed by a `page` statement (D28): keep a pin that still
@@ -588,6 +627,7 @@ pub fn compile(
                 layout: entry.layout,
                 relayout: relayout_pages.contains(page_uuid.as_str()),
                 page_uuid,
+                placed: true,
             },
         );
     }
@@ -618,7 +658,8 @@ pub fn compile(
             } else {
                 &mut managed_defs
             };
-            target.insert((block.slug.clone(), k.to_string()), resolve(v)?);
+            let value = module.resolve_value_for(v, &block.block_type, &block.slug, k)?;
+            target.insert((block.slug.clone(), k.to_string()), value.into_owned());
         }
     }
 
@@ -711,10 +752,40 @@ pub fn compile(
     //     page. The index is taken once after teardown; appending children
     //     never shifts the recorded page paths.
     let page_index = doc.index();
+    // A fresh VirtualIn gets the next free `VI<n>` designation (D47) —
+    // past every one the torn-down base and the carried residue hold.
+    let mut next_vi = doc
+        .objects()
+        .iter()
+        .filter_map(|o| doc.element_at(&o.path)?.attr("IName").map(String::from))
+        .chain(residue.values().flat_map(|r| {
+            r.attrs
+                .iter()
+                .filter(|(n, _)| n == "IName")
+                .map(|(_, v)| v.clone())
+        }))
+        .filter_map(|n| n.strip_prefix("VI")?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1;
     for block in module.blocks() {
         let plan = &managed[&block.slug];
+        let res = residue.get(&plan.uuid);
+        let carried = |name: &str| {
+            res.and_then(|r| r.attrs.iter().find(|(n, _)| n == name))
+                .map(|(_, v)| v.as_str())
+        };
         let mut el = Element::new("C");
         el.set_attr("Type", &block.block_type);
+        if block.block_type == "VirtualIn" {
+            match carried("IName") {
+                Some(v) => el.set_attr_raw("IName", v),
+                None => {
+                    el.set_attr("IName", &format!("VI{next_vi}"));
+                    next_vi += 1;
+                }
+            }
+        }
         el.set_attr("V", "175");
         el.set_attr("U", &plan.uuid);
         // A ref block's title is GUI-derived from its mirror target
@@ -724,24 +795,30 @@ pub fn compile(
             Some(m) => el.set_attr("Title", &m.title),
             None => el.set_attr("Title", block.title.as_deref().unwrap_or(&block.slug)),
         }
-        // Blocks without a position get theirs once the wires are drawn.
-        let at = plan.layout.unwrap_or(Layout::at(0, 0, 0, 0));
-        el.set_attr("Px", &at.px.to_string());
-        el.set_attr("Py", &at.py.to_string());
-        el.set_attr("Px2", &at.px2.to_string());
-        el.set_attr("Py2", &at.py2.to_string());
+        // Blocks without a position get theirs once the wires are drawn;
+        // objects of the object tree have none (D47).
+        if plan.placed {
+            let at = plan.layout.unwrap_or(Layout::at(0, 0, 0, 0));
+            el.set_attr("Px", &at.px.to_string());
+            el.set_attr("Py", &at.py.to_string());
+            el.set_attr("Px2", &at.px2.to_string());
+            el.set_attr("Py2", &at.py2.to_string());
+        }
         // D19: a block that existed in the base re-emits its GUI-owned
         // display state verbatim — including *absence* (some types lose
-        // `WF` on a GUI save). Only a fresh mint writes the defaults.
-        let res = residue.get(&plan.uuid);
-        let carried = |name: &str| {
-            res.and_then(|r| r.attrs.iter().find(|(n, _)| n == name))
-                .map(|(_, v)| v.as_str())
+        // `WF` on a GUI save). Only a fresh mint writes the defaults; a
+        // virtual input has the folder's grey (corpus) and the same `WF`
+        // a save gives a page block (oracle session 16).
+        let wf = "147456";
+        let cl = if plan.placed {
+            "141,255,112"
+        } else {
+            "238,238,238"
         };
         match (res, carried("Cl")) {
             (Some(_), Some(v)) => el.set_attr_raw("Cl", v),
             (Some(_), None) => {}
-            (None, _) => el.set_attr("Cl", "141,255,112"),
+            (None, _) => el.set_attr("Cl", cl),
         }
         el.set_attr("Nio", &plan.keys.len().to_string());
         // Minted-ref identity (D33), in the GUI's observed attribute
@@ -755,13 +832,16 @@ pub fn compile(
         match (res, carried("WF")) {
             (Some(_), Some(v)) => el.set_attr_raw("WF", v),
             (Some(_), None) => {}
-            (None, _) => el.set_attr("WF", "147456"),
+            (None, _) => el.set_attr("WF", wf),
         }
         if let Some(m) = mirror_of.get(&block.slug) {
             if m.analog {
                 el.set_attr("Analog", "true");
             }
             el.set_attr("LinkRefType", &m.link_type.to_string());
+        }
+        if block.block_type == "VirtualIn" {
+            virtual_in_attrs(&mut el, &block.slug, &managed_attrs, res)?;
         }
         for name in attr_params(&block.block_type) {
             if let Some(v) = managed_attrs.get(&(block.slug.clone(), (*name).to_string())) {
@@ -782,7 +862,7 @@ pub fn compile(
                 // copy verbatim would clobber a retarget. A GUI-owned
                 // attribute the source binds (`Code:`, D40) was written
                 // above; the claim wins over the carried copy.
-                let compiler_owned = matches!(n.as_str(), "Cl" | "LtE" | "WF")
+                let compiler_owned = matches!(n.as_str(), "Cl" | "LtE" | "WF" | "IName")
                     || (is_ref_type(&block.block_type)
                         && matches!(n.as_str(), "Ref" | "LinkRefType" | "Analog"))
                     || managed_attrs.contains_key(&(block.slug.clone(), n.clone()));
@@ -819,6 +899,18 @@ pub fn compile(
             for c in &r.children {
                 el.push_child(c.clone());
             }
+        } else if block.block_type == "VirtualIn" {
+            // What a save gives a fresh virtual input (oracle session
+            // 16): shown in the app, one decimal — the GUI's from then on.
+            let mut io = Element::new("IoData");
+            io.set_attr("Visu", "true");
+            io.set_attr("St", "2");
+            el.push_child(io);
+            let mut display = Element::new("Display");
+            display.set_attr("Type", "1");
+            display.set_attr("Unit", "<v.1>");
+            display.set_attr("StateOnly", "true");
+            el.push_child(display);
         }
         let page_path = page_index.by_uuid.get(&plan.page_uuid).ok_or_else(|| {
             Error::Compile(format!(
@@ -829,9 +921,10 @@ pub fn compile(
             ))
         })?;
         let page = doc.element_at_mut(page_path).expect("indexed path");
-        if page.attr("Type") != Some("Page") {
+        let want = container_type(&block.block_type).unwrap_or("Page");
+        if page.attr("Type") != Some(want) {
             return Err(Error::Compile(format!(
-                "object `{}` recorded as the page for block `{}` is a `{}`, not a Page",
+                "object `{}` recorded as the page for block `{}` is a `{}`, not a {want}",
                 plan.page_uuid,
                 block.slug,
                 page.attr("Type").unwrap_or("?")
@@ -1005,10 +1098,10 @@ pub fn compile(
                 .or_else(|| type_by_uuid.get(owner_uuid).map(|(t, _)| t.as_str()))
         };
         let page_of_endpoint = |slug: &str, owner_uuid: &str| -> Option<String> {
-            managed
-                .get(slug)
-                .map(|p| p.page_uuid.clone())
-                .or_else(|| path_by_uuid.get(owner_uuid).and_then(|p| page_uuid_of(p)))
+            match managed.get(slug) {
+                Some(p) => p.placed.then(|| p.page_uuid.clone()),
+                None => path_by_uuid.get(owner_uuid).and_then(|p| page_uuid_of(p)),
+            }
         };
         let from_is_ref = endpoint_type(&from_ref.slug, &from.owner_uuid).is_some_and(is_ref_type);
         let to_is_ref = endpoint_type(&to_ref.slug, &to.owner_uuid).is_some_and(is_ref_type);
@@ -1114,7 +1207,13 @@ pub fn compile(
             &s.target.port,
             PortDir::Param,
         )?;
-        let value = resolve(&s.value)?;
+        let extern_type = module
+            .externs()
+            .find(|e| e.slug == s.target.slug)
+            .map_or("", |e| e.block_type.as_str());
+        let value = module
+            .resolve_value_for(&s.value, extern_type, &s.target.slug, &s.target.port)?
+            .into_owned();
         let original = apply_def(&mut doc, &target.owner_uuid, &target.port_uuid, &value)?;
         lock.set_originals
             .entry(target.port_uuid)
@@ -1237,6 +1336,9 @@ pub fn compile(
         .chain(managed.iter().map(|(s, b)| (s.clone(), b.uuid.clone())))
         .collect();
     super::tiles::apply(&mut doc, module, &uuid_of)?;
+    // DayTimer schedules (D46): the claimed `Modes=`/`N=`/`<Entry>` set,
+    //     on extern and managed timers alike; no lock state either.
+    super::schedule::apply(&mut doc, module, &uuid_of)?;
 
     // --- Placement (D42), once every wire is drawn: blocks without a
     //     position, and those on pages laid out afresh, go where their
@@ -1244,7 +1346,7 @@ pub fn compile(
     let mut to_place: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for block in module.blocks() {
         let plan = &managed[&block.slug];
-        if plan.layout.is_none() || plan.relayout {
+        if plan.placed && (plan.layout.is_none() || plan.relayout) {
             to_place
                 .entry(plan.page_uuid.as_str())
                 .or_default()
@@ -1343,6 +1445,63 @@ pub fn compile(
     Ok(doc)
 }
 
+/// A VirtualIn's input-dialog attributes (D47) in the order a Loxone
+/// Config save writes them. Each is the source's binding, else the base's
+/// value, else — on a fresh mint only — what a save fills in (oracle
+/// session 16): an analog input gets `EnVal="true"`, a digital one the
+/// 0/1 range and its change filter.
+fn virtual_in_attrs(
+    el: &mut Element,
+    slug: &str,
+    bound: &BTreeMap<(String, String), String>,
+    res: Option<&Residue>,
+) -> Result<()> {
+    let bound = |n: &str| bound.get(&(slug.to_string(), n.to_string()));
+    let carried = |n: &str| {
+        res.and_then(|r| r.attrs.iter().find(|(a, _)| a == n))
+            .map(|(_, v)| v.as_str())
+    };
+    let analog = match bound("Analog") {
+        Some(v) if v == "true" || v == "false" => v.as_str(),
+        Some(v) => {
+            return Err(Error::Compile(format!(
+                "block `{slug}`: `Analog:` is \"true\" or \"false\", not `{v}`"
+            )));
+        }
+        None => carried("Analog").unwrap_or("false"),
+    };
+    let fresh: &[(&str, &str)] = if analog == "true" {
+        &[("Analog", "true"), ("EnVal", "true")]
+    } else {
+        &[
+            ("Analog", "false"),
+            ("MaxVal", "1"),
+            ("MinChange", "0.5"),
+            ("MinTime", "10"),
+        ]
+    };
+    for name in [
+        "Analog",
+        "EnVal",
+        "DefVal",
+        "MinVal",
+        "MaxVal",
+        "MinChange",
+        "MinTime",
+    ] {
+        if let Some(v) = bound(name) {
+            el.set_attr(name, v);
+        } else if let Some(v) = carried(name) {
+            el.set_attr_raw(name, v);
+        } else if res.is_none()
+            && let Some((_, v)) = fresh.iter().find(|(n, _)| *n == name)
+        {
+            el.set_attr(name, v);
+        }
+    }
+    Ok(())
+}
+
 struct PlannedBlock {
     uuid: String,
     block_type: String,
@@ -1353,8 +1512,12 @@ struct PlannedBlock {
     layout: Option<Layout>,
     /// The block's page is laid out afresh this compile.
     relayout: bool,
-    /// UUID of the page the block is (re)built on.
+    /// UUID of the page the block is (re)built on — or, when not
+    /// `placed`, of its object-tree container (D47).
     page_uuid: String,
+    /// Drawn on a page (laid out, `Px=`/`Py=`); false for objects of the
+    /// object tree.
+    placed: bool,
 }
 
 struct ResolvedPort {
@@ -1453,6 +1616,10 @@ fn resolve_externs(
                         iodata_ref(o, "Cr")
                             .and_then(|u| cat_titles.get(&u))
                             .is_some_and(|t| t == want)
+                    })
+                    && ext.device.as_ref().is_none_or(|want| {
+                        doc.device_serial(&o.path)
+                            .is_some_and(|s| s.eq_ignore_ascii_case(want))
                     })
             })
             .collect();

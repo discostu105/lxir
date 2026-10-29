@@ -35,8 +35,10 @@ pub mod ir;
 pub mod layout;
 pub mod lock;
 pub mod observed_defaults;
+pub mod port_meta;
 pub mod project;
 pub mod render;
+pub mod scan;
 pub mod uuid;
 pub mod xml;
 
