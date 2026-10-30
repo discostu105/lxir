@@ -1,5 +1,15 @@
 # lxir - loxone intermediate language
 
+> **This repository has moved.** lxir is developed in the
+> [lox](https://github.com/discostu105/lox) repository, as
+> [`crates/lxir`](https://github.com/discostu105/lox/tree/main/crates/lxir).
+> It was merged there with its full history, and this repository receives no
+> further changes. Open issues and pull requests in
+> [discostu105/lox](https://github.com/discostu105/lox/issues). The crate is
+> still published as [`lxir`](https://crates.io/crates/lxir), and
+> [`lox`](https://github.com/discostu105/lox) runs the whole toolchain as
+> `lox ir`.
+
 **lxir** (pronounced like *elixir*) is **a git-friendly and AI-friendly
 text representation of Loxone config**. Miniserver logic — blocks, wires,
 parameters — becomes plain text that humans can review in a pull request
@@ -111,16 +121,18 @@ rule today; the rest of the config never notices. See
 ## Try it on your own config
 
 lxir never talks to a Miniserver — it only reads and writes `.Loxone`
-files. Transport is [`lox-cli`](https://github.com/eisber/lox-cli)'s job
-(`lox config download` / `extract` / `push`), or simply Loxone Config's
-own save. A careful first loop:
+files. Transport is [`lox`](https://github.com/discostu105/lox)'s job,
+the CLI this crate lives in: every `lxir` command below also runs as
+`lox ir …`. A careful first loop:
 
 ```sh
-cargo install --git https://github.com/discostu105/lxir   # or a release binary
+brew tap discostu105/lox https://github.com/discostu105/lox
+brew install discostu105/lox/lox   # or a release binary of lox;
+                                   # `cargo install lxir` for lxir alone
 
 # 1. Get the deployed config as XML (or use the .Loxone file
 #    Loxone Config saves locally):
-lox config download && lox config extract <downloaded.zip>
+lox config download --extract --save-as current.zip   # writes current.Loxone
 
 # 2. Look around — decompile is a read-only view of every page:
 lxir decompile current.Loxone | less
@@ -138,14 +150,18 @@ lxir compile --base current.Loxone --module modules/ \
 # 5. Trust nothing — read the diff. It must show exactly your change:
 lxir diff current.Loxone out.Loxone
 
-# 6. Deploy: push the XML back (recompress + upload), or open
-#    out.Loxone in Loxone Config and upload from there:
-lox config push out.Loxone   # take a backup first
+# 6. Deploy. In a lox.toml project (base, module, lock, serial):
+lox config push            # drift check, compile, show the changes, stage
+lox config push --force    # upload byte-exact, reboot, verify, move base
+#    Or open out.Loxone in Loxone Config and upload from there.
+#    Upload exactly the file you diffed — a tool that re-serializes
+#    or re-wires on the way (lox-cli's `config push`) can change it.
 ```
 
-After a push, download again and keep that file as the new base —
-`lxir drift` tells you when someone else (GUI, app, Miniserver) has
-written to the config since, *before* you compile over their change.
+After a push, download again and keep that file as the new base
+(`lox config push` does both) — `lxir drift` tells you when someone else
+(GUI, app, Miniserver) has written to the config since, *before* you
+compile over their change.
 Everything you did not adopt passes through byte-for-byte; the diff in
 step 5 is the proof, every time.
 
@@ -185,7 +201,7 @@ lxir repair current.Loxone --out fixed.Loxone  # `&#xA;` text from a foreign
 lxir scan configs/                   # personal data in configs: where, never
                                      # what; exit 1 if any (CI guard)
 lxir test                            # run the module's `test … end` blocks
-                                     # through `lox sim` (eisber/lox-cli)
+                                     # through lox-cli's `lox sim` (--lox/$LOX)
 ```
 
 A directory with a `lox.toml` — flat `key = "value"` lines naming the
@@ -279,8 +295,9 @@ sets the simulated time for `DayTimer`-style logic.
 | `diff` | Semantic diff between two configs, with locale-rename noise flagged. |
 
 **Out of scope** — deliberately: transport (FTP/HTTP to the Miniserver),
-LoxCC compression, credentials. Those live in the `lox` / `lox-cli` CLIs,
-which are the intended consumers of this crate.
+LoxCC compression, credentials. Those live in
+[`lox`](https://github.com/discostu105/lox), the CLI that builds on this
+crate.
 
 ## Documentation
 
@@ -336,14 +353,24 @@ cover the validation loop.
 
 ## Relationship to `lox` / `lox-cli`
 
-[`lox`](https://github.com/discostu105/lox) (server API, transport, LoxCC)
-and [`lox-cli`](https://github.com/eisber/lox-cli) (Markus Cozowicz's fork:
-config manipulation CLI, DOM-level writer, `lox sim` simulator) already
-exist.
-This crate is the missing foundation both lack: byte-faithful
-serialization, the UUID/identity model, and the IR/lockfile pipeline. The
-intended end state is `lox-cli` (or a successor) depending on `lxir` for
-everything config-model-related.
+lxir now lives in the [`lox`](https://github.com/discostu105/lox)
+repository as `crates/lxir` (see the note at the top). lox (server API,
+transport, LoxCC) depends on it for everything config-model-related:
+`lox config diff/show/wiring/lint`, `lox config push`, and the whole
+toolchain as `lox ir`.
+
+[`lox-cli`](https://github.com/eisber/lox-cli) is a separate project by
+Markus Cozowicz, based on an earlier version of lox. Its own code is AGPL-3.0
+or commercial. It takes another approach:
+- An AI agent edits the `.Loxone` XML directly, one command per step
+  (`lox config add`, `set-param`, `wire-connector`).
+- It tests the result in its offline simulator, `lox sim`.
+
+lxir keeps the logic as source and compiles it with pinned identities, and
+it passes everything the source doesn't own through unchanged. lox-cli does
+not use lxir, and neither project contains the other's code. The one
+connection is `lxir test`: it runs its scenarios through lox-cli's
+`lox sim`, which it finds with `--lox`, `$LOX` or `PATH`.
 
 ## License
 
